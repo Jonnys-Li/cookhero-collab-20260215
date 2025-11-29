@@ -1,0 +1,23 @@
+# virtual environment
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+# IDE files
+.vscode/
+.idea/
+*.iml
+# OS files
+.DS_Store
+Thumbs.db
+# Logs
+logs/
+*.log
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# data
+data/HowToCook/
