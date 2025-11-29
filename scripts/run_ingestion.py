@@ -44,15 +44,14 @@ def main():
         config=config
     )
     
-    # This will either build a new index and save it, or load the existing one.
-    # Since we might be changing embedding models, let's force a rebuild for now.
-    # A more robust solution would be to check if the config has changed.
-    # For now, to test the new remote embedding, we should delete the old index first.
-    logger.info("Forcing rebuild of index to ensure correct embedding model is used.")
-    index_module._build_new_index(chunks=child_chunks)
+    # This will connect to Milvus, dropping the old collection if it exists
+    # to ensure a fresh start.
+    index_module.build_or_connect_index(
+        chunks=child_chunks,
+        force_rebuild=True
+    )
 
     logger.info("--- CookHero Data Ingestion Pipeline Finished ---")
-    logger.info(f"Vector index is ready at: {os.path.abspath(config.INDEX_SAVE_PATH)}")
 
 if __name__ == "__main__":
     main()

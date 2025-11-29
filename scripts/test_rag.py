@@ -27,11 +27,11 @@ def test_rag_service():
         return
 
     sample_questions = [
-        "你好",
+        # "你好",
         "给我推荐几个素菜。",
-        "宫保鸡丁需要什么食材？",
-        "如何腌制小黄瓜？",
-        "我想学习做菜，厨房里需要准备哪些基本工具和材料？"
+        # "宫保鸡丁需要什么食材？",
+        # "如何腌制小黄瓜？",
+        # "我想学习做菜，厨房里需要准备哪些基本工具和材料？"
     ]
 
     for i, question in enumerate(sample_questions):
