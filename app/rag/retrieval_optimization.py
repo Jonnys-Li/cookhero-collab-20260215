@@ -1,6 +1,7 @@
 # app/rag/retrieval_optimization.py
 import hashlib
 import logging
+from math import log
 from typing import List, Dict, Any
 
 from langchain_milvus import Milvus
@@ -52,6 +53,16 @@ class RetrievalOptimizationModule:
         # Get results from both retrievers
         vector_docs = self.vector_retriever.invoke(query)
         bm25_docs = self.bm25_retriever.invoke(query)
+
+        logger.info(f"length of vector_docs: {len(vector_docs)}")
+        logger.info(f"length of bm25_docs: {len(bm25_docs)}")
+
+        for doc in vector_docs:
+            logger.info("=" * 20)
+            logger.info(f"vector_docs doc ID: {doc.id}, Content snippet: {doc.page_content[:100]}")
+        for doc in bm25_docs:
+            logger.info("=" * 20)
+            logger.info(f"bm25_docs doc ID: {doc.id}, Content snippet: {doc.page_content[:100]}")
 
         # Re-rank using Reciprocal Rank Fusion (RRF)
         reranked_docs = self._reciprocal_rank_fusion([vector_docs, bm25_docs])

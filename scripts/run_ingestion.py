@@ -1,9 +1,12 @@
 # scripts/run_ingestion.py
 import logging
 import os
+
 from app.rag.config import DefaultRAGConfig
+from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_preparation import DataPreparationModule
-from app.rag.index_construction import IndexConstructionModule
+from app.rag.embeddings.embedding_factory import get_embedding_model
+from app.rag.vector_stores.vector_store_factory import get_vector_store
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO,
@@ -13,45 +16,37 @@ logger = logging.getLogger(__name__)
 def main():
     """
     Main function to run the data ingestion and indexing pipeline.
+    This script will drop the existing Milvus collection and rebuild it.
     """
     logger.info("--- Starting CookHero Data Ingestion Pipeline ---")
 
-    # Use the default configuration
     config = DefaultRAGConfig
     
-    # --- 1. Data Preparation ---
-    logger.info(f"Loading data from: {config.DATA_PATH}")
+    # 1. Data Source and Preparation
+    logger.info("Preparing data...")
+    data_source = HowToCookDataSource(data_path=config.DATA_PATH)
     data_prep_module = DataPreparationModule(
-        data_path=config.DATA_PATH,
+        data_source=data_source,
         headers_to_split_on=config.HEADERS_TO_SPLIT_ON
     )
-    # Load documents and create chunks
-    data_prep_module.load_and_process_documents()
+    data_prep_module.run()
+    logger.info("Data preparation complete.")
 
-    # Get the processed chunks for indexing
-    child_chunks = data_prep_module.child_chunks
-    if not child_chunks:
-        logger.error("No chunks were created from the data. Aborting ingestion.")
-        return
-
-    # Log statistics
-    stats = data_prep_module.get_statistics()
-    logger.info(f"Data Preparation Stats: {stats}")
+    # 2. Embedding Model
+    logger.info("Initializing embedding model...")
+    embeddings = get_embedding_model(config)
     
-    # --- 2. Index Construction ---
-    logger.info("Initializing index construction module...")
-    index_module = IndexConstructionModule(
-        config=config
-    )
-    
-    # This will connect to Milvus, dropping the old collection if it exists
-    # to ensure a fresh start.
-    index_module.build_or_connect_index(
-        chunks=child_chunks,
+    # 3. Vector Store
+    logger.info("Building and populating vector store...")
+    _ = get_vector_store(
+        config=config,
+        embeddings=embeddings,
+        chunks=data_prep_module.child_chunks,
         force_rebuild=True
     )
-
+    
     logger.info("--- CookHero Data Ingestion Pipeline Finished ---")
+    logger.info(f"Milvus collection '{config.MILVUS_COLLECTION_NAME}' is ready.")
 
 if __name__ == "__main__":
     main()

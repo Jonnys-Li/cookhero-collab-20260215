@@ -1,10 +1,11 @@
 # app/rag/rag_service.py
 import logging
-from typing import Dict, Any
 
-from app.rag.config import DefaultRAGConfig
+from app.rag.config import DefaultRAGConfig, RAGConfig
+from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_preparation import DataPreparationModule
-from app.rag.index_construction import IndexConstructionModule
+from app.rag.embeddings.embedding_factory import get_embedding_model
+from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.rag.retrieval_optimization import RetrievalOptimizationModule
 from app.rag.generation_integration import GenerationIntegrationModule
 
@@ -12,9 +13,8 @@ logger = logging.getLogger(__name__)
 
 class RAGService:
     """
-    Orchestrates the entire RAG pipeline.
-    This is a singleton class to ensure that the expensive models and data
-    are loaded only once.
+    Orchestrates the entire RAG pipeline using a modular, factory-based architecture.
+    This is a singleton class to ensure models and data are loaded only once.
     """
     _instance = None
 
@@ -23,24 +23,16 @@ class RAGService:
             cls._instance = super(RAGService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, config=None):
-        # The __init__ will be called every time RAGService() is invoked,
-        # but the expensive setup should only run once.
+    def __init__(self, config: RAGConfig | None = None):
         if hasattr(self, '_initialized') and self._initialized:
             return
             
         logger.info("Initializing RAGService for the first time...")
         self.config = config or DefaultRAGConfig
         
-        # Initialize all modules
-        self.data_prep_module = DataPreparationModule(
-            data_path=self.config.DATA_PATH,
-            headers_to_split_on=self.config.HEADERS_TO_SPLIT_ON
-        )
-        self.index_module = IndexConstructionModule(
-            config=self.config
-        )
-        self.retrieval_module = None # Depends on data and index
+        self._load_knowledge_base(force_rebuild=True)
+        
+        # Initialize the generation module
         self.generation_module = GenerationIntegrationModule(
             model_name=self.config.LLM_MODEL,
             temperature=self.config.TEMPERATURE,
@@ -49,48 +41,55 @@ class RAGService:
             base_url=self.config.LLM_BASE_URL
         )
         
-        self._load_knowledge_base()
         self._initialized = True
         logger.info("RAGService initialized successfully.")
 
-    def _load_knowledge_base(self):
-        """Loads data and builds/loads the index."""
+    def _load_knowledge_base(self, force_rebuild=False):
+        """
+        Loads data, creates embeddings, builds the vector store, and sets up retrievers.
+        """
         logger.info("Loading knowledge base...")
-        # Load documents and create chunks
-        self.data_prep_module.load_and_process_documents()
         
-        # Build or connect to the vector index
-        self.index_module.build_or_connect_index(
-            chunks=self.data_prep_module.child_chunks
+        # 1. Data Source and Preparation
+        data_source = HowToCookDataSource(data_path=self.config.DATA_PATH)
+        data_prep_module = DataPreparationModule(
+            data_source=data_source,
+            headers_to_split_on=self.config.HEADERS_TO_SPLIT_ON
+        )
+        data_prep_module.run()
+        
+        # 2. Embedding Model
+        embeddings = get_embedding_model(self.config)
+        
+        # 3. Vector Store
+        vector_store = get_vector_store(
+            config=self.config,
+            embeddings=embeddings,
+            chunks=data_prep_module.child_chunks,
+            force_rebuild=force_rebuild
         )
         
-        # Now that the index is ready, initialize the retrieval module
+        # 4. Retrieval Module
         self.retrieval_module = RetrievalOptimizationModule(
-            vectorstore=self.index_module.get_vectorstore(),
-            child_chunks=self.data_prep_module.child_chunks
+            vectorstore=vector_store,
+            child_chunks=data_prep_module.child_chunks
         )
         logger.info("Knowledge base loaded and retrievers are ready.")
 
     def ask(self, query: str, stream: bool = False):
         """
         Main method to ask a question to the RAG system.
-        Args:
-            query: The user's question.
-            stream: Whether to stream the response.
-        Returns:
-            The generated answer or a streaming generator.
         """
-        if not self.retrieval_module:
-            raise RuntimeError("RAG Service is not properly initialized. Retrieval module is missing.")
+        if not self.retrieval_module or not self.generation_module:
+            raise RuntimeError("RAG Service is not properly initialized.")
 
         # 1. Route query
         route = self.generation_module.route_query(query)
 
-        # 2. Rewrite query (optional, based on routing or other logic)
+        # 2. Rewrite query
         rewritten_query = self.generation_module.rewrite_query(query)
         
         # 3. Retrieve documents
-        # TODO: Add metadata filtering based on query analysis
         retrieved_docs = self.retrieval_module.hybrid_search(rewritten_query, top_k=self.config.TOP_K)
         
         # 4. Generate response
