@@ -142,10 +142,10 @@ class DataPreparationModule:
             return {}
         
         # save the document and chunks into jsonl files
-        with open("data/parent_documents.jsonl", "w", encoding="utf-8") as f:
+        with open("data/documents/parent_documents.jsonl", "w", encoding="utf-8") as f:
             for doc in self.parent_documents:
                 f.write(doc.model_dump_json() + "\n")
-        with open("data/child_chunks.jsonl", "w", encoding="utf-8") as f:
+        with open("data/documents/child_chunks.jsonl", "w", encoding="utf-8") as f:
             for chunk in self.child_chunks:
                 f.write(chunk.model_dump_json() + "\n")
 
