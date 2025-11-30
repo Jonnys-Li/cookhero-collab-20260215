@@ -2,11 +2,11 @@
 import logging
 from typing import List
 from pymilvus import utility, connections
-from langchain_milvus import Milvus
+from langchain_milvus import Milvus, BM25BuiltInFunction
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-from app.rag.config import RAGConfig
+from app.core.rag_config import RAGConfig
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +53,16 @@ def get_vector_store(
         if not chunks:
             raise ValueError("Cannot build a new collection from an empty list of chunks.")
 
+        # Use BM25BuiltInFunction for hybrid search (dense + sparse vectors)
+        logger.info("Initializing Milvus with BM25 built-in function for hybrid search")
         vector_store = Milvus.from_documents(
             documents=chunks,
             embedding=embeddings,
             collection_name=collection_name,
             connection_args=connection_args,
             text_field="text",
-            vector_field="embedding",
+            vector_field=["dense", "sparse"],  # dense for embeddings, sparse for BM25
+            builtin_function=BM25BuiltInFunction(),
         )
         logger.info(f"Successfully created and populated Milvus collection: {collection_name}")
     else:
@@ -69,7 +72,8 @@ def get_vector_store(
             collection_name=collection_name,
             connection_args=connection_args,
             text_field="text",
-            vector_field="embedding",
+            vector_field=["dense", "sparse"],
+            builtin_function=BM25BuiltInFunction(),
         )
         logger.info(f"Successfully connected to Milvus collection: {collection_name}")
         

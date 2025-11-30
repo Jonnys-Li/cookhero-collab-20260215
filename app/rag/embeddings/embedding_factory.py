@@ -1,7 +1,7 @@
 # app/rag/embeddings/embedding_factory.py
 import logging
 from langchain_core.embeddings import Embeddings
-from app.rag.config import RAGConfig
+from app.core.rag_config import RAGConfig
 
 logger = logging.getLogger(__name__)
 
