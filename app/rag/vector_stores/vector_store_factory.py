@@ -40,7 +40,7 @@ def get_vector_store(
         connections.connect(alias=alias, **connection_args)
         if force_rebuild and utility.has_collection(collection_name, using=alias):
             logger.warning(f"Dropping existing Milvus collection: {collection_name}")
-            utility.drop_collection(collection_name, using=alias)
+            _=utility.drop_collection(collection_name, using=alias)
         
         collection_exists = utility.has_collection(collection_name, using=alias)
     finally:

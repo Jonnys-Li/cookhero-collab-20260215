@@ -21,7 +21,7 @@ class RAGService:
             cls._instance = super(RAGService, cls).__new__(cls)
         return cls._instance
 
-    def __init__(self, config: RAGConfig = None):
+    def __init__(self, config: RAGConfig | None = None):
         if hasattr(self, '_initialized') and self._initialized:
             return
             
@@ -34,7 +34,7 @@ class RAGService:
             model_name=self.config.llm.model_name,
             temperature=self.config.llm.temperature,
             max_tokens=self.config.llm.max_tokens,
-            api_key=self.config.llm.api_key,
+            api_key=self.config.llm.api_key, # type: ignore
             base_url=self.config.llm.base_url
         )
         

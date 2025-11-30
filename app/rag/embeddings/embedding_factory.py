@@ -34,7 +34,7 @@ def get_embedding_model(config: RAGConfig) -> Embeddings:
         
         return OpenAIEmbeddings(
             model=config.embedding.remote_model,
-            api_key=config.embedding.api_key,
+            api_key=config.embedding.api_key, # type: ignore
             base_url=config.embedding.api_url,
             chunk_size=config.embedding.batch_size,
         )
