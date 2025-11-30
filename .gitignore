@@ -28,4 +28,5 @@ dist/
 # Secrets
 .env
 GEMINI.md
+CODEBUDDY.md
 /data/debug/
