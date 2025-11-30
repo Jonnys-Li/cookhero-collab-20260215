@@ -28,7 +28,7 @@ class RAGService:
         logger.info("Initializing RAGService for the first time...")
         self.config = config or DefaultRAGConfig
         
-        self._load_knowledge_base()
+        self._load_knowledge_base(force_rebuild=True)
         
         self.generation_module = GenerationIntegrationModule(
             model_name=self.config.llm.model_name,
@@ -47,7 +47,7 @@ class RAGService:
         """
         logger.info("Loading knowledge base...")
         
-        # 1. Data Source gets instantiated
+        # 1. Data Source gets instantiated and loads/processes data internally
         self.data_source = HowToCookDataSource(
             data_path=self.config.paths.data_path,
             headers_to_split_on=self.config.data_source.howtocook.headers_to_split_on
@@ -76,7 +76,7 @@ class RAGService:
         """
         Main method to ask a question to the RAG system.
         """
-        if not self.retrieval_module or not self.generation_module or not self.data_source:
+        if not all([self.retrieval_module, self.generation_module, self.data_source]):
             raise RuntimeError("RAG Service is not properly initialized.")
 
         # 1. Route and Rewrite Query
