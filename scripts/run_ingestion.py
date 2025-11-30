@@ -1,7 +1,7 @@
 # scripts/run_ingestion.py
 import logging
 
-from app.rag.config_loader import DefaultRAGConfig
+from app.core.config_loader import DefaultRAGConfig
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
