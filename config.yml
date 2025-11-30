@@ -35,9 +35,16 @@ llm:
 
 retrieval:
   # Number of documents to retrieve
-  top_k: 3
-  # Parameter for Reciprocal Rank Fusion
+  top_k: 5
+  # RRF k parameter (deprecated, kept for backward compatibility)
   rrf_k: 60
+  # Minimum score threshold for filtering low-quality results (0.0 = no filtering)
+  score_threshold: 0.1
+  # Ranker type: "rrf" (Reciprocal Rank Fusion) or "weighted" (weighted combination)
+  ranker_type: "rrf"
+  # Weights for [dense_vector, sparse_bm25] when using weighted ranker
+  # Example: [0.7, 0.3] favors semantic search, [0.3, 0.7] favors keyword search
+  ranker_weights: [0.5, 0.5]
 
 data_source:
   # Settings specific to the HowToCook data source
