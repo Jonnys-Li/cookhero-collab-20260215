@@ -1,7 +1,8 @@
 # app/rag/rag_service.py
 import logging
 
-from app.rag.config_loader import DefaultRAGConfig, RAGConfig
+from app.core.config_loader import DefaultRAGConfig
+from app.core.rag_config import RAGConfig
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
@@ -65,16 +66,24 @@ class RAGService:
             force_rebuild=force_rebuild
         )
         
-        # 4. Retrieval Module
+        # 4. Retrieval Module with configuration
         self.retrieval_module = RetrievalOptimizationModule(
             vectorstore=vector_store,
-            child_chunks=child_chunks
+            child_chunks=child_chunks,
+            score_threshold=self.config.retrieval.score_threshold,
+            default_ranker_type=self.config.retrieval.ranker_type,
+            default_ranker_weights=self.config.retrieval.ranker_weights
         )
         logger.info("Knowledge base loaded and retrievers are ready.")
 
-    def ask(self, query: str, stream: bool = False):
+    def ask(self, query: str, stream: bool = False, use_intelligent_ranker: bool = True):
         """
         Main method to ask a question to the RAG system.
+        
+        Args:
+            query: User's question.
+            stream: Whether to stream the response.
+            use_intelligent_ranker: Whether to use intelligent ranker selection based on query.
         """
         if not all([self.retrieval_module, self.generation_module, self.data_source]):
             raise RuntimeError("RAG Service is not properly initialized.")
@@ -82,13 +91,24 @@ class RAGService:
         # 1. Route and Rewrite Query
         rewritten_query = self.generation_module.rewrite_query(query)
         
-        # 2. Retrieve small chunks
-        retrieved_chunks = self.retrieval_module.hybrid_search(rewritten_query, top_k=self.config.retrieval.top_k)
+        # 2. Determine ranker type and weights based on query
+        ranker_type = None
+        ranker_weights = None
+        if use_intelligent_ranker:
+            ranker_type, ranker_weights = self.retrieval_module.intelligent_ranker_selection(rewritten_query)
         
-        # 3. Post-process retrieval to get large documents
+        # 3. Retrieve small chunks with scores
+        retrieved_chunks, scores = self.retrieval_module.hybrid_search(
+            rewritten_query, 
+            top_k=self.config.retrieval.top_k,
+            ranker_type=ranker_type,
+            ranker_weights=ranker_weights
+        )
+        
+        # 4. Post-process retrieval to get large documents
         final_docs = self.data_source.post_process_retrieval(retrieved_chunks)
         
-        # 4. Generate response using the large documents
+        # 5. Generate response using the large documents
         response = self.generation_module.generate_response(
             query=rewritten_query,
             context_docs=final_docs,
