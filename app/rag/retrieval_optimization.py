@@ -58,11 +58,11 @@ class RetrievalOptimizationModule:
         logger.info(f"length of bm25_docs: {len(bm25_docs)}")
 
         for doc in vector_docs:
-            logger.info("=" * 20)
-            logger.info(f"vector_docs doc ID: {doc.metadata.get("parent_id")}, Metadata: {doc.metadata}")
+            logger.info("=" * 40)
+            logger.info(f"vector_docs doc ID: {doc.id}, Metadata: {doc.metadata}")
         for doc in bm25_docs:
-            logger.info("=" * 20)
-            logger.info(f"bm25_docs doc ID: {doc.metadata.get("parent_id")}, Metadata: {doc.metadata}")
+            logger.info("=" * 40)
+            logger.info(f"bm25_docs doc ID: {doc.id}, Metadata: {doc.metadata}")
 
         # Re-rank using Reciprocal Rank Fusion (RRF)
         reranked_docs = self._reciprocal_rank_fusion([vector_docs, bm25_docs])
@@ -116,8 +116,7 @@ class RetrievalOptimizationModule:
 
         for docs in result_sets:
             for rank, doc in enumerate(docs):
-                # Use a hash of the page content as a unique ID for the document
-                doc_id = hashlib.md5(doc.page_content.encode()).hexdigest()
+                doc_id = doc.id
                 doc_store[doc_id] = doc
                 
                 # RRF formula: 1 / (k + rank)
