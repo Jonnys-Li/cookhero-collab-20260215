@@ -25,6 +25,7 @@ class LLMConfig(BaseModel):
     model_name: str
     base_url: Optional[str] = None
     temperature: float
+    max_tokens: int
     api_key: Optional[str] = None  # Sensitive, will be loaded from .env
 
 class RetrievalConfig(BaseModel):
@@ -36,9 +37,12 @@ class RetrievalConfig(BaseModel):
 
 class RerankerConfig(BaseModel):
     enabled: bool
+    type: Literal['siliconflow']
     model_name: str
+    score_threshold: float
     base_url: Optional[str] = None
     temperature: float
+    max_tokens: int
     api_key: Optional[str] = None  # Sensitive, will be loaded from .env
 
 class HowToCookConfig(BaseModel):

@@ -32,7 +32,8 @@ llm:
   # Optional base URL for self-hosted or proxy endpoints
   base_url: "https://api.siliconflow.cn/v1"
   # Generation parameters
-  temperature: 1.0
+  temperature: 0.1
+  max_tokens: 131072
 
 retrieval:
   # Number of documents to retrieve
@@ -48,12 +49,17 @@ retrieval:
   ranker_weights: [0.5, 0.5]
 
 reranker:
-  # Whether to enable the LLM-based reranking step
-  enabled: false
-  # Model for reranking. A smaller, faster model is often suitable.
-  model_name: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
-  base_url: "https://api.siliconflow.cn/v1"
+  # Whether to enable the reranking step
+  enabled: true
+  # Type of reranker to use. Currently only 'siliconflow' is supported.
+  type: "siliconflow"
+  # Model for reranking. Must be a model compatible with the /rerank endpoint.
+  model_name: "BAAI/bge-reranker-v2-m3"
+  # Score threshold for filtering documents. Documents with a score below this will be discarded.
+  score_threshold: 0.2
+  base_url: "https://api.siliconflow.cn/v1/rerank"
   temperature: 0.0
+  max_tokens: 32768
 
 data_source:
   # Settings specific to the HowToCook data source

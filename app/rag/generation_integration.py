@@ -43,7 +43,7 @@ class GenerationIntegrationModule:
             model=self.model_name,
             temperature=self.temperature,
             max_tokens=self.max_tokens, # type: ignore
-            api_key=self.api_key,
+            api_key=self.api_key, # type: ignore
             base_url=self.base_url or None
         )
         
