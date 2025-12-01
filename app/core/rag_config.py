@@ -25,7 +25,6 @@ class LLMConfig(BaseModel):
     model_name: str
     base_url: Optional[str] = None
     temperature: float
-    max_tokens: int
     api_key: Optional[str] = None  # Sensitive, will be loaded from .env
 
 class RetrievalConfig(BaseModel):
@@ -34,6 +33,13 @@ class RetrievalConfig(BaseModel):
     score_threshold: float = 0.0  # Minimum score threshold for filtering low-quality results
     ranker_type: Literal["rrf", "weighted"] = "rrf"  # Ranker type for hybrid search
     ranker_weights: List[float] = [0.5, 0.5]  # Weights for [dense, sparse] when using weighted ranker
+
+class RerankerConfig(BaseModel):
+    enabled: bool
+    model_name: str
+    base_url: Optional[str] = None
+    temperature: float
+    api_key: Optional[str] = None  # Sensitive, will be loaded from .env
 
 class HowToCookConfig(BaseModel):
     path_suffix: str
@@ -59,6 +65,7 @@ class RAGConfig(BaseModel):
     embedding: EmbeddingConfig
     llm: LLMConfig
     retrieval: RetrievalConfig
+    reranker: RerankerConfig
     data_source: DataSourceConfig
 
 

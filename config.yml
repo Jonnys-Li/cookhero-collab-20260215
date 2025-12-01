@@ -32,8 +32,7 @@ llm:
   # Optional base URL for self-hosted or proxy endpoints
   base_url: "https://api.siliconflow.cn/v1"
   # Generation parameters
-  temperature: 0.1
-  max_tokens: 4096
+  temperature: 1.0
 
 retrieval:
   # Number of documents to retrieve
@@ -47,6 +46,14 @@ retrieval:
   # Weights for [dense_vector, sparse_bm25] when using weighted ranker
   # Example: [0.7, 0.3] favors semantic search, [0.3, 0.7] favors keyword search
   ranker_weights: [0.5, 0.5]
+
+reranker:
+  # Whether to enable the LLM-based reranking step
+  enabled: false
+  # Model for reranking. A smaller, faster model is often suitable.
+  model_name: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+  base_url: "https://api.siliconflow.cn/v1"
+  temperature: 0.0
 
 data_source:
   # Settings specific to the HowToCook data source

@@ -12,8 +12,10 @@ from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.rag.retrieval_optimization import RetrievalOptimizationModule
 from app.rag.generation_integration import GenerationIntegrationModule
+from app.rag.rerankers.llm_reranker import LLMReranker
 
 logger = logging.getLogger(__name__)
+
 
 class RAGService:
     """
@@ -36,16 +38,20 @@ class RAGService:
         
         self.data_sources: Dict[str, BaseDataSource] = {}
         self.retrieval_modules: Dict[str, RetrievalOptimizationModule] = {}
+        self.reranker: LLMReranker | None = None
 
         self._load_knowledge_bases()
 
         self.generation_module = GenerationIntegrationModule(
             model_name=self.config.llm.model_name,
             temperature=self.config.llm.temperature,
-            max_tokens=self.config.llm.max_tokens,
             api_key=self.config.llm.api_key,  # type: ignore
             base_url=self.config.llm.base_url
         )
+
+        if self.config.reranker.enabled:
+            logger.info("Reranker is enabled. Initializing LLMReranker.")
+            self.reranker = LLMReranker(self.config.reranker)
 
         self._initialized = True
         logger.info("RAGService initialized successfully with multiple knowledge bases.")
@@ -87,7 +93,7 @@ class RAGService:
                 collection_name=collection_name,
                 embeddings=embeddings,
                 chunks=child_chunks,
-                force_rebuild=True
+                force_rebuild=False
             )
             
             # 4. Create and store Retrieval Module
@@ -137,7 +143,11 @@ class RAGService:
         # 5. Post-process retrieval using the selected data source
         final_docs = data_source.post_process_retrieval(retrieved_chunks)
 
-        # 6. Generate response
+        # 6. Rerank final documents if enabled
+        if self.reranker and self.config.reranker.enabled:
+            final_docs = self.reranker.rerank(rewritten_query, final_docs)
+        
+        # 7. Generate response
         response = self.generation_module.generate_response(
             query=rewritten_query,
             context_docs=final_docs,

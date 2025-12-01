@@ -23,11 +23,17 @@ def load_config() -> RAGConfig:
     secrets = dotenv_values(".env")
 
     # Merge secrets into the config data
-    if "llm" in config_data and "LLM_API_KEY" in secrets:
-        config_data["llm"]["api_key"] = secrets["LLM_API_KEY"]
+    llm_api_key = secrets.get("LLM_API_KEY")
+    if "llm" in config_data and llm_api_key:
+        config_data["llm"]["api_key"] = llm_api_key
     
     if "embedding" in config_data and "EMBEDDING_API_KEY" in secrets:
         config_data["embedding"]["api_key"] = secrets["EMBEDDING_API_KEY"]
+
+    # For reranker, prioritize its own key, but fall back to the main LLM key
+    reranker_api_key = secrets.get("RERANKER_API_KEY") or llm_api_key
+    if "reranker" in config_data and reranker_api_key:
+        config_data["reranker"]["api_key"] = reranker_api_key
 
     # Validate and return the configuration using Pydantic models
     return RAGConfig.parse_obj(config_data)
