@@ -5,13 +5,13 @@ from typing import List, Literal, Optional, Dict
 # --- Nested Configuration Models ---
 
 class PathsConfig(BaseModel):
-    data_path: str
+    base_data_path: str
 
 class VectorStoreConfig(BaseModel):
     type: str
     host: str
     port: int
-    collection_name: str
+    collection_names: Dict[str, str]
 
 class EmbeddingConfig(BaseModel):
     mode: Literal['local', 'remote']
@@ -36,10 +36,16 @@ class RetrievalConfig(BaseModel):
     ranker_weights: List[float] = [0.5, 0.5]  # Weights for [dense, sparse] when using weighted ranker
 
 class HowToCookConfig(BaseModel):
+    path_suffix: str
+    headers_to_split_on: List[List[str]]
+
+class TipsConfig(BaseModel):
+    path_suffix: str
     headers_to_split_on: List[List[str]]
 
 class DataSourceConfig(BaseModel):
     howtocook: HowToCookConfig
+    tips: TipsConfig
 
 # --- Main Configuration Model ---
 

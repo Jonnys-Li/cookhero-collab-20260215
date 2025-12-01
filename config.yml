@@ -3,14 +3,16 @@
 # Sensitive keys (like API keys) should be stored in a separate .env file.
 
 paths:
-  data_path: "data/HowToCook/dishes"
+  base_data_path: "data/HowToCook"
 
 vector_store:
   # Type of vector store, for future extensibility (e.g., "chroma", "faiss")
   type: "milvus"
   host: "localhost"
   port: 19530
-  collection_name: "cook_hero_recipes"
+  collection_names:
+    recipes: "cook_hero_recipes"
+    tips: "cook_hero_tips"
 
 embedding:
   # Can be 'local' or 'remote'
@@ -49,7 +51,13 @@ retrieval:
 data_source:
   # Settings specific to the HowToCook data source
   howtocook:
+    path_suffix: "dishes"
     headers_to_split_on:
       - ["#", "header_1"]
       - ["##", "header_2"]
-      - ["###", "header_3"]
+  # Settings specific to the Tips data source
+  tips:
+    path_suffix: "tips"
+    headers_to_split_on:
+      - ["#", "header_1"]
+      - ["##", "header_2"]
