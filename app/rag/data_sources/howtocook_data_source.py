@@ -12,6 +12,9 @@ from app.rag.data_sources.base import BaseDataSource
 
 logger = logging.getLogger(__name__)
 
+# A specific namespace for generating document IDs
+DOC_NAMESPACE = uuid.UUID('7a7de5f8-7435-4354-9b1b-d50a09848520')
+
 class HowToCookDataSource(BaseDataSource):
     """
     Data source for loading and processing recipes from the HowToCook repository.
@@ -57,8 +60,8 @@ class HowToCookDataSource(BaseDataSource):
         Converts retrieved child chunks back to their full parent documents.
         This implements the "small to large" retrieval pattern.
         """
-        if not self.parent_documents:
-            logger.warning("Parent documents not loaded. Loading them now for post-processing.")
+        if not self.parent_doc_map:
+            logger.warning("Parent document map not loaded. Loading now for post-processing.")
             self.parent_documents = self._load_parent_documents()
             self.parent_doc_map = {doc.id: doc for doc in self.parent_documents}
 
@@ -89,7 +92,8 @@ class HowToCookDataSource(BaseDataSource):
                 with open(md_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
-                doc_id = str(uuid.uuid4())
+                # Generate a deterministic ID based on the file path
+                doc_id = str(uuid.uuid5(DOC_NAMESPACE, str(md_file)))
                 doc = Document(
                     id=doc_id,
                     page_content=content,
