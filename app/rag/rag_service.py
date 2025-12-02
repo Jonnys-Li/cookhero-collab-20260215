@@ -10,8 +10,8 @@ from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
-from app.rag.retrieval_optimization import RetrievalOptimizationModule
-from app.rag.generation_integration import GenerationIntegrationModule
+from app.rag.pipeline.retrieval import RetrievalOptimizationModule
+from app.rag.pipeline.generation import GenerationIntegrationModule
 from app.rag.rerankers.base import BaseReranker
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class RAGService:
         self.generation_module = GenerationIntegrationModule(
             model_name=self.config.llm.model_name,
             temperature=self.config.llm.temperature,
-            max_tokens=self.config.llm.max_tokens, # type: ignore
+            max_tokens=self.config.llm.max_tokens,
             api_key=self.config.llm.api_key,  # type: ignore
             base_url=self.config.llm.base_url
         )
