@@ -41,12 +41,11 @@ retrieval:
   # RRF k parameter (deprecated, kept for backward compatibility)
   rrf_k: 60
   # Minimum score threshold for filtering low-quality results (0.0 = no filtering)
-  score_threshold: 0.2
+  score_threshold: 0.1
   # Ranker type: "rrf" (Reciprocal Rank Fusion) or "weighted" (weighted combination)
   ranker_type: "weighted"
   # Weights for [dense_vector, sparse_bm25] when using weighted ranker
-  # Example: [0.7, 0.3] favors semantic search, [0.3, 0.7] favors keyword search
-  ranker_weights: [0.5, 0.5]
+  ranker_weights: [0.8, 0.2]
 
 reranker:
   # Whether to enable the reranking step
@@ -56,7 +55,7 @@ reranker:
   # Model for reranking. Must be a model compatible with the /rerank endpoint.
   model_name: "BAAI/bge-reranker-v2-m3"
   # Score threshold for filtering documents. Documents with a score below this will be discarded.
-  score_threshold: 0.2
+  score_threshold: 0.1
   base_url: "https://api.siliconflow.cn/v1/rerank"
   temperature: 0.0
   max_tokens: 32768
