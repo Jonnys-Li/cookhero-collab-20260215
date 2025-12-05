@@ -5,6 +5,7 @@ from pathlib import Path
 from app.core.config_loader import DefaultRAGConfig
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
+from app.rag.data_sources.generic_text_data_source import GenericTextDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.core.rag_config import RAGConfig
@@ -24,10 +25,24 @@ def ingest_data_source(config: RAGConfig, embeddings, source_name: str, data_sou
     # 1. Data Source and Preparation
     data_path = Path(config.paths.base_data_path) / data_source_config.path_suffix
     logger.info(f"Preparing data from source path: {data_path}")
-    data_source = data_source_class(
-        data_path=str(data_path),
-        headers_to_split_on=data_source_config.headers_to_split_on
-    )
+    
+    # Dynamically create the data source instance with the correct parameters
+    if hasattr(data_source_config, 'window_size'):
+        # For GenericTextDataSource or any other with window_size
+        data_source = data_source_class(
+            data_path=str(data_path),
+            window_size=data_source_config.window_size
+        )
+    elif hasattr(data_source_config, 'headers_to_split_on'):
+        # For HowToCookDataSource and TipsDataSource
+        data_source = data_source_class(
+            data_path=str(data_path),
+            headers_to_split_on=data_source_config.headers_to_split_on
+        )
+    else:
+        # Default case, if no specific config is found
+        data_source = data_source_class(data_path=str(data_path))
+
     child_chunks = data_source.get_chunks()
     logger.info(f"Data preparation complete for {source_name}.")
 
@@ -78,6 +93,15 @@ def main():
         source_name="tips",
         data_source_class=TipsDataSource,
         data_source_config=config.data_source.tips
+    )
+    
+    # Ingest Generic Text documents
+    ingest_data_source(
+        config=config,
+        embeddings=embeddings,
+        source_name="generic_text",
+        data_source_class=GenericTextDataSource,
+        data_source_config=config.data_source.generic_text
     )
 
     logger.info("--- CookHero Data Ingestion Pipeline Finished ---")
