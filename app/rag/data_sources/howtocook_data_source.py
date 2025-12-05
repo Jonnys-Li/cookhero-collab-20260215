@@ -61,27 +61,15 @@ class HowToCookDataSource(BaseDataSource):
         This implements the "small to large" retrieval pattern.
         """
         if not self.parent_doc_map:
-            logger.warning("Parent document map not loaded. Loading now for post-processing.")
+            logger.warning("Parent document map not loaded for Tips. Loading them now.")
             self.parent_documents = self._load_parent_documents()
             self.parent_doc_map = {doc.id: doc for doc in self.parent_documents}
 
-        logger.info("Original retrieved chunks metadata: "
-                    f"{[chunk.metadata for chunk in retrieved_chunks]}")
-        
-        # Extract unique parent IDs from the retrieved chunks
-        parent_ids = set()
-        for chunk in retrieved_chunks:
-            parent_id = chunk.metadata.get("parent_id")
-            if parent_id:
-                parent_ids.add(parent_id)
-
-        # Retrieve the unique parent documents
+        parent_ids = {chunk.metadata.get("parent_id") for chunk in retrieved_chunks if chunk.metadata.get("parent_id")}
         final_docs = [self.parent_doc_map[pid] for pid in parent_ids if pid in self.parent_doc_map]
         
-        logger.info(f"Retrieved {len(retrieved_chunks)} chunks, which correspond to "
-                    f"{len(final_docs)} unique parent documents.")
-        logger.info("Final documents metadata: "
-                    f"{[doc.metadata for doc in final_docs]}")
+        logger.info(f"Retrieved {len(retrieved_chunks)} tip chunks, corresponding to "
+                    f"{len(final_docs)} unique parent tip documents.")
         return final_docs
 
     def _load_parent_documents(self) -> List[Document]:
