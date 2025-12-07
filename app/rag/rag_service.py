@@ -61,6 +61,23 @@ class RAGService:
 
         self._initialized = True
         logger.info("RAGService initialized successfully with multiple knowledge bases.")
+    
+    def _is_recommendation_query(self, query: str) -> bool:
+        """
+        Detects if a query is a recommendation query that needs more diverse results.
+        
+        Args:
+            query: The rewritten query string.
+            
+        Returns:
+            True if this is a recommendation query, False otherwise.
+        """
+        query_lower = query.lower()
+        recommendation_keywords = [
+            "推荐", "有哪些", "有什么", "适合", "建议", "搭配", "组合",
+            "recommend", "what", "which", "suggest", "suitable"
+        ]
+        return any(keyword in query_lower for keyword in recommendation_keywords)
 
     def _load_knowledge_bases(self):
         """
@@ -134,6 +151,13 @@ class RAGService:
 
         # 1. Rewrite Query
         rewritten_query = self.generation_module.rewrite_query(query)
+        
+        # Detect if this is a recommendation query (needs more results)
+        is_recommendation_query = self._is_recommendation_query(rewritten_query)
+        # Increase top_k for recommendation queries to get more diverse results
+        retrieval_top_k = self.config.retrieval.top_k * 2 if is_recommendation_query else self.config.retrieval.top_k
+        if is_recommendation_query:
+            logger.info(f"Detected recommendation query, increasing retrieval top_k to {retrieval_top_k}")
 
         # 2. Parallel Retrieval from all sources
         logger.info("--- Starting parallel retrieval from all data sources ---")
@@ -149,7 +173,7 @@ class RAGService:
             # Retrieve docs from one source
             retrieved_docs, retrieved_scores = retrieval_module.hybrid_search(
                 rewritten_query,
-                top_k=self.config.retrieval.top_k, # Retrieve top_k from each source
+                top_k=retrieval_top_k, # Use adjusted top_k for recommendation queries
                 ranker_type=ranker_type,
                 ranker_weights=ranker_weights
             )
@@ -202,7 +226,8 @@ class RAGService:
         )
         
         # Use retrieval.top_k as the limit before reranking
-        top_k_before_rerank = self.config.retrieval.top_k
+        # For recommendation queries, allow more documents to pass through
+        top_k_before_rerank = retrieval_top_k if is_recommendation_query else self.config.retrieval.top_k
         docs_for_rerank = unique_processed_docs[:top_k_before_rerank]
         if docs_for_rerank:
             logger.info(f"Selected top {len(docs_for_rerank)} documents (score range: "

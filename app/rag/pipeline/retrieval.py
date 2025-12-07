@@ -135,7 +135,12 @@ class RetrievalOptimizationModule:
             return "weighted", [0.8, 0.2]  # Favor sparse/BM25
         
         # Semantic/conceptual queries → favor dense embeddings
-        semantic_indicators = ["推荐", "类似", "什么菜", "适合", "建议", "recommend", "similar", "suggest"]
+        # Expanded indicators to include recommendation queries
+        semantic_indicators = [
+            "推荐", "类似", "什么菜", "有哪些", "有什么", "适合", "建议", 
+            "recommend", "similar", "suggest", "what", "which",
+            "搭配", "组合", "家常菜", "菜品", "菜肴"
+        ]
         if any(indicator in query_lower for indicator in semantic_indicators):
             logger.info(f"Query contains semantic indicators, using weighted ranker with dense bias")
             return "weighted", [1, 0]  # Favor dense/semantic
