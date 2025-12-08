@@ -1,22 +1,19 @@
 # app/rag/cache/backends.py
 """
-Cache backend abstractions for L2 semantic cache.
-
-Backends:
-- MemoryL2Backend: in-memory with max_items + LRU + TTL
-- RedisVectorL2Backend: Redis-based shared cache (client-side scan similarity search)
+Concrete implementations of cache backends.
 """
 import logging
-import time
-import pickle
-from typing import List, Optional, Tuple, Any, Dict
+from typing import Any, List, Optional, Tuple, Dict
 
 import redis
+
+from app.rag.cache.base import KeywordCacheBackend, VectorCacheBackend
 
 logger = logging.getLogger(__name__)
 
 
 def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """Compute cosine similarity between two vectors."""
     if len(vec1) != len(vec2):
         return 0.0
     dot_product = sum(a * b for a, b in zip(vec1, vec2))
@@ -27,157 +24,105 @@ def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     return dot_product / (magnitude1 * magnitude2)
 
 
-class BaseL2Backend:
-    def search(self, query_embedding: List[float], threshold: float) -> Optional[Tuple[str, float]]:
-        raise NotImplementedError
+class RedisKeywordCache(KeywordCacheBackend):
+    """Redis-based keyword cache backend for exact match (L1 cache)."""
+    
+    def __init__(self, client: redis.Redis):
+        """
+        Initialize Redis keyword cache backend.
+        
+        Args:
+            client: Redis client instance
+        """
+        self.client = client
 
-    def set(self, query_hash: str, embedding: List[float], response: str) -> None:
-        raise NotImplementedError
+    def get(self, key: str) -> Optional[bytes]:
+        """Get a value by key."""
+        try:
+            return self.client.get(key)
+        except Exception as e:
+            logger.warning(f"Error getting key '{key}' from Redis: {e}")
+            return None
 
-    def clear(self) -> None:
-        raise NotImplementedError
+    def set(self, key: str, value: bytes, ttl_seconds: int | None = None) -> bool:
+        """Set a value with optional TTL."""
+        try:
+            if ttl_seconds:
+                self.client.setex(key, ttl_seconds, value)
+            else:
+                self.client.set(key, value)
+            return True
+        except Exception as e:
+            logger.warning(f"Error setting key '{key}' in Redis: {e}")
+            return False
+
+    def delete(self, key: str) -> bool:
+        """Delete a value by key."""
+        try:
+            self.client.delete(key)
+            return True
+        except Exception as e:
+            logger.warning(f"Error deleting key '{key}' from Redis: {e}")
+            return False
+
+    def clear(self, pattern: str | None = None) -> bool:
+        """Clear cache entries matching pattern."""
+        try:
+            pat = pattern or "*"
+            keys = self.client.keys(pat)
+            if keys:
+                self.client.delete(*keys)
+            return True
+        except Exception as e:
+            logger.warning(f"Error clearing Redis cache with pattern '{pat}': {e}")
+            return False
 
 
-class MemoryL2Backend(BaseL2Backend):
+class MemoryVectorCache(VectorCacheBackend):
     """
-    In-memory L2 cache with max_items + LRU + TTL.
-    Stores: {query_hash: {"embedding": [...], "response": str, "last_access": ts, "created_at": ts}}
+    In-memory vector cache backend for semantic similarity (L2 cache).
+    
+    Stores vectors as: {key: (embedding, payload)}
+    Uses cosine similarity for search.
     """
-    def __init__(self, max_items: int = 500, ttl_seconds: int = 3600):
-        self.max_items = max_items
-        self.ttl_seconds = ttl_seconds
-        self._store: Dict[str, Dict[str, Any]] = {}
+    
+    def __init__(self):
+        """Initialize in-memory vector cache."""
+        self.store: Dict[str, Tuple[List[float], Any]] = {}
 
-    def _evict_if_needed(self):
-        if len(self._store) <= self.max_items:
-            return
-        # Evict least-recently-used
-        sorted_items = sorted(self._store.items(), key=lambda kv: kv[1]["last_access"])
-        to_evict = len(self._store) - self.max_items
-        for i in range(to_evict):
-            evict_key, _ = sorted_items[i]
-            self._store.pop(evict_key, None)
-        logger.info(f"Memory L2 evicted {to_evict} entries (max_items={self.max_items})")
+    def add(self, key: str, embedding: List[float], payload: Any) -> bool:
+        """Add a vector with payload to the cache."""
+        self.store[key] = (embedding, payload)
+        return True
 
-    def _purge_expired(self):
-        now = time.time()
-        expired_keys = [
-            key for key, val in self._store.items()
-            if now - val["created_at"] > self.ttl_seconds
-        ]
-        for key in expired_keys:
-            self._store.pop(key, None)
-        if expired_keys:
-            logger.debug(f"Memory L2 purged {len(expired_keys)} expired entries")
-
-    def search(self, query_embedding: List[float], threshold: float) -> Optional[Tuple[str, float]]:
-        self._purge_expired()
+    def search(self, embedding: List[float], threshold: float) -> Optional[Tuple[Any, float]]:
+        """
+        Search for similar vectors.
+        
+        Args:
+            embedding: Query embedding vector
+            threshold: Minimum similarity threshold
+            
+        Returns:
+            Tuple of (payload, similarity_score) if found, None otherwise
+        """
         best_match = None
         best_similarity = 0.0
-        now = time.time()
-        for key, val in self._store.items():
-            sim = _cosine_similarity(query_embedding, val["embedding"])
+        
+        for _key, (emb, payload) in self.store.items():
+            sim = _cosine_similarity(embedding, emb)
             if sim > best_similarity and sim >= threshold:
                 best_similarity = sim
-                best_match = val["response"]
-            # update LRU timestamp
-            val["last_access"] = now
-        if best_match:
-            logger.info(f"Memory L2 HIT similarity={best_similarity:.4f}")
+                best_match = payload
+        
+        if best_match is not None:
+            logger.info(f"Memory L2 cache HIT: similarity={best_similarity:.4f}")
             return best_match, best_similarity
+        
         return None
 
-    def set(self, query_hash: str, embedding: List[float], response: str) -> None:
-        now = time.time()
-        self._store[query_hash] = {
-            "embedding": embedding,
-            "response": response,
-            "created_at": now,
-            "last_access": now,
-        }
-        self._evict_if_needed()
-
-    def clear(self) -> None:
-        self._store.clear()
-
-
-class RedisVectorL2Backend(BaseL2Backend):
-    """
-    Redis-based L2 cache.
-    Uses Redis as shared store; similarity search is client-side scan (bounded) to keep implementation lightweight.
-    For production, enable Redis Stack vector index and replace scan with FT.SEARCH.
-    """
-    def __init__(
-        self,
-        redis_client: redis.Redis,
-        ttl_seconds: int = 3600,
-        max_scan: int = 2000,
-    ):
-        self.redis = redis_client
-        self.ttl_seconds = ttl_seconds
-        self.max_scan = max_scan
-
-    def _key(self, query_hash: str) -> str:
-        return f"rag:l2:{query_hash}"
-
-    def search(self, query_embedding: List[float], threshold: float) -> Optional[Tuple[str, float]]:
-        try:
-            cursor = 0
-            scanned = 0
-            best_match = None
-            best_similarity = 0.0
-            while True:
-                cursor, keys = self.redis.scan(cursor=cursor, match="rag:l2:*", count=200)
-                for k in keys:
-                    if scanned >= self.max_scan:
-                        break
-                    scanned += 1
-                    data = self.redis.get(k)
-                    if not data:
-                        continue
-                    try:
-                        payload = pickle.loads(data)
-                        emb = payload.get("embedding")
-                        resp = payload.get("response")
-                        created_at = payload.get("created_at", 0)
-                        if time.time() - created_at > self.ttl_seconds:
-                            continue
-                        sim = _cosine_similarity(query_embedding, emb)
-                        if sim > best_similarity and sim >= threshold:
-                            best_similarity = sim
-                            best_match = resp
-                    except Exception:
-                        continue
-                if cursor == 0 or scanned >= self.max_scan:
-                    break
-            if best_match:
-                logger.info(f"Redis-vector L2 HIT similarity={best_similarity:.4f} scanned={scanned}")
-                return best_match, best_similarity
-            return None
-        except Exception as e:
-            logger.warning(f"Redis-vector L2 search failed: {e}")
-            return None
-
-    def set(self, query_hash: str, embedding: List[float], response: str) -> None:
-        try:
-            payload = {
-                "embedding": embedding,
-                "response": response,
-                "created_at": time.time(),
-            }
-            self.redis.setex(self._key(query_hash), self.ttl_seconds, pickle.dumps(payload))
-        except Exception as e:
-            logger.warning(f"Redis-vector L2 set failed: {e}")
-
-    def clear(self) -> None:
-        try:
-            cursor = 0
-            while True:
-                cursor, keys = self.redis.scan(cursor=cursor, match="rag:l2:*", count=200)
-                if keys:
-                    self.redis.delete(*keys)
-                if cursor == 0:
-                    break
-        except Exception as e:
-            logger.warning(f"Redis-vector L2 clear failed: {e}")
+    def clear(self) -> bool:
+        """Clear all cached vectors."""
+        self.store.clear()
+        return True
 

@@ -7,94 +7,16 @@ Cache Manager implementing hybrid caching strategy:
 import hashlib
 import logging
 import pickle
-from typing import List, Optional, Tuple, Any, Dict
+from typing import List, Optional
 
 import redis
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from app.rag.cache.base import KeywordCacheBackend, VectorCacheBackend
+from app.rag.cache.backends import RedisKeywordCache, MemoryVectorCache
 
 logger = logging.getLogger(__name__)
-
-
-def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    if len(vec1) != len(vec2):
-        return 0.0
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
-    magnitude1 = sum(a * a for a in vec1) ** 0.5
-    magnitude2 = sum(b * b for b in vec2) ** 0.5
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0.0
-    return dot_product / (magnitude1 * magnitude2)
-
-
-class RedisKeywordCache(KeywordCacheBackend):
-    def __init__(self, client: redis.Redis):
-        self.client = client
-
-    def get(self, key: str) -> Optional[bytes]:
-        try:
-            return self.client.get(key)
-        except Exception:
-            return None
-
-    def set(self, key: str, value: bytes, ttl_seconds: int | None = None) -> bool:
-        try:
-            if ttl_seconds:
-                self.client.setex(key, ttl_seconds, value)
-            else:
-                self.client.set(key, value)
-            return True
-        except Exception:
-            return False
-
-    def delete(self, key: str) -> bool:
-        try:
-            self.client.delete(key)
-            return True
-        except Exception:
-            return False
-
-    def clear(self, pattern: str | None = None) -> bool:
-        try:
-            pat = pattern or "*"
-            keys = self.client.keys(pat)
-            if keys:
-                self.client.delete(*keys)
-            return True
-        except Exception:
-            return False
-
-
-class MemoryVectorCache(VectorCacheBackend):
-    """
-    Simple in-memory vector cache.
-    Stores: {key: (embedding, payload)}
-    """
-    def __init__(self):
-        self.store: Dict[str, Tuple[List[float], Any]] = {}
-
-    def add(self, key: str, embedding: List[float], payload: Any) -> bool:
-        self.store[key] = (embedding, payload)
-        return True
-
-    def search(self, embedding: List[float], threshold: float) -> Optional[Tuple[Any, float]]:
-        best_match = None
-        best_similarity = 0.0
-        for _key, (emb, payload) in self.store.items():
-            sim = _cosine_similarity(embedding, emb)
-            if sim > best_similarity and sim >= threshold:
-                best_similarity = sim
-                best_match = payload
-        if best_match is not None:
-            logger.info(f"Memory L2 HIT similarity={best_similarity:.4f}")
-            return best_match, best_similarity
-        return None
-
-    def clear(self) -> bool:
-        self.store.clear()
-        return True
 
 
 class CacheManager:
@@ -327,51 +249,6 @@ class CacheManager:
                 logger.warning(f"Error writing L2 response cache: {e}")
         
         return True
-    
-    def _find_similar_cached_query(
-        self,
-        query_embedding: List[float]
-    ) -> Optional[Tuple[str, float]]:
-        """
-        Find the most similar cached query using cosine similarity.
-        
-        Args:
-            query_embedding: Embedding vector of the query
-            
-        Returns:
-            Tuple of (cached_response, similarity_score) if found, None otherwise
-        """
-        if not self._l2_cache:
-            return None
-        
-        best_match = None
-        best_similarity = 0.0
-        
-        for cached_hash, (cached_embedding, cached_response) in self._l2_cache.items():
-            similarity = self._cosine_similarity(query_embedding, cached_embedding)
-
-            logger.info(f"Similarity between query and cached query: {similarity}")
-            
-            if similarity > best_similarity and similarity >= self.similarity_threshold:
-                best_similarity = similarity
-                best_match = (cached_response, similarity)
-        
-        return best_match
-    
-    @staticmethod
-    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-        """Compute cosine similarity between two vectors."""
-        if len(vec1) != len(vec2):
-            return 0.0
-        
-        dot_product = sum(a * b for a, b in zip(vec1, vec2))
-        magnitude1 = sum(a * a for a in vec1) ** 0.5
-        magnitude2 = sum(b * b for b in vec2) ** 0.5
-        
-        if magnitude1 == 0 or magnitude2 == 0:
-            return 0.0
-        
-        return dot_product / (magnitude1 * magnitude2)
     
     def clear_cache(self, cache_type: Optional[str] = None) -> bool:
         """
