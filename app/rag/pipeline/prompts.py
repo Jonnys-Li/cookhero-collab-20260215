@@ -51,7 +51,7 @@ REWRITE_PROMPT_TEMPLATE = """
 <|user|>
 原始的查询: {query}
 <|assistant|>
-优化后的查询:
+只输出1句重写后的查询，禁止添加前缀/后缀/解释/Markdown/项目符号/标题，禁止多行，仅返回重写后的自然语言查询:
 """
 REWRITE_PROMPT = ChatPromptTemplate.from_template(REWRITE_PROMPT_TEMPLATE)
 
