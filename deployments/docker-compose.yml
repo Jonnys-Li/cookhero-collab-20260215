@@ -2,7 +2,7 @@
 version: '3.5'
 
 networks:
-  milvus_net:
+  cookhero_net:
 
 services:
   etcd:
@@ -17,7 +17,7 @@ services:
       - ./volumes/etcd:/etcd
     command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
     networks:
-      - milvus_net
+      - cookhero_net
     restart: always
 
   minio:
@@ -37,7 +37,7 @@ services:
       timeout: 20s
       retries: 3
     networks:
-      - milvus_net
+      - cookhero_net
     restart: always
 
   milvus:
@@ -56,5 +56,22 @@ services:
       - etcd
       - minio
     networks:
-      - milvus_net
+      - cookhero_net
+    restart: always
+
+  redis:
+    container_name: cookhero_redis
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./volumes/redis:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cookhero_net
     restart: always

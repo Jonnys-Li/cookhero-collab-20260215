@@ -25,7 +25,7 @@ llm:
   # Optional base URL for self-hosted or proxy endpoints
   base_url: "https://api.siliconflow.cn/v1"
   # Generation parameters
-  temperature: 0.1
+  temperature: 0
   max_tokens: 131072
 
 retrieval:
@@ -52,6 +52,21 @@ reranker:
   base_url: "https://api.siliconflow.cn/v1/rerank"
   temperature: 0.0
   max_tokens: 32768
+
+cache:
+  # Whether to enable caching
+  enabled: true
+  # Redis configuration
+  redis_host: "localhost"
+  redis_port: 6379
+  redis_db: 0
+  redis_password: null  # Set in .env file if needed
+  # Cache TTL (time-to-live) in seconds
+  retrieval_ttl: 1800  # 30 minutes for retrieval results
+  response_ttl: 3600   # 1 hour for query responses
+  # L2 semantic cache settings
+  l2_enabled: true
+  similarity_threshold: 0.8  # Minimum similarity for L2 cache matching (0-1)
 
 data_source:
   # Settings specific to the HowToCook data source

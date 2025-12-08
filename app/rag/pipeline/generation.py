@@ -67,24 +67,43 @@ class GenerationIntegrationModule:
         
         return rewritten_query
 
-    def generate_response(self, query: str, context_docs: List[str], stream: bool = False):
+    def generate_response(self, query: str, context_docs: List[str], stream: bool = False, temperature: float | None = None):
         """
         Generates a final answer based on the query and a list of context strings.
+        
+        Args:
+            query: The user's query
+            context_docs: List of context document strings
+            stream: Whether to stream the response
+            temperature: Optional temperature override. If provided, temporarily modifies LLM temperature.
         """
-        context_str = self._build_context_string(context_docs)
+        # Temporarily modify temperature if specified
+        original_temp = None
+        if temperature is not None:
+            original_temp = self.llm.temperature
+            self.llm.temperature = temperature
+            logger.debug(f"Temporarily set LLM temperature to {temperature}")
         
-        chain = (
-            {"question": RunnablePassthrough(), "context": lambda _: context_str}
-            | GENERATION_PROMPT
-            # | RunnableLambda(make_debug_input("generate_response"))
-            | self.llm
-            | StrOutputParser()
-        )
-        
-        if stream:
-            return chain.stream(query)
-        else:
-            return chain.invoke(query)
+        try:
+            context_str = self._build_context_string(context_docs)
+            
+            chain = (
+                {"question": RunnablePassthrough(), "context": lambda _: context_str}
+                | GENERATION_PROMPT
+                # | RunnableLambda(make_debug_input("generate_response"))
+                | self.llm
+                | StrOutputParser()
+            )
+            
+            if stream:
+                return chain.stream(query)
+            else:
+                return chain.invoke(query)
+        finally:
+            # Restore original temperature if it was modified
+            if original_temp is not None:
+                self.llm.temperature = original_temp
+                logger.debug(f"Restored LLM temperature to {original_temp}")
             
     def _build_context_string(self, docs: List[str]) -> str:
         """

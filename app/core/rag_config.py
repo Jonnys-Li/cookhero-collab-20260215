@@ -57,6 +57,17 @@ class DataSourceConfig(BaseModel):
     tips: TipsConfig
     generic_text: GenericTextConfig
 
+class CacheConfig(BaseModel):
+    enabled: bool = True
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: Optional[str] = None
+    retrieval_ttl: int = 1800  # 30 minutes
+    response_ttl: int = 3600   # 1 hour
+    l2_enabled: bool = True
+    similarity_threshold: float = 0.95
+
 # --- Main Configuration Model ---
 
 class RAGConfig(BaseModel):
@@ -70,6 +81,7 @@ class RAGConfig(BaseModel):
     llm: LLMConfig
     retrieval: RetrievalConfig
     reranker: RerankerConfig
+    cache: CacheConfig
     data_source: DataSourceConfig
 
 

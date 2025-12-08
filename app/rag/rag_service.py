@@ -14,6 +14,7 @@ from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.rag.pipeline.retrieval import RetrievalOptimizationModule
 from app.rag.pipeline.generation import GenerationIntegrationModule
 from app.rag.rerankers.base import BaseReranker
+from app.rag.cache import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,25 @@ class RAGService:
                 logger.info("SiliconFlow Reranker initialized.")
             else:
                 logger.warning(f"Reranker type '{self.config.reranker.type}' not recognized. Reranking disabled.")
+
+        # Initialize cache manager if enabled
+        self.cache_manager: CacheManager | None = None
+        if self.config.cache.enabled:
+            embeddings = get_embedding_model(self.config)
+            self.cache_manager = CacheManager(
+                redis_host=self.config.cache.redis_host,
+                redis_port=self.config.cache.redis_port,
+                redis_db=self.config.cache.redis_db,
+                redis_password=self.config.cache.redis_password,
+                retrieval_ttl=self.config.cache.retrieval_ttl,
+                response_ttl=self.config.cache.response_ttl,
+                similarity_threshold=self.config.cache.similarity_threshold,
+                embeddings=embeddings,
+                l2_enabled=self.config.cache.l2_enabled
+            )
+            logger.info("Cache manager initialized.")
+        else:
+            logger.info("Caching is disabled.")
 
         self._initialized = True
         logger.info("RAGService initialized successfully with multiple knowledge bases.")
@@ -152,6 +172,13 @@ class RAGService:
         # 1. Rewrite Query
         rewritten_query = self.generation_module.rewrite_query(query)
         
+        # Check response cache first (L1 + L2)
+        if self.cache_manager:
+            cached_response = self.cache_manager.get_response_cache(rewritten_query)
+            if cached_response:
+                logger.info("Returning cached response")
+                return cached_response
+        
         # Detect if this is a recommendation query (needs more results)
         is_recommendation_query = self._is_recommendation_query(rewritten_query)
         # Increase top_k for recommendation queries to get more diverse results
@@ -165,23 +192,41 @@ class RAGService:
         for name, retrieval_module in self.retrieval_modules.items():
             logger.info(f"Retrieving from source: {name}")
             
-            # Determine ranker type for this specific retrieval
-            ranker_type, ranker_weights = None, None
-            if use_intelligent_ranker:
-                 ranker_type, ranker_weights = retrieval_module.intelligent_ranker_selection(rewritten_query)
+            # Check retrieval cache first
+            cached_docs = None
+            if self.cache_manager:
+                cached_docs = self.cache_manager.get_retrieval_cache(name, rewritten_query)
+            
+            if cached_docs:
+                logger.info(f"Using cached retrieval results for source '{name}': {len(cached_docs)} documents")
+                # Restore scores from cache (if available) or use default
+                for doc in cached_docs:
+                    if 'retrieval_score' not in doc.metadata:
+                        doc.metadata['retrieval_score'] = 1.0  # Default score for cached docs
+                    doc.metadata['data_source'] = name
+                all_retrieved_docs.extend(cached_docs)
+            else:
+                # Determine ranker type for this specific retrieval
+                ranker_type, ranker_weights = None, None
+                if use_intelligent_ranker:
+                     ranker_type, ranker_weights = retrieval_module.intelligent_ranker_selection(rewritten_query)
 
-            # Retrieve docs from one source
-            retrieved_docs, retrieved_scores = retrieval_module.hybrid_search(
-                rewritten_query,
-                top_k=retrieval_top_k, # Use adjusted top_k for recommendation queries
-                ranker_type=ranker_type,
-                ranker_weights=ranker_weights
-            )
-            # Add source name and score to metadata for later processing
-            for doc, score in zip(retrieved_docs, retrieved_scores):
-                doc.metadata['data_source'] = name
-                doc.metadata['retrieval_score'] = score
-            all_retrieved_docs.extend(retrieved_docs)
+                # Retrieve docs from one source
+                retrieved_docs, retrieved_scores = retrieval_module.hybrid_search(
+                    rewritten_query,
+                    top_k=retrieval_top_k, # Use adjusted top_k for recommendation queries
+                    ranker_type=ranker_type,
+                    ranker_weights=ranker_weights
+                )
+                # Add source name and score to metadata for later processing
+                for doc, score in zip(retrieved_docs, retrieved_scores):
+                    doc.metadata['data_source'] = name
+                    doc.metadata['retrieval_score'] = score
+                all_retrieved_docs.extend(retrieved_docs)
+                
+                # Cache retrieval results
+                if self.cache_manager:
+                    self.cache_manager.set_retrieval_cache(name, rewritten_query, retrieved_docs)
         
         logger.info(f"--- Aggregated {len(all_retrieved_docs)} documents from all sources ---")
 
@@ -254,11 +299,21 @@ class RAGService:
                 context_parts.append(doc.page_content)
         
         # 5. Generate Response
+        # For caching, we use temperature=0 to ensure deterministic responses
+        # Check if we need to use deterministic generation for caching
+        use_deterministic = self.cache_manager is not None and not stream
+        
+        # Generate response with optional temperature override for caching
         response = self.generation_module.generate_response(
             query=rewritten_query,
             context_docs=context_parts,
-            stream=stream
+            stream=stream,
+            temperature=0.0 if use_deterministic else None
         )
+        
+        # Cache the response if caching is enabled and response is not streaming
+        if use_deterministic and isinstance(response, str):
+            self.cache_manager.set_response_cache(rewritten_query, response, use_deterministic=True)
 
         return response
 
