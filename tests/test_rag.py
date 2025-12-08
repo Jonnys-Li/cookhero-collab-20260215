@@ -18,8 +18,7 @@ def test_rag_service():
 
     sample_questions = [
         "皮蛋瘦肉粥怎么做？",
-        # "给一些荤菜重油的推荐",
-        "皮蛋瘦肉粥怎么样？好吃吗？有没有类似的菜品？", 
+        "皮蛋瘦肉粥需要准备哪些食材以及厨房用具？",
     ]
 
     for i, question in enumerate(sample_questions):

@@ -5,15 +5,19 @@ Cache Manager implementing hybrid caching strategy:
 - L2 Cache: Semantic similarity matching based on query embeddings (in-memory)
 """
 import hashlib
-import json
 import logging
 import pickle
-from typing import List, Optional, Tuple, Any, Dict
-from datetime import timedelta
+from typing import List, Optional, Tuple
 
 import redis
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
+
+from app.rag.cache.backends import (
+    BaseL2Backend,
+    MemoryL2Backend,
+    RedisVectorL2Backend,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +46,11 @@ class CacheManager:
         response_ttl: int = 3600,  # 1 hour
         similarity_threshold: float = 0.95,
         embeddings: Optional[Embeddings] = None,
-        l2_enabled: bool = True
+        l2_enabled: bool = True,
+        l2_backend: str = "memory",
+        l2_max_items: int = 500,
+        l2_ttl_seconds: int = 3600,
+        redis_vector_scan_limit: int = 2000,
     ):
         """
         Initialize the cache manager.
@@ -86,10 +94,27 @@ class CacheManager:
         if l2_enabled and embeddings is None:
             logger.warning("L2 cache enabled but no embeddings provided. L2 cache will be disabled.")
             self.l2_enabled = False
-        
-        # L2 cache storage (in-memory for now, can be extended to use Milvus)
-        # Format: {query_hash: (embedding, response)}
-        self._l2_cache: Dict[str, Tuple[List[float], Any]] = {}
+
+        # L2 backend
+        self.l2_backend: Optional[BaseL2Backend] = None
+        if self.l2_enabled:
+            if l2_backend == "memory":
+                self.l2_backend = MemoryL2Backend(max_items=l2_max_items, ttl_seconds=l2_ttl_seconds)
+                logger.info(f"L2 backend initialized: memory (max_items={l2_max_items}, ttl={l2_ttl_seconds}s)")
+            elif l2_backend == "redis_vector":
+                if self.redis_client:
+                    self.l2_backend = RedisVectorL2Backend(
+                        redis_client=self.redis_client,
+                        ttl_seconds=l2_ttl_seconds,
+                        max_scan=redis_vector_scan_limit,
+                    )
+                    logger.info("L2 backend initialized: redis_vector")
+                else:
+                    logger.warning("L2 backend redis_vector requested but Redis not available; disabling L2.")
+                    self.l2_enabled = False
+            else:
+                logger.warning(f"Unknown L2 backend '{l2_backend}', disabling L2.")
+                self.l2_enabled = False
         
     def _compute_hash(self, text: str) -> str:
         """Compute SHA256 hash of a text string."""
@@ -197,10 +222,10 @@ class CacheManager:
                 logger.warning(f"Error reading L1 response cache: {e}")
         
         # Try L2 cache (semantic similarity)
-        if self.l2_enabled and self.embeddings:
+        if self.l2_enabled and self.embeddings and self.l2_backend:
             try:
                 query_embedding = self.embeddings.embed_query(rewritten_query)
-                best_match = self._find_similar_cached_query(query_embedding)
+                best_match = self.l2_backend.search(query_embedding, self.similarity_threshold)
                 
                 if best_match:
                     logger.info(f"Response cache HIT (L2): similarity={best_match[1]:.4f}")
@@ -242,11 +267,11 @@ class CacheManager:
                 logger.warning(f"Error writing L1 response cache: {e}")
         
         # Store in L2 cache (semantic similarity)
-        if self.l2_enabled and self.embeddings:
+        if self.l2_enabled and self.embeddings and self.l2_backend:
             try:
                 query_embedding = self.embeddings.embed_query(rewritten_query)
                 query_hash = self._compute_hash(rewritten_query)
-                self._l2_cache[query_hash] = (query_embedding, response)
+                self.l2_backend.set(query_hash, query_embedding, response)
                 logger.info("Cached response (L2): semantic index updated")
             except Exception as e:
                 logger.warning(f"Error writing L2 response cache: {e}")
@@ -326,7 +351,8 @@ class CacheManager:
             
             # Clear L2 cache if needed
             if cache_type is None or cache_type == 'response':
-                self._l2_cache.clear()
+                if self.l2_backend:
+                    self.l2_backend.clear()
                 logger.info("Cleared L2 semantic cache")
             
             return True

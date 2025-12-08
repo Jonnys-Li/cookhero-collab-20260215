@@ -66,7 +66,11 @@ cache:
   response_ttl: 3600   # 1 hour for query responses
   # L2 semantic cache settings
   l2_enabled: true
+  l2_backend: "memory"      # Options: memory, redis_vector
+  l2_max_items: 500         # Only used for memory backend
+  l2_ttl_seconds: 3600      # TTL for L2 entries
   similarity_threshold: 0.8  # Minimum similarity for L2 cache matching (0-1)
+  redis_vector_scan_limit: 2000  # Max keys scanned when using redis_vector fallback search
 
 data_source:
   # Settings specific to the HowToCook data source

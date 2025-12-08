@@ -66,7 +66,11 @@ class CacheConfig(BaseModel):
     retrieval_ttl: int = 1800  # 30 minutes
     response_ttl: int = 3600   # 1 hour
     l2_enabled: bool = True
+    l2_backend: Literal["memory", "redis_vector"] = "memory"
+    l2_max_items: int = 500
+    l2_ttl_seconds: int = 3600
     similarity_threshold: float = 0.95
+    redis_vector_scan_limit: int = 2000
 
 # --- Main Configuration Model ---
 

@@ -73,7 +73,11 @@ class RAGService:
                 response_ttl=self.config.cache.response_ttl,
                 similarity_threshold=self.config.cache.similarity_threshold,
                 embeddings=embeddings,
-                l2_enabled=self.config.cache.l2_enabled
+                l2_enabled=self.config.cache.l2_enabled,
+                l2_backend=self.config.cache.l2_backend,
+                l2_max_items=self.config.cache.l2_max_items,
+                l2_ttl_seconds=self.config.cache.l2_ttl_seconds,
+                redis_vector_scan_limit=self.config.cache.redis_vector_scan_limit,
             )
             logger.info("Cache manager initialized.")
         else:
