@@ -41,6 +41,8 @@ class GenerationIntegrationModule:
         self.api_key = api_key
         self.base_url = base_url
         self.llm = self._init_llm()
+        # Dedicated LLM for query rewriting (deterministic)
+        self.rewrite_llm = self._init_rewrite_llm()
         
     def _init_llm(self) -> ChatOpenAI:
         """Initializes the Chat LLM."""
@@ -53,11 +55,22 @@ class GenerationIntegrationModule:
             base_url=self.base_url or None
         )
 
+    def _init_rewrite_llm(self) -> ChatOpenAI:
+        """Initializes a deterministic LLM for query rewriting."""
+        logger.info(f"Initializing rewrite LLM (temperature=0): {self.model_name}")
+        return ChatOpenAI(
+            model=self.model_name,
+            temperature=0.0,
+            max_tokens=self.max_tokens,  # reuse max_tokens; rewriting is short
+            api_key=self.api_key,
+            base_url=self.base_url or None
+        )
+
     def rewrite_query(self, query: str) -> str:
         """
         Uses the LLM to rewrite a vague query into a more specific one for better retrieval.
         """
-        chain = REWRITE_PROMPT | self.llm | StrOutputParser()
+        chain = REWRITE_PROMPT | self.rewrite_llm | StrOutputParser()
         rewritten_query = chain.invoke({"query": query}).strip()
         
         if rewritten_query != query:
