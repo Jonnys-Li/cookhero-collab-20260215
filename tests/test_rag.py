@@ -17,11 +17,12 @@ def test_rag_service():
     # The config loader handles the API key check.
 
     sample_questions = [
-        "皮蛋瘦肉粥怎么做？",
-        "皮蛋瘦肉粥需要准备哪些食材以及厨房用具？",
-        "皮蛋瘦肉粥的做法",
-        "需要一些可以自制的甜品推荐",
-        "葱和蒜一般是做什么用的？何时需要使用它们？"
+        # "皮蛋瘦肉粥怎么做？",
+        # "皮蛋瘦肉粥需要准备哪些食材以及厨房用具？",
+        # "皮蛋瘦肉粥的做法",
+        # "需要一些可以自制的甜品推荐",
+        "推荐一些名字比较好听的菜品",
+        "平时在家做家常菜，厨房里需要常备哪些？"
     ]
 
     for i, question in enumerate(sample_questions):
