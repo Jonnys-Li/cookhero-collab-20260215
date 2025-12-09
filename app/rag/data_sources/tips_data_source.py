@@ -2,7 +2,7 @@
 import logging
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, final
 
 from langchain_text_splitters import MarkdownHeaderTextSplitter
 from langchain_core.documents import Document
@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # A specific namespace for generating document IDs
 DOC_NAMESPACE = uuid.UUID('7a7de5f8-7435-4354-9b1b-d50a09848520')
+MAX_K = 3  # Max number of parent documents to return after retrieval
 
 class TipsDataSource(BaseDataSource):
     """
@@ -71,6 +72,10 @@ class TipsDataSource(BaseDataSource):
                 )
                 parent_doc.metadata['retrieval_score'] = max_score
                 final_docs.append(parent_doc)
+        # sort by retrieval score descending
+        final_docs.sort(key=lambda d: d.metadata.get('retrieval_score', 0.0), reverse=True)
+        # cut off to top k if needed
+        final_docs = final_docs[:MAX_K]
         
         logger.info(f"Retrieved {len(retrieved_chunks)} tip chunks, corresponding to "
                     f"{len(final_docs)} unique parent tip documents.")

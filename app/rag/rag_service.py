@@ -188,7 +188,7 @@ class RAGService:
         if cached is not None:
             return cached
 
-        is_recommendation_query, retrieval_top_k = self._determine_retrieval_k(rewritten_query)
+        retrieval_top_k = self.config.retrieval.top_k
         all_retrieved_docs = self._retrieve_from_all_sources(
             rewritten_query,
             retrieval_top_k,
@@ -197,7 +197,7 @@ class RAGService:
         )
 
         processed_docs = self._post_process(all_retrieved_docs)
-        docs_for_rerank = self._select_for_rerank(processed_docs, retrieval_top_k, is_recommendation_query)
+        docs_for_rerank = self._select_for_rerank(processed_docs, retrieval_top_k)
         final_docs = self._rerank_if_needed(rewritten_query, docs_for_rerank)
         context_parts = self._build_context(final_docs)
         return self._generate_and_cache_response(rewritten_query, context_parts, stream)
@@ -216,13 +216,6 @@ class RAGService:
             return cached_response
         return None
 
-    def _determine_retrieval_k(self, rewritten_query: str) -> tuple[bool, int]:
-        is_rec = self._is_recommendation_query(rewritten_query)
-        top_k = self.config.retrieval.top_k * 2 if is_rec else self.config.retrieval.top_k
-        if is_rec:
-            logger.info(f"Detected recommendation query, increasing retrieval top_k to {top_k}")
-        return is_rec, top_k
-
     def _retrieve_from_all_sources(
         self,
         rewritten_query: str,
@@ -232,12 +225,12 @@ class RAGService:
     ):
         logger.info("--- Starting parallel retrieval from all data sources ---")
         all_retrieved_docs = []
+        expr = self._build_milvus_expr(
+            metadata_filters
+        )
         for name, retrieval_module in self.retrieval_modules.items():
             logger.info(f"Retrieving from source: {name}")
             # Filter metadata_filters to only include keys that exist in this source's catalog
-            expr = self._build_milvus_expr(
-                [f for f in metadata_filters if f['key'] in self.metadata_catalog.get(name, {})]
-            )
             # If metadata filters exist, bypass cached retrieval (cache key未区分过滤条件)
             cached_docs = None if metadata_filters else (self.cache_manager.get_retrieval_cache(name, rewritten_query) if self.cache_manager else None)
 
@@ -307,8 +300,8 @@ class RAGService:
         )
         return unique_processed_docs
 
-    def _select_for_rerank(self, processed_docs, retrieval_top_k: int, is_recommendation_query: bool):
-        top_k_before_rerank = retrieval_top_k if is_recommendation_query else self.config.retrieval.top_k
+    def _select_for_rerank(self, processed_docs, retrieval_top_k: int):
+        top_k_before_rerank = retrieval_top_k
         docs_for_rerank = processed_docs[:top_k_before_rerank]
         if docs_for_rerank:
             logger.info(

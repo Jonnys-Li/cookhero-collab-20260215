@@ -13,7 +13,7 @@ vector_store:
   collection_names:
     recipes: "cook_hero_recipes"
     tips: "cook_hero_tips"
-    generic_text: "cook_hero_generic_text"
+    # generic_text: "cook_hero_generic_text"
 
 embedding:
   # Local embedding model only
@@ -30,7 +30,7 @@ llm:
 
 retrieval:
   # Number of documents to retrieve
-  top_k: 9
+  top_k: 5
   # RRF k parameter (deprecated, kept for backward compatibility)
   rrf_k: 60
   # Minimum score threshold for filtering low-quality results (0.0 = no filtering)
@@ -46,7 +46,7 @@ reranker:
   # Type of reranker to use. Currently only 'siliconflow' is supported.
   type: "siliconflow"
   # Model for reranking. Must be a model compatible with the /rerank endpoint.
-  model_name: "BAAI/bge-reranker-v2-m3"
+  model_name: "Qwen/Qwen3-Reranker-8B"
   # Score threshold for filtering documents. Documents with a score below this will be discarded.
   score_threshold: 0.1
   base_url: "https://api.siliconflow.cn/v1/rerank"

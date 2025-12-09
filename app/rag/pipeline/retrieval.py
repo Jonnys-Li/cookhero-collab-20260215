@@ -73,9 +73,9 @@ class RetrievalOptimizationModule:
         logger.info(f"Parameters: top_k={top_k}, ranker_type={ranker_type}, weights={ranker_weights}, threshold={score_threshold}")
         
         # Prepare ranker parameters
-        ranker_params = {}
+        ranker_params = {"norm_score": True}
         if ranker_type == "weighted":
-            ranker_params = {"weights": ranker_weights}
+            ranker_params = {"weights": ranker_weights, "norm_score": True}
         
         # Milvus hybrid search with configurable ranker
         results = self.vectorstore.similarity_search_with_score(
@@ -134,7 +134,7 @@ class RetrievalOptimizationModule:
         keyword_indicators = ["怎么做", "如何", "步骤", "方法", "做法", "recipe", "how to"]
         if any(indicator in query_lower for indicator in keyword_indicators):
             logger.info(f"Query contains keyword indicators, using weighted ranker with BM25 bias")
-            return "weighted", [0.3, 0.7]  # Favor sparse/BM25
+            return "weighted", [0.4, 0.6]  # Favor sparse/BM25
         
         # Semantic/conceptual queries → favor dense embeddings
         # Expanded indicators to include recommendation queries
