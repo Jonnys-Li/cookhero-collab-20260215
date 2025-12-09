@@ -80,6 +80,7 @@ class CacheManager:
                 socket_timeout=5,
             )
             client.ping()
+            client.flushdb()
             self.redis_client = client
             logger.info(f"Redis connection established: {redis_host}:{redis_port}")
         except Exception as e:
@@ -220,7 +221,6 @@ class CacheManager:
         self,
         rewritten_query: str,
         response: str,
-        use_deterministic: bool = True
     ) -> bool:
         """
         Cache query response using hybrid strategy (L1 + L2).

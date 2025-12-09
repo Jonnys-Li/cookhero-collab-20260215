@@ -310,15 +310,14 @@ class RAGService:
         return context_parts
 
     def _generate_and_cache_response(self, rewritten_query: str, context_parts, stream: bool):
-        use_deterministic = self.cache_manager is not None and not stream
+        need_cache = self.cache_manager is not None and not stream
         response = self.generation_module.generate_response(
             query=rewritten_query,
             context_docs=context_parts,
             stream=stream,
-            temperature=0.0 if use_deterministic else None,
         )
-        if use_deterministic and isinstance(response, str):
-            self.cache_manager.set_response_cache(rewritten_query, response, use_deterministic=True)
+        if need_cache and isinstance(response, str):
+            self.cache_manager.set_response_cache(rewritten_query, response)
         return response
 
 # Instantiate the singleton service
