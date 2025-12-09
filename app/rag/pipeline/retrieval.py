@@ -47,7 +47,8 @@ class RetrievalOptimizationModule:
         top_k: int,
         ranker_type: Optional[str] = None,
         ranker_weights: Optional[List[float]] = None,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        expr: Optional[str] = None,
     ) -> Tuple[List[Document], List[float]]:
         """
         Performs hybrid search using Milvus built-in BM25 and dense vector search.
@@ -82,7 +83,8 @@ class RetrievalOptimizationModule:
             k=top_k,
             fetch_k=int(top_k * 4),
             ranker_type=ranker_type,
-            ranker_params=ranker_params if ranker_params else None
+            ranker_params=ranker_params if ranker_params else None,
+            expr=expr,
         )
         
         # Extract documents and scores
