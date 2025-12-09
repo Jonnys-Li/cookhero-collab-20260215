@@ -13,6 +13,7 @@ from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.rag.pipeline.retrieval import RetrievalOptimizationModule
 from app.rag.pipeline.generation import GenerationIntegrationModule
+from app.rag.pipeline.metadata_filter import MetadataFilterExtractor
 from app.rag.rerankers.base import BaseReranker
 from app.rag.cache import CacheManager
 
@@ -41,12 +42,20 @@ class RAGService:
         self.data_sources: Dict[str, BaseDataSource] = {}
         self.retrieval_modules: Dict[str, RetrievalOptimizationModule] = {}
         self.reranker: BaseReranker | None = None
+        self.metadata_catalog: Dict[str, Dict[str, list[str]]] = {}
 
         self._load_knowledge_bases()
 
         self.generation_module = GenerationIntegrationModule(
             model_name=self.config.llm.model_name,
             temperature=self.config.llm.temperature,
+            max_tokens=self.config.llm.max_tokens,
+            api_key=self.config.llm.api_key,  # type: ignore
+            base_url=self.config.llm.base_url
+        )
+
+        self.metadata_filter_extractor = MetadataFilterExtractor(
+            model_name=self.config.llm.model_name,
             max_tokens=self.config.llm.max_tokens,
             api_key=self.config.llm.api_key,  # type: ignore
             base_url=self.config.llm.base_url
@@ -129,6 +138,7 @@ class RAGService:
 
             child_chunks = data_source.get_chunks()
             self.data_sources[name] = data_source
+            self.metadata_catalog[name] = self._build_metadata_catalog(child_chunks)
             
             # Add a check to skip empty data sources
             if not child_chunks:
@@ -170,6 +180,10 @@ class RAGService:
             raise RuntimeError("RAG Service is not properly initialized.")
 
         rewritten_query = self._rewrite_query(query)
+        metadata_filters = self.metadata_filter_extractor.extract_filters(
+            query,
+            self._merge_metadata_catalog()
+        )
         cached = self._maybe_return_cached_response(rewritten_query)
         if cached is not None:
             return cached
@@ -179,6 +193,7 @@ class RAGService:
             rewritten_query,
             retrieval_top_k,
             use_intelligent_ranker,
+            metadata_filters,
         )
 
         processed_docs = self._post_process(all_retrieved_docs)
@@ -213,12 +228,18 @@ class RAGService:
         rewritten_query: str,
         retrieval_top_k: int,
         use_intelligent_ranker: bool,
+        metadata_filters: list,
     ):
         logger.info("--- Starting parallel retrieval from all data sources ---")
         all_retrieved_docs = []
         for name, retrieval_module in self.retrieval_modules.items():
             logger.info(f"Retrieving from source: {name}")
-            cached_docs = self.cache_manager.get_retrieval_cache(name, rewritten_query) if self.cache_manager else None
+            # Filter metadata_filters to only include keys that exist in this source's catalog
+            expr = self._build_milvus_expr(
+                [f for f in metadata_filters if f['key'] in self.metadata_catalog.get(name, {})]
+            )
+            # If metadata filters exist, bypass cached retrieval (cache key未区分过滤条件)
+            cached_docs = None if metadata_filters else (self.cache_manager.get_retrieval_cache(name, rewritten_query) if self.cache_manager else None)
 
             if cached_docs:
                 logger.info(f"Using cached retrieval results for source '{name}': {len(cached_docs)} documents")
@@ -233,12 +254,18 @@ class RAGService:
             if use_intelligent_ranker:
                 ranker_type, ranker_weights = retrieval_module.intelligent_ranker_selection(rewritten_query)
 
-            retrieved_docs, retrieved_scores = retrieval_module.hybrid_search(
-                rewritten_query,
-                top_k=retrieval_top_k,
-                ranker_type=ranker_type,
-                ranker_weights=ranker_weights,
-            )
+            try:
+                retrieved_docs, retrieved_scores = retrieval_module.hybrid_search(
+                    rewritten_query,
+                    top_k=retrieval_top_k,
+                    ranker_type=ranker_type,
+                    ranker_weights=ranker_weights,
+                    expr=expr,
+                )
+            except Exception as e:
+                logger.error(f"Error during retrieval from source '{name}': {e}")
+                continue
+            
             for doc, score in zip(retrieved_docs, retrieved_scores):
                 doc.metadata['data_source'] = name
                 doc.metadata['retrieval_score'] = score
@@ -310,15 +337,65 @@ class RAGService:
         return context_parts
 
     def _generate_and_cache_response(self, rewritten_query: str, context_parts, stream: bool):
-        need_cache = self.cache_manager is not None and not stream
         response = self.generation_module.generate_response(
             query=rewritten_query,
             context_docs=context_parts,
             stream=stream,
         )
-        if need_cache and isinstance(response, str):
+        if not stream and self.cache_manager is not None and isinstance(response, str):
             self.cache_manager.set_response_cache(rewritten_query, response)
         return response
+
+    def _build_metadata_catalog(self, chunks: list) -> Dict[str, list[str]]:
+        catalog: Dict[str, set[str]] = {}
+        for doc in chunks:
+            meta = getattr(doc, "metadata", {}) or {}
+            for k, v in meta.items():
+                if k not in ["category", "dish_name", "difficulty"]:
+                    continue
+                if v is None:
+                    continue
+                if isinstance(v, (str, int, float)):
+                    catalog.setdefault(k, set()).add(str(v))
+        res =  {k: sorted(list(vals)) for k, vals in catalog.items()}
+        return res
+
+    def _merge_metadata_catalog(self) -> Dict[str, list[str]]:
+        merged: Dict[str, set[str]] = {}
+        for source_catalog in self.metadata_catalog.values():
+            for k, vals in source_catalog.items():
+                merged.setdefault(k, set()).update(vals)
+        res = {k: sorted(list(vals)) for k, vals in merged.items()}
+        return res
+
+    def _build_milvus_expr(self, filters: list) -> str | None:
+        """
+        Build Milvus boolean expression from filters.
+        Example: category in ["素菜","荤菜"] and difficulty in ["简单"]
+        
+        Note: In Milvus, metadata fields are accessed directly by their field name,
+        not through a "metadata" prefix. The fields should be indexed as scalar fields.
+        """
+        if not filters:           
+            return None
+        clauses = []
+        for f in filters:
+            key = f.get("key")
+            values = f.get("values", [])
+            if not key or not values:
+                continue
+            # Escape quotes in values and wrap them
+            safe_vals = [f'"{str(v).replace(chr(34), chr(92)+chr(34))}"' for v in values]
+            if not safe_vals:
+                continue
+            # Direct field name access (not metadata["field"])
+            clause = f'{key} in [{", ".join(safe_vals)}]'
+            clauses.append(clause)
+        if not clauses:
+            return None
+        res = " and ".join(clauses)
+        logger.info(f"{'*' * 10} Built Milvus expression: {res}")
+        return res
 
 # Instantiate the singleton service
 rag_service_instance = RAGService()
