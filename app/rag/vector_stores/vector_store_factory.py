@@ -1,7 +1,7 @@
 # app/rag/vector_stores/vector_store_factory.py
 import logging
-from typing import List
-from pymilvus import utility, connections
+from typing import List, Dict, Any
+from pymilvus import utility, connections, DataType
 from langchain_milvus import Milvus, BM25BuiltInFunction
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -9,6 +9,15 @@ from langchain_core.embeddings import Embeddings
 from app.core.rag_config import VectorStoreConfig
 
 logger = logging.getLogger(__name__)
+
+# Define metadata fields that should be indexed as scalar fields for filtering
+# These fields will be searchable via Milvus expressions
+# Format: {field_name: {"dtype": DataType, "max_length": int (for VARCHAR)}}
+METADATA_SCALAR_SCHEMA: Dict[str, Any] = {
+    "category": {"dtype": DataType.VARCHAR, "max_length": 128},
+    "difficulty": {"dtype": DataType.VARCHAR, "max_length": 64},
+    "dish_name": {"dtype": DataType.VARCHAR, "max_length": 256},
+}
 
 def get_vector_store(
     vs_config: VectorStoreConfig,
@@ -55,6 +64,8 @@ def get_vector_store(
 
         # Use BM25BuiltInFunction for hybrid search (dense + sparse vectors)
         logger.info("Initializing Milvus with BM25 built-in function for hybrid search")
+        logger.info(f"Adding metadata scalar fields for filtering: {list(METADATA_SCALAR_SCHEMA.keys())}")
+        
         vector_store = Milvus.from_documents(
             documents=chunks,
             embedding=embeddings,
@@ -63,6 +74,7 @@ def get_vector_store(
             text_field="text",
             vector_field=["dense", "sparse"],  # dense for embeddings, sparse for BM25
             builtin_function=BM25BuiltInFunction(),
+            metadata_schema=METADATA_SCALAR_SCHEMA,  # Add scalar fields for filtering
         )
         logger.info(f"Successfully created and populated Milvus collection: {collection_name}")
     else:
@@ -74,6 +86,7 @@ def get_vector_store(
             text_field="text",
             vector_field=["dense", "sparse"],
             builtin_function=BM25BuiltInFunction(),
+            metadata_schema=METADATA_SCALAR_SCHEMA,  # Include schema for existing collection
         )
         logger.info(f"Successfully connected to Milvus collection: {collection_name}")
         
