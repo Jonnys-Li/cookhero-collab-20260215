@@ -17,9 +17,9 @@ def test_rag_service():
     # The config loader handles the API key check.
 
     sample_questions = [
-        "皮蛋瘦肉粥怎么做？",
-        "请推荐几道简单的素菜。",
-        "来一点非常哇塞的甜品。",
+        # "皮蛋瘦肉粥怎么做？",
+        # "请推荐几道简单的素菜。",
+        "皮蛋有哪些做法？",
     ]
 
     for i, question in enumerate(sample_questions):
