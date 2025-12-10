@@ -30,7 +30,7 @@ llm:
 
 retrieval:
   # Number of documents to retrieve
-  top_k: 5
+  top_k: 9
   # RRF k parameter (deprecated, kept for backward compatibility)
   rrf_k: 60
   # Minimum score threshold for filtering low-quality results (0.0 = no filtering)
