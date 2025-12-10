@@ -68,8 +68,6 @@ class MetadataFilterExtractor:
             reference_material=self.reference_material,
             query=query,
         )
-        with open("debug_metadata_filter_prompt.txt", "w", encoding="utf-8") as f:
-            f.write(prompt)
         try:
             response = self.llm.invoke(prompt)
             raw = response.content
