@@ -19,7 +19,7 @@ def test_rag_service():
     sample_questions = [
         "皮蛋瘦肉粥怎么做？",
         "请推荐几道简单的素菜。",
-        "川菜有哪些经典菜肴？",
+        "来一点非常哇塞的甜品。",
     ]
 
     for i, question in enumerate(sample_questions):
