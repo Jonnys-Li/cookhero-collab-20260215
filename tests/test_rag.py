@@ -18,15 +18,16 @@ def test_rag_service():
 
     sample_questions = [
         "皮蛋瘦肉粥怎么做？",
-        "请推荐几道简单的素菜。",
-        "皮蛋有哪些做法？",
+        # "请推荐几道简单的素菜。",
+        # "皮蛋有哪些做法？",
+        "皮蛋粥怎么做？",
     ]
 
     for i, question in enumerate(sample_questions):
         logger.info(f"\n--- Question {i+1}: {question} ---")
         try:
             logger.info("Streaming response:")
-            response_chunks = rag_service_instance.ask(question, stream=True)
+            response_chunks = rag_service_instance.ask(question, stream=False)
             full_response = ""
             for chunk in response_chunks:
                 print(chunk, end="", flush=True)

@@ -1,3 +1,20 @@
+## Basic operators
+
+Milvus supports several basic operators for filtering data:
+
+- **Comparison Operators** : `==` , `!=` , `>` , `<` , `>=` , and `<=` allow filtering based on numeric or text fields.
+- **Range Filters** : `LIKE` help match specific value ranges or sets.
+- **Arithmetic Operators** : `+` , `-` , `*` , `/` , `%` , and `**` are used for calculations involving numeric fields.
+- **Logical Operators** : `AND` , `OR` , and `NOT` combine multiple conditions into complex expressions.
+
+### Example
+
+To find individuals over the age of 25 living in either "北京" (Beijing) or "上海" (Shanghai), use the following template expression:
+
+```
+filter = "age > 25 AND city IN ['北京', '上海']"
+```
+
 ## Comparison operators
 
 Comparison operators are used to filter data based on equality, inequality, or size. They are applicable to numeric and text fields.
@@ -65,20 +82,9 @@ Range operators help filter data based on specific sets or ranges of values.
 
 ### Supported Range Operators:
 
-- `IN` : Used to match values within a specific set or range.
-- `LIKE` : Used to match a pattern (mostly for text fields). Milvus allows you to build an `NGRAM` index on VARCHAR or JSON fields to accelerate text queries. For details, refer to [NGRAM](\docs\ngram.md) .
+- `LIKE` : Used to match a pattern (mostly for text fields).
 
-### Example 1: Using IN to Match Multiple Values
-
-If you want to find all entities where the `color` is either "red", "green", or "blue":
-
-```
-filter = 'color in ["red", "green", "blue"]'
-```
-
-This is useful when you want to check for membership in a list of values.
-
-### Example 2: Using LIKE for Pattern Matching
+### Example 1: Using LIKE for Pattern Matching
 
 The `LIKE` operator is used for pattern matching in string fields. It can match substrings in different positions within the text: as a **prefix** , **infix** , or **suffix** . The `LIKE` operator uses the `%` symbol as a wildcard, which can match any number of characters (including zero).
 

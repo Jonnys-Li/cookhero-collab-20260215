@@ -44,7 +44,7 @@ FILTER_EXPRESSION_PROMPT = ChatPromptTemplate.from_template(
 
 
 REFERENCE_DIR = Path(__file__).resolve().parent / "reference"
-REFERENCE_FILES = ("boolean.md", "operators.md")
+REFERENCE_FILES = ("operators.md",)
 
 
 class MetadataFilterExtractor:
