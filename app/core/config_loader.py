@@ -37,6 +37,14 @@ def load_config() -> RAGConfig:
     if "cache" in config_data and redis_password:
         config_data["cache"]["redis_password"] = redis_password
 
+    cache_vector_user = secrets.get("CACHE_VECTOR_USER")
+    cache_vector_password = secrets.get("CACHE_VECTOR_PASSWORD")
+    if "cache" in config_data:
+        if cache_vector_user:
+            config_data["cache"]["vector_user"] = cache_vector_user
+        if cache_vector_password:
+            config_data["cache"]["vector_password"] = cache_vector_password
+
     # Validate and return the configuration using Pydantic models
     return RAGConfig.parse_obj(config_data)
 

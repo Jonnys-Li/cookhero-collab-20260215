@@ -1,5 +1,5 @@
 # app/core/rag_config.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Literal, Optional, Dict
 
 # --- Nested Configuration Models ---
@@ -65,8 +65,21 @@ class CacheConfig(BaseModel):
     redis_password: Optional[str] = None
     retrieval_ttl: int = 1800  # 30 minutes
     response_ttl: int = 3600   # 1 hour
-    l2_enabled: bool = True
+    response_l2_enabled: bool = True
     similarity_threshold: float = 0.95
+    vector_host: Optional[str] = None
+    vector_port: Optional[int] = None
+    vector_collection: str = "cookhero_response_cache"
+    vector_user: Optional[str] = None
+    vector_password: Optional[str] = None
+    vector_secure: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_l2_field(cls, values):
+        if isinstance(values, dict) and "response_l2_enabled" not in values and "l2_enabled" in values:
+            values["response_l2_enabled"] = values["l2_enabled"]
+        return values
 
 # --- Main Configuration Model ---
 

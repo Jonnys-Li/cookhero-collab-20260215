@@ -67,8 +67,14 @@ cache:
   retrieval_ttl: 600  # 1 hour for retrieval results (documents change infrequently)
   response_ttl: 300   # 30 minutes for query responses (users may want varied responses)
   # L2 semantic cache settings
-  l2_enabled: true
+  response_l2_enabled: true
   similarity_threshold: 0.8  # Minimum similarity for L2 cache matching (0-1)
+  vector_host: "localhost"
+  vector_port: 19530
+  vector_collection: "cookhero_response_cache"
+  vector_user: null
+  vector_password: null
+  vector_secure: false
 
 data_source:
   # Settings specific to the HowToCook data source
