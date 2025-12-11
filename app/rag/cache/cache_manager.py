@@ -1,9 +1,5 @@
 # app/rag/cache/cache_manager.py
-"""
-Cache Manager implementing hybrid caching strategy:
-- L1 Cache: Exact match based on rewritten query hash (Redis)
-- L2 Cache: Semantic similarity matching based on query embeddings (in-memory)
-"""
+"""Hybrid cache manager for retrieval (L1) and optional response L2 caching."""
 import hashlib
 import logging
 import pickle
@@ -14,7 +10,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from app.rag.cache.base import KeywordCacheBackend, VectorCacheBackend
-from app.rag.cache.backends import RedisKeywordCache, MemoryVectorCache
+from app.rag.cache.backends import MilvusVectorCache, RedisKeywordCache
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +20,13 @@ class CacheManager:
     Manages caching for retrieval results and query responses using a hybrid strategy.
     
     L1 Cache (Redis):
-    - Exact match based on rewritten query hash
+    - Exact match based on rewritten query hash (used for retrieval documents and responses)
     - Fast lookup for identical queries
     
-    L2 Cache (In-Memory):
-    - Semantic similarity matching based on query embeddings
-    - Handles query variations with high similarity
-    - Uses cosine similarity to find similar cached queries
+    L2 Cache (Vector index):
+    - Semantic similarity matching based on query embeddings (Milvus)
+    - Handles query variations with high similarity for responses only
+    - Optional per-request when storing or reading responses
     """
     
     def __init__(
@@ -43,7 +39,13 @@ class CacheManager:
         response_ttl: int = 1800,  # 30 minutes (shorter than retrieval_ttl)
         similarity_threshold: float = 0.95,
         embeddings: Optional[Embeddings] = None,
-        l2_enabled: bool = True
+        response_l2_enabled: bool = True,
+        vector_host: Optional[str] = None,
+        vector_port: Optional[int] = None,
+        vector_collection: str = "cookhero_response_cache",
+        vector_user: Optional[str] = None,
+        vector_password: Optional[str] = None,
+        vector_secure: bool = False,
     ):
         """
         Initialize the cache manager.
@@ -60,13 +62,17 @@ class CacheManager:
                 Should be shorter than retrieval_ttl since users may want
                 varied responses, but retrieval results change infrequently.
             similarity_threshold: Minimum similarity for L2 cache matching (0-1)
-            embeddings: Embedding model for L2 semantic matching (optional)
-            l2_enabled: Whether to enable L2 semantic cache
+                embeddings: Embedding model for L2 semantic matching (optional)
+            response_l2_enabled: Whether L2 semantic cache should be used for responses
+            vector_host/vector_port: Connection info for the Milvus cache collection
+            vector_collection: Milvus collection name used to store cached responses
+            vector_user/vector_password: Optional Milvus credentials
+            vector_secure: Whether to use TLS when connecting to Milvus
         """
         self.retrieval_ttl = retrieval_ttl
         self.response_ttl = response_ttl
         self.similarity_threshold = similarity_threshold
-        self.l2_enabled = l2_enabled
+        self.response_l2_enabled = response_l2_enabled
         # Initialize Redis connection (for keyword cache)
         self.redis_client: Optional[redis.Redis] = None
         try:
@@ -91,20 +97,50 @@ class CacheManager:
         self.keyword_cache: Optional[KeywordCacheBackend] = RedisKeywordCache(self.redis_client) if self.redis_client else None
 
         self.embeddings = embeddings
-        if l2_enabled and embeddings is None:
-            logger.warning("L2 cache enabled but no embeddings provided. L2 cache will be disabled.")
-            self.l2_enabled = False
-
-        self.vector_cache: Optional[VectorCacheBackend] = MemoryVectorCache() if self.l2_enabled else None
+        self.vector_cache: Optional[VectorCacheBackend] = None
+        self._embedding_dimension: Optional[int] = None
+        if self.response_l2_enabled:
+            self._embedding_dimension = self._infer_embedding_dimension()
+            if embeddings is None or self._embedding_dimension is None:
+                logger.warning("Response L2 cache enabled but embeddings are unavailable. Disabling L2 cache.")
+                self.response_l2_enabled = False
+            else:
+                host = vector_host or redis_host
+                port = vector_port or 19530
+                try:
+                    self.vector_cache = MilvusVectorCache(
+                        host=host,
+                        port=port,
+                        collection_name=vector_collection,
+                        dimension=self._embedding_dimension,
+                        user=vector_user,
+                        password=vector_password,
+                        secure=vector_secure,
+                    )
+                    logger.info(
+                        "Milvus L2 cache ready at %s:%s (collection=%s)",
+                        host,
+                        port,
+                        vector_collection,
+                    )
+                except Exception as exc:  # pragma: no cover - optional dependency guard
+                    logger.warning("Failed to initialize Milvus vector cache: %s. Disabling response L2 cache.", exc)
+                    self.response_l2_enabled = False
         
     def _compute_hash(self, text: str) -> str:
         """Compute SHA256 hash of a text string."""
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
     
-    def _get_retrieval_key(self, data_source: str, rewritten_query: str) -> str:
-        """Generate cache key for retrieval results."""
+    def _get_retrieval_key(
+        self,
+        data_source: str,
+        rewritten_query: str,
+        metadata_expression: Optional[str],
+    ) -> str:
+        """Generate cache key for retrieval results including metadata filters."""
         query_hash = self._compute_hash(rewritten_query)
-        return f"rag:retrieval:{data_source}:{query_hash}"
+        metadata_hash = self._compute_hash(metadata_expression or "__none__")
+        return f"rag:retrieval:{data_source}:{query_hash}:{metadata_hash}"
     
     def _get_response_key(self, rewritten_query: str) -> str:
         """Generate cache key for query responses."""
@@ -112,9 +148,10 @@ class CacheManager:
         return f"rag:response:{query_hash}"
     
     def get_retrieval_cache(
-        self, 
-        data_source: str, 
-        rewritten_query: str
+        self,
+        data_source: str,
+        rewritten_query: str,
+        metadata_expression: Optional[str],
     ) -> Optional[List[Document]]:
         """
         Get cached retrieval results (L1 cache only).
@@ -122,6 +159,7 @@ class CacheManager:
         Args:
             data_source: Name of the data source
             rewritten_query: The rewritten query string
+            metadata_expression: The metadata filter expression (part of the cache key)
             
         Returns:
             Cached documents if found, None otherwise
@@ -130,7 +168,7 @@ class CacheManager:
             return None
         
         try:
-            cache_key = self._get_retrieval_key(data_source, rewritten_query)
+            cache_key = self._get_retrieval_key(data_source, rewritten_query, metadata_expression)
             cached_data = self.keyword_cache.get(cache_key)
             
             if cached_data:
@@ -149,6 +187,7 @@ class CacheManager:
         self,
         data_source: str,
         rewritten_query: str,
+        metadata_expression: Optional[str],
         documents: List[Document]
     ) -> bool:
         """
@@ -157,6 +196,7 @@ class CacheManager:
         Args:
             data_source: Name of the data source
             rewritten_query: The rewritten query string
+            metadata_expression: The metadata filter expression (part of the cache key)
             documents: Documents to cache
             
         Returns:
@@ -166,25 +206,33 @@ class CacheManager:
             return False
         
         try:
-            cache_key = self._get_retrieval_key(data_source, rewritten_query)
-            # Serialize documents
+            cache_key = self._get_retrieval_key(data_source, rewritten_query, metadata_expression)
             serialized = pickle.dumps(documents)
-            self.keyword_cache.set(cache_key, serialized, ttl_seconds=self.retrieval_ttl)
-            logger.info(f"Cached retrieval results for source '{data_source}': {len(documents)} documents (TTL: {self.retrieval_ttl}s)")
-            return True
+            stored = self.keyword_cache.set(cache_key, serialized, ttl_seconds=self.retrieval_ttl)
+            if stored:
+                logger.info(
+                    "Cached retrieval results for source '%s': %d documents (TTL: %ss)",
+                    data_source,
+                    len(documents),
+                    self.retrieval_ttl,
+                )
+            return stored
         except Exception as e:
             logger.warning(f"Error writing retrieval cache: {e}")
             return False
     
     def get_response_cache(
         self,
-        rewritten_query: str
+        rewritten_query: str,
+        use_l2: Optional[bool] = None,
     ) -> Optional[str]:
         """
         Get cached response using hybrid strategy (L1 + L2).
         
         Args:
             rewritten_query: The rewritten query string
+            use_l2: Optional override to enable/disable semantic cache lookup
+                for this call.
             
         Returns:
             Cached response if found, None otherwise
@@ -203,7 +251,8 @@ class CacheManager:
                 logger.warning(f"Error reading L1 response cache: {e}")
         
         # Try L2 cache (semantic similarity)
-        if self.l2_enabled and self.embeddings and self.vector_cache:
+        if self._should_use_l2(use_l2):
+            assert self.embeddings is not None and self.vector_cache is not None
             try:
                 query_embedding = self.embeddings.embed_query(rewritten_query)
                 best_match = self.vector_cache.search(query_embedding, self.similarity_threshold)
@@ -221,6 +270,7 @@ class CacheManager:
         self,
         rewritten_query: str,
         response: str,
+        use_l2: Optional[bool] = None,
     ) -> bool:
         """
         Cache query response using hybrid strategy (L1 + L2).
@@ -228,31 +278,44 @@ class CacheManager:
         Args:
             rewritten_query: The rewritten query string
             response: The response to cache
-            use_deterministic: If True, cache with temperature=0 (deterministic)
+            use_l2: Optional override to enable/disable semantic cache storage
+                for this call.
             
         Returns:
             True if caching succeeded, False otherwise
         """
+        success = True
         # Store in L1 cache (exact match)
         if self.keyword_cache:
             try:
                 cache_key = self._get_response_key(rewritten_query)
-                self.keyword_cache.set(cache_key, response.encode('utf-8'), ttl_seconds=self.response_ttl)
-                logger.info(f"Cached response (L1): TTL={self.response_ttl}s")
+                success = self.keyword_cache.set(cache_key, response.encode('utf-8'), ttl_seconds=self.response_ttl)
+                if success:
+                    logger.info(f"Cached response (L1): TTL={self.response_ttl}s")
             except Exception as e:
                 logger.warning(f"Error writing L1 response cache: {e}")
+                success = False
         
         # Store in L2 cache (semantic similarity)
-        if self.l2_enabled and self.embeddings and self.vector_cache:
+        if self._should_use_l2(use_l2):
+            assert self.embeddings is not None and self.vector_cache is not None
             try:
                 query_embedding = self.embeddings.embed_query(rewritten_query)
                 query_hash = self._compute_hash(rewritten_query)
-                self.vector_cache.add(query_hash, query_embedding, response)
-                logger.info("Cached response (L2): semantic index updated")
+                stored = self.vector_cache.add(
+                    query_hash,
+                    query_embedding,
+                    response,
+                    ttl_seconds=self.response_ttl,
+                ) 
+                success = success and stored
+                if stored:
+                    logger.info("Cached response (L2): semantic index updated")
             except Exception as e:
                 logger.warning(f"Error writing L2 response cache: {e}")
+                success = False
         
-        return True
+        return success
     
     def clear_cache(self, cache_type: Optional[str] = None) -> bool:
         """
@@ -275,16 +338,20 @@ class CacheManager:
             else:
                 pattern = "rag:*"
             
-            self.keyword_cache.clear(pattern)
-            logger.info(f"Cleared cache entries matching '{pattern}'")
+            cleared = self.keyword_cache.clear(pattern)
+            if cleared:
+                logger.info(f"Cleared cache entries matching '{pattern}'")
+            else:
+                logger.warning("Keyword cache clear failed for pattern '%s'", pattern)
             
+            overall_success = bool(cleared)
             # Clear L2 cache if needed
             if cache_type is None or cache_type == 'response':
                 if self.vector_cache:
-                    self.vector_cache.clear()
-                logger.info("Cleared L2 semantic cache")
+                    overall_success = self.vector_cache.clear() and overall_success
+                    logger.info("Cleared L2 semantic cache")
             
-            return True
+            return overall_success
         except Exception as e:
             logger.warning(f"Error clearing cache: {e}")
             return False
@@ -304,10 +371,24 @@ class CacheManager:
         
         try:
             pattern = f"rag:retrieval:{data_source}:*"
-            self.keyword_cache.clear(pattern)
-            logger.info(f"Invalidated cache entries for data source '{data_source}'")
-            return True
+            cleared = self.keyword_cache.clear(pattern)
+            if cleared:
+                logger.info(f"Invalidated cache entries for data source '{data_source}'")
+            return cleared
         except Exception as e:
             logger.warning(f"Error invalidating data source cache: {e}")
             return False
 
+    def _infer_embedding_dimension(self) -> Optional[int]:
+        if not self.embeddings:
+            return None
+        try:
+            probe = self.embeddings.embed_query("ping for dimension")
+            return len(probe)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to infer embedding dimension for cache: %s", exc)
+            return None
+
+    def _should_use_l2(self, override: Optional[bool]) -> bool:
+        desired = self.response_l2_enabled if override is None else override
+        return bool(desired and self.vector_cache and self.embeddings)
