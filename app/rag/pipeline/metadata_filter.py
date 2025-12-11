@@ -27,7 +27,8 @@ FILTER_EXPRESSION_PROMPT = ChatPromptTemplate.from_template(
 3. 逻辑运算使用 AND/OR/NOT，必要时添加括号。
 4. 输出必须是一行纯文本表达式，禁止额外说明、前后缀或 Markdown 代码块。
 5. 如果无法确定任何过滤条件，返回 `NONE`。
-6. 在用户没有直接且明确要求有关difficulty的过滤时，尽量不要使用difficulty字段。
+6. 在用户没有直接且明确要求有关difficulty的过滤时，谨慎使用difficulty字段。
+7. 谨慎使用AND连接多个条件，尤其是在无法明显确定category或dish_name的情况下。
 
 【Milvus 过滤表达式参考】
 {reference_material}
