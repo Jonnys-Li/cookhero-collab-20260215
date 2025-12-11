@@ -1,27 +1,23 @@
 # app/rag/cache/backends.py
-"""
-Concrete implementations of cache backends.
-"""
+"""Concrete implementations of cache backends."""
 import logging
-from typing import Any, List, Optional, Tuple, Dict
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import redis
+from pymilvus import (
+    Collection,
+    CollectionSchema,
+    DataType,
+    FieldSchema,
+    connections,
+    utility,
+)
 
 from app.rag.cache.base import KeywordCacheBackend, VectorCacheBackend
 
 logger = logging.getLogger(__name__)
-
-
-def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """Compute cosine similarity between two vectors."""
-    if len(vec1) != len(vec2):
-        return 0.0
-    dot_product = sum(a * b for a, b in zip(vec1, vec2))
-    magnitude1 = sum(a * a for a in vec1) ** 0.5
-    magnitude2 = sum(b * b for b in vec2) ** 0.5
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0.0
-    return dot_product / (magnitude1 * magnitude2)
 
 
 class RedisKeywordCache(KeywordCacheBackend):
@@ -36,7 +32,7 @@ class RedisKeywordCache(KeywordCacheBackend):
         """
         self.client = client
 
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str):
         """Get a value by key."""
         try:
             return self.client.get(key)
@@ -47,11 +43,14 @@ class RedisKeywordCache(KeywordCacheBackend):
     def set(self, key: str, value: bytes, ttl_seconds: int | None = None) -> bool:
         """Set a value with optional TTL."""
         try:
-            if ttl_seconds:
-                self.client.setex(key, ttl_seconds, value)
+            if ttl_seconds is not None:
+                result = self.client.setex(key, ttl_seconds, value)
             else:
-                self.client.set(key, value)
-            return True
+                result = self.client.set(key, value)
+            success = bool(result)
+            if not success:
+                logger.warning("Redis did not acknowledge set for key '%s'", key)
+            return success
         except Exception as e:
             logger.warning(f"Error setting key '{key}' in Redis: {e}")
             return False
@@ -59,70 +58,228 @@ class RedisKeywordCache(KeywordCacheBackend):
     def delete(self, key: str) -> bool:
         """Delete a value by key."""
         try:
-            self.client.delete(key)
-            return True
+            deleted = int(self.client.delete(key)) # type: ignore
+            success = deleted > 0
+            if not success:
+                logger.debug("Redis delete skipped for key '%s' (not found)", key)
+            return success
         except Exception as e:
             logger.warning(f"Error deleting key '{key}' from Redis: {e}")
             return False
 
     def clear(self, pattern: str | None = None) -> bool:
         """Clear cache entries matching pattern."""
+        pat = pattern or "*"
         try:
-            pat = pattern or "*"
-            keys = self.client.keys(pat)
-            if keys:
-                self.client.delete(*keys)
+            cursor = 0
+            while True:
+                cursor, keys = self.client.scan(cursor=cursor, match=pat, count=500) # type: ignore
+                if keys:
+                    self.client.delete(*keys)
+                if cursor == 0:
+                    break
             return True
         except Exception as e:
             logger.warning(f"Error clearing Redis cache with pattern '{pat}': {e}")
             return False
 
 
-class MemoryVectorCache(VectorCacheBackend):
-    """
-    In-memory vector cache backend for semantic similarity (L2 cache).
-    
-    Stores vectors as: {key: (embedding, payload)}
-    Uses cosine similarity for search.
-    """
-    
-    def __init__(self):
-        """Initialize in-memory vector cache."""
-        self.store: Dict[str, Tuple[List[float], Any]] = {}
+class MilvusVectorCache(VectorCacheBackend):
+    """Milvus-based vector cache backend that supports TTL-aware lookups."""
 
-    def add(self, key: str, embedding: List[float], payload: Any) -> bool:
-        """Add a vector with payload to the cache."""
-        self.store[key] = (embedding, payload)
-        return True
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        collection_name: str,
+        dimension: int,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        secure: bool = False,
+        alias: str = "cache_milvus",
+        index_params: Optional[Dict[str, Any]] = None,
+        search_params: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if dimension <= 0:
+            raise ValueError("Embedding dimension for MilvusVectorCache must be positive")
+        self._collection_name = collection_name
+        self._dimension = dimension
+        self._alias = alias
+        self._search_params = search_params or {
+            "metric_type": "IP",
+            "params": {"nprobe": 16},
+        }
+        self._index_params = index_params or {
+            "metric_type": "IP",
+            "index_type": "IVF_FLAT",
+            "params": {"nlist": 1024},
+        }
+
+        self._connect(host, port, user, password, secure)
+        self._collection = self._get_or_create_collection()
+        self._ensure_index()
+        self._collection.load()
+
+    def add(
+        self,
+        key: str,
+        embedding: List[float],
+        payload: Any,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        vector = np.asarray(embedding, dtype="float32")
+        if vector.ndim != 1 or vector.shape[0] != self._dimension:
+            logger.warning(
+                "Milvus vector cache expects 1-D embeddings of size %d. Got shape %s",
+                self._dimension,
+                vector.shape,
+            )
+            return False
+
+        norm = np.linalg.norm(vector)
+        if norm == 0.0:
+            logger.warning("Skipping zero vector for cache key '%s'", key)
+            return False
+        normalized = (vector / norm).tolist()
+        expires_at = time.time() + ttl_seconds if ttl_seconds else 0.0
+
+        self._delete_existing(key)
+        try:
+            self._collection.insert([
+                [key],
+                [normalized],
+                [payload],
+                [float(expires_at)],
+            ])
+            return True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to insert cache entry into Milvus: %s", exc)
+            return False
 
     def search(self, embedding: List[float], threshold: float) -> Optional[Tuple[Any, float]]:
-        """
-        Search for similar vectors.
-        
-        Args:
-            embedding: Query embedding vector
-            threshold: Minimum similarity threshold
-            
-        Returns:
-            Tuple of (payload, similarity_score) if found, None otherwise
-        """
-        best_match = None
-        best_similarity = 0.0
-        
-        for _key, (emb, payload) in self.store.items():
-            sim = _cosine_similarity(embedding, emb)
-            if sim > best_similarity and sim >= threshold:
-                best_similarity = sim
-                best_match = payload
-        
-        if best_match is not None:
-            logger.info(f"Memory L2 cache HIT: similarity={best_similarity:.4f}")
-            return best_match, best_similarity
-        
-        return None
+        if not self._collection:
+            return None
+        vector = np.asarray(embedding, dtype="float32")
+        if vector.ndim != 1 or vector.shape[0] != self._dimension:
+            logger.warning("Search embedding dimension mismatch. Expected %d", self._dimension)
+            return None
+        norm = np.linalg.norm(vector)
+        if norm == 0.0:
+            logger.debug("Skipping L2 cache lookup for zero vector query")
+            return None
+        normalized = (vector / norm).tolist()
+        expr = self._build_valid_expr()
+        try:
+            results = self._collection.search(
+                data=[normalized],
+                anns_field="embedding",
+                param=self._search_params,
+                limit=1,
+                expr=expr,
+                output_fields=["response"],
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Milvus vector cache search failed: %s", exc)
+            return None
+
+        if not results or len(results[0]) == 0: # type: ignore
+            return None
+        hit = results[0][0] # type: ignore
+        similarity = float(hit.distance)
+        if similarity < threshold:
+            return None
+        response = None
+        if hasattr(hit, "entity") and hit.entity is not None:
+            response = hit.entity.get("response")
+        if response is None:
+            try:
+                response = hit.get("response")  # type: ignore[attr-defined]
+            except AttributeError:
+                response = None
+        return (response, similarity) if response is not None else None
 
     def clear(self) -> bool:
-        """Clear all cached vectors."""
-        self.store.clear()
-        return True
+        if not self._collection:
+            return False
+        try:
+            self._collection.delete(expr='cache_key >= ""')
+            return True
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Failed to clear Milvus vector cache: %s", exc)
+            return False
+
+    # --- Internal helpers -------------------------------------------------
+
+    def  _connect(
+        self,
+        host: str,
+        port: int,
+        user: Optional[str],
+        password: Optional[str],
+        secure: bool,
+    ) -> None:
+        if connections.has_connection(self._alias):
+            return
+        auth_args: Dict[str, Any] = {"host": host, "port": port, "secure": secure}
+        if user and password:
+            auth_args["user"] = user
+            auth_args["password"] = password
+        try:
+            connections.connect(alias=self._alias, **auth_args)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            raise RuntimeError(f"Failed to connect to Milvus for cache: {exc}") from exc
+
+    def _get_or_create_collection(self) -> Collection:
+        if not utility.has_collection(self._collection_name, using=self._alias):
+            schema = CollectionSchema(
+                fields=[
+                    FieldSchema(
+                        name="cache_key",
+                        dtype=DataType.VARCHAR,
+                        max_length=128,
+                        is_primary=True,
+                        auto_id=False,
+                    ),
+                    FieldSchema(
+                        name="embedding",
+                        dtype=DataType.FLOAT_VECTOR,
+                        dim=self._dimension,
+                    ),
+                    FieldSchema(
+                        name="response",
+                        dtype=DataType.VARCHAR,
+                        max_length=65535,
+                    ),
+                    FieldSchema(
+                        name="expires_at",
+                        dtype=DataType.DOUBLE,
+                    ),
+                ],
+                description="CookHero response L2 cache",
+            )
+            collection = Collection(
+                name=self._collection_name,
+                schema=schema,
+                using=self._alias,
+            )
+            logger.info("Created Milvus collection '%s' for response cache", self._collection_name)
+        else:
+            collection = Collection(name=self._collection_name, using=self._alias)
+        return collection
+
+    def _ensure_index(self) -> None:
+        if not self._collection.has_index():
+            self._collection.create_index(field_name="embedding", index_params=self._index_params) # type: ignore
+            logger.info("Created Milvus index for cache collection '%s'", self._collection_name)
+            logger.info("Created Milvus index for cache collection '%s'", self._collection_name)
+
+    def _delete_existing(self, cache_key: str) -> None:
+        try:
+            self._collection.delete(expr=f'cache_key == "{cache_key}"')
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.debug("Failed to delete existing Milvus cache key %s: %s", cache_key, exc)
+
+    def _build_valid_expr(self) -> str:
+        now = time.time()
+        return f"(expires_at == 0) or (expires_at > {now})"
 

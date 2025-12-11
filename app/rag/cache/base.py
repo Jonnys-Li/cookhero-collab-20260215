@@ -13,7 +13,7 @@ class KeywordCacheBackend(ABC):
     """Abstract base class for keyword-based cache backends (exact match)."""
     
     @abstractmethod
-    def get(self, key: str) -> Optional[bytes]:
+    def get(self, key: str):
         """Get a value by key."""
         pass
     
@@ -37,8 +37,14 @@ class VectorCacheBackend(ABC):
     """Abstract base class for vector-based cache backends (semantic similarity)."""
     
     @abstractmethod
-    def add(self, key: str, embedding: List[float], payload: Any) -> bool:
-        """Add a vector with payload to the cache."""
+    def add(
+        self,
+        key: str,
+        embedding: List[float],
+        payload: Any,
+        ttl_seconds: int | None = None,
+    ) -> bool:
+        """Add a vector with payload to the cache, optionally expiring it."""
         pass
     
     @abstractmethod
