@@ -116,7 +116,7 @@ class MilvusVectorCache(VectorCacheBackend):
         }
 
         self._connect(host, port, user, password, secure)
-        self._collection = self._get_or_create_collection()
+        self._collection = self._get_or_create_collection(force_build=True)
         self._ensure_index()
         self._collection.load()
 
@@ -185,6 +185,7 @@ class MilvusVectorCache(VectorCacheBackend):
         if not results or len(results[0]) == 0: # type: ignore
             return None
         hit = results[0][0] # type: ignore
+        logger.info("Milvus cache hit with distance: %f", hit.distance)
         similarity = float(hit.distance)
         if similarity < threshold:
             return None
@@ -229,8 +230,8 @@ class MilvusVectorCache(VectorCacheBackend):
         except Exception as exc:  # pragma: no cover - defensive logging
             raise RuntimeError(f"Failed to connect to Milvus for cache: {exc}") from exc
 
-    def _get_or_create_collection(self) -> Collection:
-        if not utility.has_collection(self._collection_name, using=self._alias):
+    def _get_or_create_collection(self, force_build: bool) -> Collection:
+        if force_build or not utility.has_collection(self._collection_name, using=self._alias):
             schema = CollectionSchema(
                 fields=[
                     FieldSchema(
