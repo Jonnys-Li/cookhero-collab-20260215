@@ -1,8 +1,56 @@
 ## 1 项目简介
 
-CookHero 是一个面向大众的智能饮食助手系统，提供从厨房准备、菜品学习、营养规划、饮食推荐到个性化计划制定的全流程支持。系统以 Python 为主要开发语言，使用 LangChain 构建检索增强生成、智能代理与向量检索能力，采用 Milvus 作为向量数据库，并提供统一的 REST API 以供前端使用。前端计划使用 React 与 TypeScript 实现用户界面。
+CookHero 是一个面向大众的智能饮食助手系统，提供从厨房准备、菜品学习、营养规划、饮食推荐到个性化计划制定的全流程支持。系统以 Python 为主要开发语言，使用 LangChain 构建检索增强生成、智能代理与向量检索能力，采用 Milvus 作为向量数据库，并提供统一的 REST API 以供前端使用。前端使用 React 与 TypeScript 实现用户界面。
 
 系统整合内置菜谱、用户上传菜谱、食堂菜单以及可能的外卖平台数据，通过大语言模型和检索系统为用户提供烹饪知识问答、美食推荐以及饮食计划制定。系统既支持按需查询，也能基于用户长期习惯与健康目标生成深度个性化推荐。
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- Node.js 18+
+- Docker & Docker Compose（用于 Milvus、Redis）
+
+### 启动基础服务
+
+```bash
+cd deployments
+docker-compose up -d
+```
+
+### 启动后端
+
+```bash
+# 安装 Python 依赖
+pip install -r requirements.txt
+
+# 配置环境变量
+cp .env.example .env
+# 编辑 .env 文件，填入你的 LLM API Key
+
+# 启动后端服务
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 启动前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端将运行在 `http://localhost:5173`，并自动代理 API 请求到后端。
+
+### 数据导入
+
+```bash
+# 导入菜谱数据到向量数据库
+python scripts/run_ingestion.py
+```
+
+更多详细信息请参考 [架构说明](docs/architecture.md) 和 [开发任务](docs/development_tasks.md)。
 
 ## 2 项目技术栈
 
