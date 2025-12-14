@@ -10,11 +10,16 @@ from typing import Dict, Generator, List, Optional
 
 from langchain_core.documents import Document
 
-from app.config import DefaultRAGConfig, RAGConfig
+from app.config import (
+    DefaultRAGConfig,
+    LLMOverrideConfig,
+    LLMProviderConfig,
+    RAGConfig,
+    settings,
+)
 from app.rag.data_sources.base import BaseDataSource
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
-from app.rag.data_sources.generic_text_data_source import GenericTextDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
 from app.rag.pipeline.retrieval import RetrievalOptimizationModule
@@ -68,6 +73,7 @@ class RAGService:
 
         logger.info("Initializing RAGService for the first time...")
         self.config = config or DefaultRAGConfig
+        self.llm_config = self._resolve_llm_config(settings.llm, self.config.llm_override)
         
         self.data_sources: Dict[str, BaseDataSource] = {}
         self.retrieval_modules: Dict[str, RetrievalOptimizationModule] = {}
@@ -77,18 +83,18 @@ class RAGService:
         self._load_knowledge_bases()
 
         self.generation_module = GenerationIntegrationModule(
-            model_name=self.config.llm.model_name,
-            temperature=self.config.llm.temperature,
-            max_tokens=self.config.llm.max_tokens,
-            api_key=self.config.llm.api_key,  # type: ignore
-            base_url=self.config.llm.base_url
+            model_name=self.llm_config.model_name,
+            temperature=self.llm_config.temperature,
+            max_tokens=self.llm_config.max_tokens,
+            api_key=self.llm_config.api_key,  # type: ignore
+            base_url=self.llm_config.base_url
         )
 
         self.metadata_filter_extractor = MetadataFilterExtractor(
-            model_name=self.config.llm.model_name,
-            max_tokens=self.config.llm.max_tokens,
-            api_key=self.config.llm.api_key,  # type: ignore
-            base_url=self.config.llm.base_url
+            model_name=self.llm_config.model_name,
+            max_tokens=self.llm_config.max_tokens,
+            api_key=self.llm_config.api_key,  # type: ignore
+            base_url=self.llm_config.base_url
         )
 
         if self.config.reranker.enabled:
@@ -110,11 +116,10 @@ class RAGService:
                 redis_port=self.config.cache.redis_port,
                 redis_db=self.config.cache.redis_db,
                 redis_password=self.config.cache.redis_password,
-                retrieval_ttl=self.config.cache.retrieval_ttl,
-                response_ttl=self.config.cache.response_ttl,
+                ttl=self.config.cache.ttl,
                 similarity_threshold=self.config.cache.similarity_threshold,
                 embeddings=embeddings,
-                response_l2_enabled=self.config.cache.response_l2_enabled,
+                l2_enabled=self.config.cache.l2_enabled,
                 vector_host=cache_vector_host,
                 vector_port=cache_vector_port,
                 vector_collection=self.config.cache.vector_collection,
@@ -139,7 +144,6 @@ class RAGService:
         self._context_builder = ContextBuilder()
         self._response_generator = ResponseGenerator(
             generation_module=self.generation_module,
-            cache_manager=self.cache_manager,
         )
 
         self._initialized = True
@@ -156,7 +160,6 @@ class RAGService:
         source_definitions = {
             "recipes": (HowToCookDataSource, self.config.data_source.howtocook),
             "tips": (TipsDataSource, self.config.data_source.tips),
-            "generic_text": (GenericTextDataSource, self.config.data_source.generic_text),
         }
 
         for name, (source_class, source_config) in source_definitions.items():
@@ -241,10 +244,9 @@ class RAGService:
         plan = self._query_planner.prepare(query, self.metadata_catalog)
         
         # Execute retrieval
-        retrieval_top_k = self.config.retrieval.top_k
         all_retrieved_docs = self._retrieval_executor.retrieve(
             plan.rewritten_query,
-            retrieval_top_k,
+            self.config.retrieval.top_k,
             use_intelligent_ranker,
             plan.metadata_expression,
         )
@@ -295,8 +297,6 @@ class RAGService:
             raise RuntimeError("RAG Service is not properly initialized.")
 
         plan = self._query_planner.prepare(query, self.metadata_catalog)
-        if plan.cached_response is not None:
-            return plan.cached_response
 
         retrieval_top_k = self.config.retrieval.top_k
         all_retrieved_docs = self._retrieval_executor.retrieve(
@@ -317,29 +317,17 @@ class RAGService:
         else:
             return (chunk for chunk in result)
 
-    def rewrite_query_with_history(
-        self,
-        current_query: str,
-        chat_history: List[Dict[str, str]]
-    ) -> str:
-        """
-        Rewrite the current query based on chat history context.
-        
-        This is used for multi-turn conversations where the current query
-        may reference previous messages (e.g., "给出第一个菜品的详细做法").
-        
-        Args:
-            current_query: The user's current question
-            chat_history: List of previous messages [{"role": "user/assistant", "content": "..."}]
-            
-        Returns:
-            A rewritten query that is self-contained and suitable for retrieval
-        """
-        if not chat_history:
-            return current_query
-        
-        # Use the generation module's rewrite capability with history context
-        return self.generation_module.rewrite_query_with_history(current_query, chat_history)
+    @staticmethod
+    def _resolve_llm_config(
+        base_llm: LLMProviderConfig, override: LLMOverrideConfig | None
+    ) -> LLMProviderConfig:
+        """Apply optional module-level overrides to the global LLM config."""
+        if not override:
+            return base_llm
+
+        base_copy = base_llm.model_copy(deep=True)
+        override_data = {k: v for k, v in override.model_dump().items() if v is not None}
+        return base_copy.model_copy(update=override_data)
 
     # =========================================================================
     # Helper methods

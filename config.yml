@@ -1,95 +1,110 @@
 # config.yml
-# Main configuration file for the CookHero RAG system.
-# Sensitive keys (like API keys) should be stored in a separate .env file.
+# ============================================================================
+# CookHero Configuration
+# ============================================================================
+# This file contains the main configuration for the CookHero RAG system.
+# Sensitive values (API keys, passwords) should be stored in .env file.
+#
+# Configuration is organized as:
+# 1. Common configurations (shared across modules)
+# 2. Module-specific configurations (may override common settings)
+# ============================================================================
 
+# ----------------------------------------------------------------------------
+# Common LLM Provider Configuration
+# ----------------------------------------------------------------------------
+# This configuration is shared across all modules that use LLM.
+# Individual modules can override specific fields if needed.
+llm:
+  model_name: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+  base_url: "https://api.siliconflow.cn/v1"
+  # api_key: loaded from .env (LLM_API_KEY)
+  temperature: 1
+  max_tokens: 131072
+
+# ----------------------------------------------------------------------------
+# Data Paths
+# ----------------------------------------------------------------------------
 paths:
   base_data_path: "data/HowToCook"
 
+# ----------------------------------------------------------------------------
+# Embedding Model
+# ----------------------------------------------------------------------------
+embedding:
+  model_name: "BAAI/bge-small-zh-v1.5"
+
+# ----------------------------------------------------------------------------
+# Vector Store (Milvus)
+# ----------------------------------------------------------------------------
 vector_store:
-  # Type of vector store, for future extensibility (e.g., "chroma", "faiss")
   type: "milvus"
   host: "localhost"
   port: 19530
   collection_names:
     recipes: "cook_hero_recipes"
     tips: "cook_hero_tips"
-    # generic_text: "cook_hero_generic_text"
 
-embedding:
-  # Local embedding model only
-  model_name: "BAAI/bge-small-zh-v1.5"
-
-llm:
-  # Model name for the language model
-  model_name: "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
-  # Optional base URL for self-hosted or proxy endpoints
-  base_url: "https://api.siliconflow.cn/v1"
-  # Generation parameters
-  temperature: 1
-  max_tokens: 131072
-
+# ----------------------------------------------------------------------------
+# Retrieval Pipeline
+# ----------------------------------------------------------------------------
 retrieval:
-  # Number of documents to retrieve
   top_k: 9
-  # RRF k parameter (deprecated, kept for backward compatibility)
-  rrf_k: 60
-  # Minimum score threshold for filtering low-quality results (0.0 = no filtering)
   score_threshold: 0.2
-  # Ranker type: "rrf" (Reciprocal Rank Fusion) or "weighted" (weighted combination)
-  ranker_type: "weighted"
-  # Weights for [dense_vector, sparse_bm25] when using weighted ranker
-  ranker_weights: [0.8, 0.2]
+  ranker_type: "weighted"  # "rrf" or "weighted"
+  ranker_weights: [0.8, 0.2]  # [dense_vector, sparse_bm25]
 
+# ----------------------------------------------------------------------------
+# Reranker
+# ----------------------------------------------------------------------------
+# Uses the common LLM API key by default (can override with RERANKER_API_KEY in .env)
 reranker:
-  # Whether to enable the reranking step
   enabled: true
-  # Type of reranker to use. Currently only 'siliconflow' is supported.
   type: "siliconflow"
-  # Model for reranking. Must be a model compatible with the /rerank endpoint.
-  model_name: "Qwen/Qwen3-Reranker-8B"
-  # Score threshold for filtering documents. Documents with a score below this will be discarded.
-  score_threshold: 0.1
+  model_name: "BAAI/bge-reranker-v2-m3"
   base_url: "https://api.siliconflow.cn/v1/rerank"
+  # api_key: loaded from .env (RERANKER_API_KEY)
   temperature: 0.0
-  max_tokens: 32768
+  max_tokens: 8192
+  score_threshold: 0.1
 
+# ----------------------------------------------------------------------------
+# Cache Configuration
+# ----------------------------------------------------------------------------
+# Cache strategy:
+# - L1: Exact match (Redis) - fast lookup for identical queries
+# - L2: Semantic match (Milvus) - handles similar queries via vector similarity
+#
+# Only caches: Query -> Retrieved Documents (Context)
+# Does NOT cache: LLM responses
 cache:
-  # Whether to enable caching
   enabled: true
-  # Redis configuration
+  # Redis (L1 cache)
   redis_host: "localhost"
   redis_port: 6379
   redis_db: 0
-  redis_password: null  # Set in .env file if needed
-  # Cache TTL (time-to-live) in seconds
-  # Note: retrieval_ttl should be longer than response_ttl so that even when
-  # responses expire, retrieval results can still be reused for faster regeneration
-  retrieval_ttl: 600  # 1 hour for retrieval results (documents change infrequently)
-  response_ttl: 300   # 30 minutes for query responses (users may want varied responses)
-  # L2 semantic cache settings
-  response_l2_enabled: true
-  similarity_threshold: 0.9  # Minimum similarity for L2 cache matching (0-1)
+  # redis_password: loaded from .env (REDIS_PASSWORD)
+  # Cache TTL (applies to both L1 and L2)
+  ttl: 3600  # 1 hour
+  # L2 semantic cache
+  l2_enabled: true
+  similarity_threshold: 0.92
   vector_host: "localhost"
   vector_port: 19530
-  vector_collection: "cookhero_response_cache"
-  vector_user: null
-  vector_password: null
-  vector_secure: false
+  vector_collection: "cookhero_retrieval_cache"
+  # vector_user/vector_password: loaded from .env
 
+# ----------------------------------------------------------------------------
+# Data Sources
+# ----------------------------------------------------------------------------
 data_source:
-  # Settings specific to the HowToCook data source
   howtocook:
     path_suffix: "dishes"
     headers_to_split_on:
       - ["#", "header_1"]
       - ["##", "header_2"]
-  # Settings specific to the Tips data source
   tips:
     path_suffix: "tips"
     headers_to_split_on:
       - ["#", "header_1"]
       - ["##", "header_2"]
-  # Settings specific to the Generic Text data source
-  generic_text:
-    path_suffix: "generic_text" # Assumes text files are in data/generic_text/
-    window_size: 3 # Window size for Sentence Window Indexing (3 sentences before and after)
