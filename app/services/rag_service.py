@@ -1,10 +1,16 @@
-# app/rag/rag_service.py
-import logging
-from pathlib import Path
-from typing import Dict
+# app/services/rag_service.py
+"""
+RAG Service - Orchestrates the RAG pipeline for knowledge retrieval and response generation.
+"""
 
-from app.core.config_loader import DefaultRAGConfig
-from app.core.rag_config import RAGConfig
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Generator, List, Optional
+
+from langchain_core.documents import Document
+
+from app.config import DefaultRAGConfig, RAGConfig
 from app.rag.data_sources.base import BaseDataSource
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
@@ -27,10 +33,27 @@ from app.rag.cache import CacheManager
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class RetrievalResult:
+    """
+    Result of RAG retrieval operation.
+    Contains the rewritten query and retrieved context.
+    """
+    original_query: str
+    rewritten_query: str
+    context: str
+    documents: List[Document]
+    sources: List[Dict]
+
+
 class RAGService:
     """
     Orchestrates the entire RAG pipeline, supporting multiple data sources
     and query routing.
+    
+    Provides two main interfaces:
+    1. retrieve() - Only performs query rewriting and retrieval, returns context
+    2. ask_with_generation() - Full RAG + LLM generation pipeline
     """
     _instance = None
 
@@ -185,10 +208,88 @@ class RAGService:
             self.retrieval_modules[name] = retrieval_module
             logger.info(f"--- Source '{name}' loaded successfully. ---")
 
-    def ask(self, query: str, stream: bool = False, use_intelligent_ranker: bool = True):
+    # =========================================================================
+    # Public API - Two main interfaces
+    # =========================================================================
+
+    def retrieve(
+        self, 
+        query: str, 
+        use_intelligent_ranker: bool = True
+    ) -> RetrievalResult:
         """
-        Main method to ask a question. It fetches from all data sources in parallel,
-        then reranks the aggregated results to generate a response.
+        Perform query rewriting and retrieval only, without LLM generation.
+        
+        This is designed for conversation service where:
+        1. Query is rewritten for better retrieval
+        2. Context is retrieved from knowledge base
+        3. The caller (conversation service) handles LLM generation with full chat history
+        
+        Args:
+            query: The search query (can be the rewritten query from conversation context)
+            use_intelligent_ranker: Whether to use intelligent ranking
+            
+        Returns:
+            RetrievalResult containing rewritten query, context and documents
+        """
+        if not self.retrieval_modules:
+            raise RuntimeError("RAG Service is not properly initialized.")
+
+        logger.info(f"Performing RAG retrieval for query: {query[:50]}...")
+
+        # Query planning (rewrite + metadata extraction)
+        plan = self._query_planner.prepare(query, self.metadata_catalog)
+        
+        # Execute retrieval
+        retrieval_top_k = self.config.retrieval.top_k
+        all_retrieved_docs = self._retrieval_executor.retrieve(
+            plan.rewritten_query,
+            retrieval_top_k,
+            use_intelligent_ranker,
+            plan.metadata_expression,
+        )
+
+        # Rerank if enabled
+        reranked_docs = self._rerank_if_needed(plan.rewritten_query, all_retrieved_docs)
+        
+        # Post-process documents
+        processed_docs = self._post_processor.process(reranked_docs)
+        
+        # Build context string
+        context_parts = self._context_builder.build(processed_docs)
+        context = "\n\n".join(context_parts) if context_parts else ""
+        
+        # Extract sources for frontend display
+        sources = self._extract_sources(processed_docs)
+        
+        logger.info(f"Retrieved {len(processed_docs)} documents for query")
+        
+        return RetrievalResult(
+            original_query=query,
+            rewritten_query=plan.rewritten_query,
+            context=context,
+            documents=processed_docs,
+            sources=sources
+        )
+
+    def ask_with_generation(
+        self, 
+        query: str, 
+        stream: bool = False, 
+        use_intelligent_ranker: bool = True
+    ) -> str | Generator[str, None, None]:
+        """
+        Full RAG pipeline: query rewriting + retrieval + LLM generation.
+        
+        This is used by the /chat endpoint for simple Q&A without conversation history.
+        
+        Args:
+            query: The user's question
+            stream: Whether to stream the response
+            use_intelligent_ranker: Whether to use intelligent ranking
+            
+        Returns:
+            Generated response string or generator for streaming
         """
         if not all([self.retrieval_modules, self.generation_module, self.data_sources]):
             raise RuntimeError("RAG Service is not properly initialized.")
@@ -208,9 +309,41 @@ class RAGService:
         reranked_docs = self._rerank_if_needed(plan.rewritten_query, all_retrieved_docs)
         processed_docs = self._post_processor.process(reranked_docs)
         context_parts = self._context_builder.build(processed_docs)
-        return self._response_generator.generate(plan.rewritten_query, context_parts, stream)
+        result = self._response_generator.generate(plan.rewritten_query, context_parts, stream)
+        
+        # Convert Iterator to Generator if needed
+        if isinstance(result, str):
+            return result
+        else:
+            return (chunk for chunk in result)
 
-    # --- Helper methods ---
+    def rewrite_query_with_history(
+        self,
+        current_query: str,
+        chat_history: List[Dict[str, str]]
+    ) -> str:
+        """
+        Rewrite the current query based on chat history context.
+        
+        This is used for multi-turn conversations where the current query
+        may reference previous messages (e.g., "给出第一个菜品的详细做法").
+        
+        Args:
+            current_query: The user's current question
+            chat_history: List of previous messages [{"role": "user/assistant", "content": "..."}]
+            
+        Returns:
+            A rewritten query that is self-contained and suitable for retrieval
+        """
+        if not chat_history:
+            return current_query
+        
+        # Use the generation module's rewrite capability with history context
+        return self.generation_module.rewrite_query_with_history(current_query, chat_history)
+
+    # =========================================================================
+    # Helper methods
+    # =========================================================================
 
     def _rerank_if_needed(self, rewritten_query: str, docs_for_rerank):
         if self.reranker and self.config.reranker.enabled:
@@ -229,8 +362,36 @@ class RAGService:
                     continue
                 if isinstance(v, (str, int, float)):
                     catalog.setdefault(k, set()).add(str(v))
-        res =  {k: sorted(list(vals)) for k, vals in catalog.items()}
-        return res
+        return {k: sorted(list(vals)) for k, vals in catalog.items()}
+
+    def _extract_sources(self, documents: List[Document]) -> List[Dict]:
+        """Extract source information from documents for frontend display."""
+        sources = []
+        seen = set()
+        
+        for doc in documents:
+            metadata = doc.metadata or {}
+            title = metadata.get("dish_name") or metadata.get("title") or metadata.get("source_title")
+            info = title or metadata.get("category") or metadata.get("source", "CookHero 知识库")
+            source_info: Dict[str, str] = {
+                "type": metadata.get("source_type", "knowledge_base"),
+                "info": info,
+            }
+            if title:
+                source_info["title"] = title
+            if metadata.get("url"):
+                source_info["url"] = str(metadata["url"])
+            if metadata.get("category"):
+                source_info["category"] = metadata.get("category", "")
+            
+            # Deduplicate
+            key = (source_info["type"], source_info["info"])
+            if key not in seen:
+                seen.add(key)
+                sources.append(source_info)
+        
+        return sources[:5]  # Limit to top 5 sources
+
 
 # Instantiate the singleton service
 rag_service_instance = RAGService()

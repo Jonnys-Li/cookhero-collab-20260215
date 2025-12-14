@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from app.rag.rag_service import rag_service_instance
+from app.services.rag_service import rag_service_instance
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,7 +22,7 @@ async def chat(request: ChatRequest):
     logger.info(f"Received chat request with query: '{request.query}'")
     
     try:
-        response_generator = rag_service_instance.ask(request.query, stream=request.stream)
+        response_generator = rag_service_instance.ask_with_generation(request.query, stream=request.stream)
         
         if request.stream:
             # For streaming responses

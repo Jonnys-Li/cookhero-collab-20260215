@@ -45,6 +45,7 @@ async def conversation(request: ConversationRequest):
     **Response (SSE stream when stream=true):**
     ```
     data: {"type": "intent", "data": {"need_rag": true, "intent": "recipe_search", "reason": "..."}}
+    data: {"type": "thinking", "content": "重写后的检索语句：番茄炒蛋的做法"}
     data: {"type": "text", "content": "..."}
     data: {"type": "sources", "data": [...]}
     data: {"type": "done", "conversation_id": "..."}
@@ -92,6 +93,9 @@ async def conversation(request: ConversationRequest):
                         conv_id = data["conversation_id"]
                     elif data["type"] == "intent":
                         intent_data = data["data"]
+                    elif data["type"] == "thinking":
+                        # Thinking events are informational; no aggregation needed for non-streaming mode
+                        continue
             
             return {
                 "conversation_id": conv_id,
