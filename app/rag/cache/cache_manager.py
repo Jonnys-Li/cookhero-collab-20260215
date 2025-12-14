@@ -1,5 +1,13 @@
 # app/rag/cache/cache_manager.py
-"""Hybrid cache manager for retrieval (L1) and optional response L2 caching."""
+"""
+Simplified cache manager for RAG retrieval results.
+
+Cache Strategy:
+- L1 Cache (Exact Match): Redis-based, key = hash(query), value = serialized documents
+- L2 Cache (Semantic Match): Milvus-based, vector similarity search for similar queries
+
+Only caches Query -> Retrieved Documents (Context), NOT LLM responses.
+"""
 import hashlib
 import logging
 import pickle
@@ -17,16 +25,17 @@ logger = logging.getLogger(__name__)
 
 class CacheManager:
     """
-    Manages caching for retrieval results and query responses using a hybrid strategy.
+    Manages two-level caching for RAG retrieval results.
     
-    L1 Cache (Redis):
-    - Exact match based on rewritten query hash (used for retrieval documents and responses)
+    L1 Cache (Redis - Exact Match):
     - Fast lookup for identical queries
+    - Key: hash of the rewritten query
+    - Value: serialized list of retrieved documents
     
-    L2 Cache (Vector index):
-    - Semantic similarity matching based on query embeddings (Milvus)
-    - Handles query variations with high similarity for responses only
-    - Optional per-request when storing or reading responses
+    L2 Cache (Milvus - Semantic Match):
+    - Handles query variations with high similarity
+    - Uses vector embeddings for similarity search
+    - Falls back when L1 cache misses but similar query exists
     """
     
     def __init__(
@@ -35,14 +44,13 @@ class CacheManager:
         redis_port: int = 6379,
         redis_db: int = 0,
         redis_password: Optional[str] = None,
-        retrieval_ttl: int = 3600,  # 1 hour (longer than response_ttl)
-        response_ttl: int = 1800,  # 30 minutes (shorter than retrieval_ttl)
-        similarity_threshold: float = 0.95,
+        ttl: int = 3600,
+        similarity_threshold: float = 0.92,
         embeddings: Optional[Embeddings] = None,
-        response_l2_enabled: bool = True,
+        l2_enabled: bool = True,
         vector_host: Optional[str] = None,
         vector_port: Optional[int] = None,
-        vector_collection: str = "cookhero_response_cache",
+        vector_collection: str = "cookhero_retrieval_cache",
         vector_user: Optional[str] = None,
         vector_password: Optional[str] = None,
         vector_secure: bool = False,
@@ -55,26 +63,23 @@ class CacheManager:
             redis_port: Redis port
             redis_db: Redis database number
             redis_password: Redis password (if required)
-            retrieval_ttl: Time-to-live for retrieval cache (seconds).
-                Should be longer than response_ttl so retrieval results can be
-                reused even after responses expire.
-            response_ttl: Time-to-live for response cache (seconds).
-                Should be shorter than retrieval_ttl since users may want
-                varied responses, but retrieval results change infrequently.
+            ttl: Time-to-live for cache entries (seconds)
             similarity_threshold: Minimum similarity for L2 cache matching (0-1)
-                embeddings: Embedding model for L2 semantic matching (optional)
-            response_l2_enabled: Whether L2 semantic cache should be used for responses
-            vector_host/vector_port: Connection info for the Milvus cache collection
-            vector_collection: Milvus collection name used to store cached responses
+            embeddings: Embedding model for L2 semantic matching
+            l2_enabled: Whether L2 semantic cache is enabled
+            vector_host/vector_port: Milvus connection info
+            vector_collection: Milvus collection name for cache
             vector_user/vector_password: Optional Milvus credentials
-            vector_secure: Whether to use TLS when connecting to Milvus
+            vector_secure: Whether to use TLS for Milvus
         """
-        self.retrieval_ttl = retrieval_ttl
-        self.response_ttl = response_ttl
+        self.ttl = ttl
         self.similarity_threshold = similarity_threshold
-        self.response_l2_enabled = response_l2_enabled
-        # Initialize Redis connection (for keyword cache)
+        self.l2_enabled = l2_enabled
+        self.embeddings = embeddings
+        
+        # Initialize Redis connection (L1 cache)
         self.redis_client: Optional[redis.Redis] = None
+        self.keyword_cache: Optional[KeywordCacheBackend] = None
         try:
             client = redis.Redis(
                 host=redis_host,
@@ -86,25 +91,19 @@ class CacheManager:
                 socket_timeout=5,
             )
             client.ping()
-            client.flushdb()
             self.redis_client = client
-            logger.info(f"Redis connection established: {redis_host}:{redis_port}")
+            self.keyword_cache = RedisKeywordCache(client)
+            logger.info(f"Redis L1 cache connected: {redis_host}:{redis_port}")
         except Exception as e:
-            logger.warning(f"Failed to connect to Redis: {e}. Caching will be disabled.")
-            self.redis_client = None
-
-        # Backends
-        self.keyword_cache: Optional[KeywordCacheBackend] = RedisKeywordCache(self.redis_client) if self.redis_client else None
-
-        self.embeddings = embeddings
+            logger.warning(f"Failed to connect to Redis: {e}. L1 cache disabled.")
+        
+        # Initialize Milvus connection (L2 cache)
         self.vector_cache: Optional[VectorCacheBackend] = None
         self._embedding_dimension: Optional[int] = None
-        if self.response_l2_enabled:
+        
+        if self.l2_enabled and self.embeddings:
             self._embedding_dimension = self._infer_embedding_dimension()
-            if embeddings is None or self._embedding_dimension is None:
-                logger.warning("Response L2 cache enabled but embeddings are unavailable. Disabling L2 cache.")
-                self.response_l2_enabled = False
-            else:
+            if self._embedding_dimension:
                 host = vector_host or redis_host
                 port = vector_port or 19530
                 try:
@@ -117,274 +116,184 @@ class CacheManager:
                         password=vector_password,
                         secure=vector_secure,
                     )
-                    logger.info(
-                        "Milvus L2 cache ready at %s:%s (collection=%s)",
-                        host,
-                        port,
-                        vector_collection,
-                    )
-                except Exception as exc:  # pragma: no cover - optional dependency guard
-                    logger.warning("Failed to initialize Milvus vector cache: %s. Disabling response L2 cache.", exc)
-                    self.response_l2_enabled = False
-        
+                    logger.info(f"Milvus L2 cache connected: {host}:{port} (collection={vector_collection})")
+                except Exception as exc:
+                    logger.warning(f"Failed to initialize Milvus L2 cache: {exc}")
+                    self.l2_enabled = False
+            else:
+                logger.warning("Could not infer embedding dimension. L2 cache disabled.")
+                self.l2_enabled = False
+        elif self.l2_enabled:
+            logger.warning("Embeddings not provided. L2 cache disabled.")
+            self.l2_enabled = False
+    
     def _compute_hash(self, text: str) -> str:
         """Compute SHA256 hash of a text string."""
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
     
-    def _get_retrieval_key(
-        self,
-        data_source: str,
-        rewritten_query: str,
-    ) -> str:
-        """Generate cache key for retrieval results including metadata filters."""
-        query_hash = self._compute_hash(rewritten_query)
+    def _get_cache_key(self, data_source: str, query: str) -> str:
+        """Generate cache key for retrieval results."""
+        query_hash = self._compute_hash(query)
         return f"rag:retrieval:{data_source}:{query_hash}"
     
-    def _get_response_key(self, rewritten_query: str) -> str:
-        """Generate cache key for query responses."""
-        query_hash = self._compute_hash(rewritten_query)
-        return f"rag:response:{query_hash}"
-    
-    def get_retrieval_cache(
+    def get(
         self,
         data_source: str,
-        rewritten_query: str
+        query: str
     ) -> Optional[List[Document]]:
         """
-        Get cached retrieval results (L1 cache only).
+        Get cached retrieval results using L1 + L2 strategy.
         
         Args:
             data_source: Name of the data source
-            rewritten_query: The rewritten query string
-            metadata_expression: The metadata filter expression (part of the cache key)
+            query: The query string (usually the rewritten query)
             
         Returns:
             Cached documents if found, None otherwise
         """
-        if not self.keyword_cache:
-            return None
+        # Try L1 cache first (exact match)
+        if self.keyword_cache:
+            try:
+                cache_key = self._get_cache_key(data_source, query)
+                cached_data = self.keyword_cache.get(cache_key)
+                
+                if cached_data:
+                    docs = pickle.loads(cached_data)
+                    logger.info(f"L1 cache HIT for '{data_source}': {len(docs)} documents")
+                    return docs
+            except Exception as e:
+                logger.warning(f"Error reading L1 cache: {e}")
         
-        try:
-            cache_key = self._get_retrieval_key(data_source, rewritten_query)
-            cached_data = self.keyword_cache.get(cache_key)
-            
-            if cached_data:
-                # Deserialize documents
-                docs = pickle.loads(cached_data)
-                logger.info(f"Retrieval cache HIT for source '{data_source}': {len(docs)} documents")
-                return docs
-            else:
-                logger.debug(f"Retrieval cache MISS for source '{data_source}'")
-                return None
-        except Exception as e:
-            logger.warning(f"Error reading retrieval cache: {e}")
-            return None
+        # Try L2 cache (semantic similarity)
+        if self._should_use_l2():
+            try:
+                query_embedding = self.embeddings.embed_query(query)  # type: ignore
+                result = self.vector_cache.search(query_embedding, self.similarity_threshold)  # type: ignore
+                
+                if result:
+                    cached_data, similarity = result
+                    if cached_data:
+                        docs = pickle.loads(cached_data)
+                        logger.info(f"L2 cache HIT for '{data_source}': similarity={similarity:.4f}, {len(docs)} documents")
+                        return docs
+            except Exception as e:
+                logger.warning(f"Error reading L2 cache: {e}")
+        
+        logger.debug(f"Cache MISS for '{data_source}'")
+        return None
     
-    def set_retrieval_cache(
+    def set(
         self,
         data_source: str,
-        rewritten_query: str,
+        query: str,
         documents: List[Document]
     ) -> bool:
         """
-        Cache retrieval results (L1 cache).
+        Cache retrieval results in L1 + L2.
         
         Args:
             data_source: Name of the data source
-            rewritten_query: The rewritten query string
-            metadata_expression: The metadata filter expression (part of the cache key)
+            query: The query string
             documents: Documents to cache
             
         Returns:
             True if caching succeeded, False otherwise
         """
-        if not self.keyword_cache:
-            return False
-        
-        try:
-            cache_key = self._get_retrieval_key(data_source, rewritten_query)
-            serialized = pickle.dumps(documents)
-            stored = self.keyword_cache.set(cache_key, serialized, ttl_seconds=self.retrieval_ttl)
-            if stored:
-                logger.info(
-                    "Cached retrieval results for source '%s': %d documents (TTL: %ss)",
-                    data_source,
-                    len(documents),
-                    self.retrieval_ttl,
-                )
-            return stored
-        except Exception as e:
-            logger.warning(f"Error writing retrieval cache: {e}")
-            return False
-    
-    def get_response_cache(
-        self,
-        rewritten_query: str,
-        use_l2: Optional[bool] = None,
-    ) -> Optional[str]:
-        """
-        Get cached response using hybrid strategy (L1 + L2).
-        
-        Args:
-            rewritten_query: The rewritten query string
-            use_l2: Optional override to enable/disable semantic cache lookup
-                for this call.
-            
-        Returns:
-            Cached response if found, None otherwise
-        """
-        # Try L1 cache first (exact match)
-        if self.keyword_cache:
-            try:
-                cache_key = self._get_response_key(rewritten_query)
-                cached_response = self.keyword_cache.get(cache_key)
-                
-                if cached_response:
-                    response = cached_response.decode('utf-8')
-                    logger.info("Response cache HIT (L1): exact match")
-                    return response
-            except Exception as e:
-                logger.warning(f"Error reading L1 response cache: {e}")
-        
-        # Try L2 cache (semantic similarity)
-        if self._should_use_l2(use_l2):
-            assert self.embeddings is not None and self.vector_cache is not None
-            try:
-                query_embedding = self.embeddings.embed_query(rewritten_query)
-                best_match = self.vector_cache.search(query_embedding, self.similarity_threshold)
-                
-                if best_match:
-                    logger.info(f"Response cache HIT (L2): similarity={best_match[1]:.4f}")
-                    return best_match[0]
-            except Exception as e:
-                logger.warning(f"Error reading L2 response cache: {e}")
-        
-        logger.debug("Response cache MISS")
-        return None
-    
-    def set_response_cache(
-        self,
-        rewritten_query: str,
-        response: str,
-        use_l2: Optional[bool] = None,
-    ) -> bool:
-        """
-        Cache query response using hybrid strategy (L1 + L2).
-        
-        Args:
-            rewritten_query: The rewritten query string
-            response: The response to cache
-            use_l2: Optional override to enable/disable semantic cache storage
-                for this call.
-            
-        Returns:
-            True if caching succeeded, False otherwise
-        """
+        serialized = pickle.dumps(documents)
         success = True
-        # Store in L1 cache (exact match)
+        
+        # Store in L1 cache
         if self.keyword_cache:
             try:
-                cache_key = self._get_response_key(rewritten_query)
-                success = self.keyword_cache.set(cache_key, response.encode('utf-8'), ttl_seconds=self.response_ttl)
-                if success:
-                    logger.info(f"Cached response (L1): TTL={self.response_ttl}s")
+                cache_key = self._get_cache_key(data_source, query)
+                stored = self.keyword_cache.set(cache_key, serialized, ttl_seconds=self.ttl)
+                if stored:
+                    logger.info(f"L1 cache SET for '{data_source}': {len(documents)} documents (TTL={self.ttl}s)")
+                else:
+                    success = False
             except Exception as e:
-                logger.warning(f"Error writing L1 response cache: {e}")
+                logger.warning(f"Error writing L1 cache: {e}")
                 success = False
         
-        # Store in L2 cache (semantic similarity)
-        if self._should_use_l2(use_l2):
-            assert self.embeddings is not None and self.vector_cache is not None
+        # Store in L2 cache
+        if self._should_use_l2():
             try:
-                query_embedding = self.embeddings.embed_query(rewritten_query)
-                query_hash = self._compute_hash(rewritten_query)
-                stored = self.vector_cache.add(
-                    query_hash,
+                query_embedding = self.embeddings.embed_query(query)  # type: ignore
+                cache_key = self._compute_hash(f"{data_source}:{query}")
+                stored = self.vector_cache.add(  # type: ignore
+                    cache_key,
                     query_embedding,
-                    response,
-                    ttl_seconds=self.response_ttl,
-                ) 
-                success = success and stored
+                    serialized,
+                    ttl_seconds=self.ttl,
+                )
                 if stored:
-                    logger.info("Cached response (L2): semantic index updated")
+                    logger.info(f"L2 cache SET for '{data_source}': semantic index updated")
+                else:
+                    success = False
             except Exception as e:
-                logger.warning(f"Error writing L2 response cache: {e}")
+                logger.warning(f"Error writing L2 cache: {e}")
                 success = False
         
         return success
     
-    def clear_cache(self, cache_type: Optional[str] = None) -> bool:
+    def invalidate(self, data_source: Optional[str] = None) -> bool:
         """
-        Clear cache entries.
+        Invalidate cache entries.
         
         Args:
-            cache_type: Type of cache to clear ('retrieval', 'response', or None for all)
-            
-        Returns:
-            True if clearing succeeded, False otherwise
-        """
-        if not self.keyword_cache:
-            return False
-        
-        try:
-            if cache_type == 'retrieval':
-                pattern = "rag:retrieval:*"
-            elif cache_type == 'response':
-                pattern = "rag:response:*"
-            else:
-                pattern = "rag:*"
-            
-            cleared = self.keyword_cache.clear(pattern)
-            if cleared:
-                logger.info(f"Cleared cache entries matching '{pattern}'")
-            else:
-                logger.warning("Keyword cache clear failed for pattern '%s'", pattern)
-            
-            overall_success = bool(cleared)
-            # Clear L2 cache if needed
-            if cache_type is None or cache_type == 'response':
-                if self.vector_cache:
-                    overall_success = self.vector_cache.clear() and overall_success
-                    logger.info("Cleared L2 semantic cache")
-            
-            return overall_success
-        except Exception as e:
-            logger.warning(f"Error clearing cache: {e}")
-            return False
-    
-    def invalidate_data_source_cache(self, data_source: str) -> bool:
-        """
-        Invalidate all cache entries for a specific data source.
-        
-        Args:
-            data_source: Name of the data source
+            data_source: If provided, only invalidate entries for this source.
+                        If None, invalidate all entries.
             
         Returns:
             True if invalidation succeeded, False otherwise
         """
-        if not self.keyword_cache:
-            return False
+        success = True
         
-        try:
-            pattern = f"rag:retrieval:{data_source}:*"
-            cleared = self.keyword_cache.clear(pattern)
-            if cleared:
-                logger.info(f"Invalidated cache entries for data source '{data_source}'")
-            return cleared
-        except Exception as e:
-            logger.warning(f"Error invalidating data source cache: {e}")
-            return False
-
+        if self.keyword_cache:
+            try:
+                pattern = f"rag:retrieval:{data_source}:*" if data_source else "rag:retrieval:*"
+                cleared = self.keyword_cache.clear(pattern)
+                if cleared:
+                    logger.info(f"L1 cache invalidated: pattern='{pattern}'")
+                else:
+                    success = False
+            except Exception as e:
+                logger.warning(f"Error clearing L1 cache: {e}")
+                success = False
+        
+        if self.vector_cache:
+            try:
+                cleared = self.vector_cache.clear()
+                if cleared:
+                    logger.info("L2 cache invalidated")
+                else:
+                    success = False
+            except Exception as e:
+                logger.warning(f"Error clearing L2 cache: {e}")
+                success = False
+        
+        return success
+    
     def _infer_embedding_dimension(self) -> Optional[int]:
+        """Infer embedding dimension by running a test query."""
         if not self.embeddings:
             return None
         try:
-            probe = self.embeddings.embed_query("ping for dimension")
+            probe = self.embeddings.embed_query("test query for dimension")
             return len(probe)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to infer embedding dimension for cache: %s", exc)
+        except Exception as exc:
+            logger.warning(f"Failed to infer embedding dimension: {exc}")
             return None
-
-    def _should_use_l2(self, override: Optional[bool]) -> bool:
-        desired = self.response_l2_enabled if override is None else override
-        return bool(desired and self.vector_cache and self.embeddings)
+    
+    def _should_use_l2(self) -> bool:
+        """Check if L2 cache should be used."""
+        return bool(self.l2_enabled and self.vector_cache and self.embeddings)
+    
+    # Backward compatibility methods
+    def get_retrieval_cache(self, data_source: str, query: str) -> Optional[List[Document]]:
+        """Backward compatible method for getting retrieval cache."""
+        return self.get(data_source, query)
+    
+    def set_retrieval_cache(self, data_source: str, query: str, documents: List[Document]) -> bool:
+        """Backward compatible method for setting retrieval cache."""
+        return self.set(data_source, query, documents)

@@ -1,5 +1,6 @@
 # app/rag/cache/backends.py
 """Concrete implementations of cache backends."""
+import base64
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -145,10 +146,16 @@ class MilvusVectorCache(VectorCacheBackend):
 
         self._delete_existing(key)
         try:
+            # Serialize payload to base64 string if it's bytes
+            if isinstance(payload, bytes):
+                payload_str = base64.b64encode(payload).decode('utf-8')
+            else:
+                payload_str = str(payload)
+            
             self._collection.insert([
                 [key],
                 [normalized],
-                [payload],
+                [payload_str],
                 [float(expires_at)],
             ])
             return True
@@ -176,28 +183,39 @@ class MilvusVectorCache(VectorCacheBackend):
                 param=self._search_params,
                 limit=1,
                 expr=expr,
-                output_fields=["response"],
+                output_fields=["payload_data"],
             )
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Milvus vector cache search failed: %s", exc)
             return None
 
-        if not results or len(results[0]) == 0: # type: ignore
+        if not results or len(results[0]) == 0:  # type: ignore
             return None
-        hit = results[0][0] # type: ignore
+        hit = results[0][0]  # type: ignore
         logger.info("Milvus cache hit with distance: %f", hit.distance)
         similarity = float(hit.distance)
         if similarity < threshold:
             return None
-        response = None
+        
+        payload_str = None
         if hasattr(hit, "entity") and hit.entity is not None:
-            response = hit.entity.get("response")
-        if response is None:
+            payload_str = hit.entity.get("payload_data")
+        if payload_str is None:
             try:
-                response = hit.get("response")  # type: ignore[attr-defined]
+                payload_str = hit.get("payload_data")  # type: ignore[attr-defined]
             except AttributeError:
-                response = None
-        return (response, similarity) if response is not None else None
+                payload_str = None
+        
+        if payload_str is None:
+            return None
+        
+        # Decode base64 payload back to bytes
+        try:
+            payload = base64.b64decode(payload_str.encode('utf-8'))
+        except Exception:
+            payload = payload_str
+        
+        return (payload, similarity)
 
     def clear(self) -> bool:
         if not self._collection:
@@ -247,7 +265,7 @@ class MilvusVectorCache(VectorCacheBackend):
                         dim=self._dimension,
                     ),
                     FieldSchema(
-                        name="response",
+                        name="payload_data",
                         dtype=DataType.VARCHAR,
                         max_length=65535,
                     ),
@@ -256,7 +274,7 @@ class MilvusVectorCache(VectorCacheBackend):
                         dtype=DataType.DOUBLE,
                     ),
                 ],
-                description="CookHero response L2 cache",
+                description="CookHero retrieval L2 cache",
             )
             collection = Collection(
                 name=self._collection_name,

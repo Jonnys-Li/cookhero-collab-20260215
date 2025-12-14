@@ -43,16 +43,11 @@ class QueryPlanner:
             query,
             metadata_catalog,
         )
-        cached_response = None
-        if self._cache_manager:
-            cached_response = self._cache_manager.get_response_cache(rewritten_query)
-            if cached_response:
-                logger.info("Returning cached response for rewritten query")
         return QueryPlan(
             original_query=query,
             rewritten_query=rewritten_query,
             metadata_expression=metadata_expression,
-            cached_response=cached_response,
+            cached_response=None,  # Response caching removed - only cache retrieval results
         )
 
 
@@ -100,7 +95,7 @@ class RetrievalExecutor:
         logger.info("Retrieving from source: %s", source_name)
         cached_docs: Optional[List[Document]] = None
         if self._cache_manager:
-            cached_docs = self._cache_manager.get_retrieval_cache(
+            cached_docs = self._cache_manager.get(
                 source_name,
                 rewritten_query,
             )
@@ -164,7 +159,7 @@ class RetrievalExecutor:
             logger.info(f"Content preview: {doc.page_content[:10]}...")
 
         if self._cache_manager:
-            self._cache_manager.set_retrieval_cache(
+            self._cache_manager.set(
                 source_name,
                 rewritten_query,
                 final_docs,
@@ -207,7 +202,7 @@ class ContextBuilder:
 
 
 class ResponseGenerator:
-    """Handles response generation and caching."""
+    """Handles response generation."""
 
     def __init__(
         self,
@@ -215,14 +210,11 @@ class ResponseGenerator:
         cache_manager: CacheManager | None,
     ) -> None:
         self._generation_module = generation_module
-        self._cache_manager = cache_manager
+        # cache_manager kept for interface compatibility but no longer used for response caching
 
     def generate(self, rewritten_query: str, context_parts: List[str], stream: bool):
-        response = self._generation_module.generate_response(
+        return self._generation_module.generate_response(
             query=rewritten_query,
             context_docs=context_parts,
             stream=stream,
         )
-        if not stream and self._cache_manager is not None and isinstance(response, str):
-            self._cache_manager.set_response_cache(rewritten_query, response)
-        return response
