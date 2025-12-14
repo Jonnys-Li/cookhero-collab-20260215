@@ -29,6 +29,15 @@ class ConversationHistoryResponse(BaseModel):
     messages: list
 
 
+class ConversationSummary(BaseModel):
+    """Summary model for listing conversations."""
+    id: str
+    created_at: str
+    updated_at: str
+    message_count: int
+    last_message_preview: str | None = None
+
+
 @router.post("/conversation")
 async def conversation(request: ConversationRequest):
     """
@@ -165,3 +174,10 @@ async def clear_conversation(conversation_id: str):
         raise HTTPException(status_code=404, detail="Conversation not found")
     
     return {"message": "Conversation cleared successfully"}
+
+
+@router.get("/conversation")
+async def list_conversations() -> list[ConversationSummary]:
+    """List all conversations for the current user (in-memory store)."""
+    conversations = conversation_service.list_conversations()
+    return [ConversationSummary(**c) for c in conversations]

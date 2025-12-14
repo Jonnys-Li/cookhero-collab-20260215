@@ -21,7 +21,6 @@ class QueryPlan:
     original_query: str
     rewritten_query: str
     metadata_expression: Optional[str]
-    cached_response: Optional[str]
 
 
 class QueryPlanner:
@@ -46,8 +45,7 @@ class QueryPlanner:
         return QueryPlan(
             original_query=query,
             rewritten_query=rewritten_query,
-            metadata_expression=metadata_expression,
-            cached_response=None,  # Response caching removed - only cache retrieval results
+            metadata_expression=metadata_expression
         )
 
 
@@ -207,10 +205,8 @@ class ResponseGenerator:
     def __init__(
         self,
         generation_module: GenerationIntegrationModule,
-        cache_manager: CacheManager | None,
     ) -> None:
         self._generation_module = generation_module
-        # cache_manager kept for interface compatibility but no longer used for response caching
 
     def generate(self, rewritten_query: str, context_parts: List[str], stream: bool):
         return self._generation_module.generate_response(

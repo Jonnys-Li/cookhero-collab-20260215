@@ -8,8 +8,8 @@ from typing import AsyncGenerator, Dict, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from app.config import DefaultRAGConfig
-from app.rag.pipeline.intent_detector import IntentDetector
+from app.config import settings
+from app.conversation import IntentDetector, QueryRewriter
 from app.services.rag_service import rag_service_instance
 
 logger = logging.getLogger(__name__)
@@ -67,24 +67,21 @@ class ConversationService:
     
     def __init__(self):
         """Initialize the conversation service."""
-        self.config = DefaultRAGConfig
+        self.llm_config = settings.llm
         
         # Initialize LLM for general conversation
         self.llm = ChatOpenAI(
-            model=self.config.llm.model_name,
-            temperature=self.config.llm.temperature,
-            max_completion_tokens=self.config.llm.max_tokens,
-            api_key=self.config.llm.api_key,  # type: ignore
-            base_url=self.config.llm.base_url,
+            model=self.llm_config.model_name,
+            temperature=self.llm_config.temperature,
+            max_completion_tokens=self.llm_config.max_tokens,
+            api_key=self.llm_config.api_key,  # type: ignore
+            base_url=self.llm_config.base_url,
             streaming=True
         )
         
-        # Initialize intent detector
-        self.intent_detector = IntentDetector(
-            model_name=self.config.llm.model_name,
-            api_key=self.config.llm.api_key,  # type: ignore
-            base_url=self.config.llm.base_url
-        )
+        # Initialize intent detector & query rewriter with shared LLM config
+        self.intent_detector = IntentDetector(llm_config=self.llm_config)
+        self.query_rewriter = QueryRewriter(llm_config=self.llm_config)
         
         logger.info("ConversationService initialized.")
     
@@ -116,7 +113,7 @@ class ConversationService:
     
     def _build_history_list(self, conversation: Conversation, limit: int = 10) -> List[Dict[str, str]]:
         """Build chat history as a simple list of dicts for query rewriting."""
-        recent_messages = conversation.messages[-limit:]
+        recent_messages = conversation.messages
         return [
             {"role": msg.role, "content": msg.content}
             for msg in recent_messages
@@ -168,7 +165,7 @@ class ConversationService:
                 chat_history = self._build_history_list(conversation)
                 
                 # Rewrite query with chat history context
-                rewritten_query = rag_service_instance.rewrite_query_with_history(
+                rewritten_query = self.query_rewriter.rewrite_with_history(
                     message, chat_history
                 )
                 
@@ -298,6 +295,22 @@ class ConversationService:
             del _conversations[conversation_id]
             return True
         return False
+
+    def list_conversations(self) -> list[dict]:
+        """List all conversations with basic metadata for UI switching."""
+        result = []
+        for conv in _conversations.values():
+            result.append(
+                {
+                    "id": conv.id,
+                    "created_at": conv.created_at.isoformat(),
+                    "updated_at": conv.updated_at.isoformat(),
+                    "message_count": len(conv.messages),
+                    "last_message_preview": (conv.messages[-1].content[:80] if conv.messages else ""),
+                }
+            )
+        # Sort by updated_at desc to surface recent conversations first
+        return sorted(result, key=lambda x: x["updated_at"], reverse=True)
 
 
 # Singleton instance

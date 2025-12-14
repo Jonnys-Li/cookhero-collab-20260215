@@ -5,17 +5,20 @@ from typing import Tuple
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+
+from app.config import LLMProviderConfig, settings
 
 logger = logging.getLogger(__name__)
 
 
 class QueryIntent(Enum):
     """Enum representing the detected intent of a user query."""
-    RECIPE_SEARCH = "recipe_search"      # 用户想查找食谱
-    COOKING_TIPS = "cooking_tips"        # 用户想了解烹饪技巧
-    INGREDIENT_INFO = "ingredient_info"  # 用户询问食材信息
-    GENERAL_CHAT = "general_chat"        # 普通闲聊，不需要 RAG
-    RECOMMENDATION = "recommendation"    # 推荐类查询
+    RECIPE_SEARCH = "recipe_search"
+    COOKING_TIPS = "cooking_tips"
+    INGREDIENT_INFO = "ingredient_info"
+    GENERAL_CHAT = "general_chat"
+    RECOMMENDATION = "recommendation"
 
 
 INTENT_DETECTION_PROMPT_TEMPLATE = """
@@ -56,51 +59,52 @@ class IntentDetector:
     """
     Detects user intent to determine if RAG retrieval is needed.
     """
-    
+
     def __init__(
         self,
-        model_name: str,
-        api_key: str,
-        base_url: str | None = None,
-        max_tokens: int = 256
+        llm_config: LLMProviderConfig | None = None,
+        max_tokens: int = 256,
     ):
-        """Initialize the intent detector with LLM configuration."""
+        """Initialize the intent detector with global or overridden LLM config."""
+        self.llm_config = llm_config or settings.llm
         self.llm = ChatOpenAI(
-            model=model_name,
+            model=self.llm_config.model_name,
             temperature=0.0,  # Deterministic for classification
             max_completion_tokens=max_tokens,
-            api_key=api_key,  # type: ignore
-            base_url=base_url
+            api_key=self.llm_config.api_key,  # type: ignore
+            base_url=self.llm_config.base_url,
         )
-        self.chain = INTENT_DETECTION_PROMPT | self.llm
-        logger.info(f"IntentDetector initialized with model: {model_name}")
-    
+        self.chain = INTENT_DETECTION_PROMPT | self.llm | StrOutputParser()
+        logger.info(
+            "IntentDetector initialized with model: %s", self.llm_config.model_name
+        )
+
     def detect(self, query: str) -> Tuple[bool, QueryIntent, str]:
         """
         Detect if the query needs RAG retrieval.
-        
+
         Args:
             query: The user's input query.
-            
+
         Returns:
             Tuple of (need_rag, intent, reason)
         """
         try:
             response = self.chain.invoke({"query": query})
-            content = str(response.content).strip()
-            
+            content = response.strip()
+
             # Parse JSON response
             # Handle potential markdown code blocks
             if content.startswith("```"):
-                content = content.split("```")[1]
+                content = content.split("```", 1)[1]
                 if content.startswith("json"):
                     content = content[4:]
-            
+
             result = json.loads(content)
             need_rag = result.get("need_rag", True)
             intent_str = result.get("intent", "general_chat")
             reason = result.get("reason", "")
-            
+
             # Map string to enum
             intent_map = {
                 "recipe_search": QueryIntent.RECIPE_SEARCH,
@@ -110,11 +114,18 @@ class IntentDetector:
                 "general_chat": QueryIntent.GENERAL_CHAT,
             }
             intent = intent_map.get(intent_str, QueryIntent.GENERAL_CHAT)
-            
-            logger.info(f"Intent detected: need_rag={need_rag}, intent={intent.value}, reason={reason}")
+
+            logger.info(
+                "Intent detected: need_rag=%s, intent=%s, reason=%s",
+                need_rag,
+                intent.value,
+                reason,
+            )
             return need_rag, intent, reason
-            
+
         except Exception as e:
-            logger.warning(f"Intent detection failed: {e}. Defaulting to RAG enabled.")
+            logger.warning(
+                "Intent detection failed: %s. Defaulting to RAG enabled.", e
+            )
             # Default to using RAG when detection fails
-            return True, QueryIntent.RECIPE_SEARCH, "Detection failed, using default"
+            return True, QueryIntent.GENERAL_CHAT, "Detection failed, using default"
