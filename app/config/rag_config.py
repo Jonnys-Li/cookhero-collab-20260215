@@ -1,4 +1,9 @@
-# app/core/rag_config.py
+# app/config/rag_config.py
+"""
+RAG (Retrieval-Augmented Generation) configuration models.
+These models define the structure for the config.yml file.
+"""
+
 from pydantic import BaseModel, Field, model_validator
 from typing import List, Literal, Optional, Dict
 

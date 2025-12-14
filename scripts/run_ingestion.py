@@ -2,13 +2,12 @@
 import logging
 from pathlib import Path
 
-from app.core.config_loader import DefaultRAGConfig
+from app.config import DefaultRAGConfig, RAGConfig
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
 from app.rag.data_sources.generic_text_data_source import GenericTextDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
-from app.core.rag_config import RAGConfig
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO,

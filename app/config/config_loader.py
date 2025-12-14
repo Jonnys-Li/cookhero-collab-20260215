@@ -1,8 +1,14 @@
-# app/core/config_loader.py
+# app/config/config_loader.py
+"""
+Configuration loader for RAG settings.
+Loads from config.yml and merges with secrets from .env file.
+"""
+
 import yaml
 from pathlib import Path
 from dotenv import dotenv_values
-from app.core.rag_config import RAGConfig
+from app.config.rag_config import RAGConfig
+
 
 def load_config() -> RAGConfig:
     """
@@ -46,8 +52,4 @@ def load_config() -> RAGConfig:
             config_data["cache"]["vector_password"] = cache_vector_password
 
     # Validate and return the configuration using Pydantic models
-    return RAGConfig.parse_obj(config_data)
-
-# Create a single, globally accessible config instance
-# Any module can import this instance to get the configuration.
-DefaultRAGConfig = load_config()
+    return RAGConfig.model_validate(config_data)

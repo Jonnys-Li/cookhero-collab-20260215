@@ -5,7 +5,7 @@ from typing import List
 
 from app.rag.rerankers.base import BaseReranker
 from langchain_core.documents import Document
-from app.core.rag_config import RerankerConfig
+from app.config.rag_config import RerankerConfig
 
 logger = logging.getLogger(__name__)
 
