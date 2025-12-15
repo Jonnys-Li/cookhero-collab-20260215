@@ -85,8 +85,6 @@ class ConversationService:
         intent_result: IntentDetectionResult = self.intent_detector.detect(
             message, history_text
         )
-        
-        # Yield intent information
         yield f"data: {json.dumps({'type': 'intent', 'data': {'need_rag': intent_result.need_rag, 'intent': intent_result.intent.value, 'reason': intent_result.reason}})}\n\n"
         
         sources: List[Dict] = []
@@ -96,6 +94,11 @@ class ConversationService:
         def emit_thinking(step: str) -> str:
             thinking_steps.append(step)
             return f"data: {json.dumps({'type': 'thinking', 'content': step})}\n\n"
+        
+        # Yield intent detection result with more details
+        yield emit_thinking(f"🔍 意图识别完成: {intent_result.intent.value}")
+        yield emit_thinking(f"📋 是否需要检索: {'是' if intent_result.need_rag else '否'}")
+        yield emit_thinking(f"💭 判断依据: {intent_result.reason[:100]}...")
         
         logger.info(
             "chat route need_rag=%s intent=%s reason=%s history_len=%d",
@@ -107,13 +110,16 @@ class ConversationService:
 
         if intent_result.need_rag:
             # Use RAG pipeline with history-aware query rewriting
-            yield emit_thinking("正在分析你的问题并检索 CookHero 知识库...")
+            yield emit_thinking("⏳ 正在结合对话历史重写查询语句...")
             
             try:
                 # Rewrite query with chat history context
                 rewritten_query = self.query_rewriter.rewrite_with_history(
                     message, history_text
                 )
+                yield emit_thinking(f"✏️ 重写后的查询: {rewritten_query}")
+                
+                yield emit_thinking("🔎 正在从 CookHero 知识库中检索相关资料...")
                 
                 # Retrieve context once and reuse for generation + sources
                 retrieval_result = rag_service_instance.retrieve(
@@ -121,10 +127,19 @@ class ConversationService:
                     skip_rewrite=True,
                 )
                 doc_count = len(retrieval_result.documents)
+                
                 if doc_count:
-                    yield emit_thinking(f"从知识库中找到 {doc_count} 条相关资料，正在组织回答...")
+                    yield emit_thinking(f"📚 检索到 {doc_count} 条相关资料")
+                    # Show brief info about retrieved documents
+                    for i, doc in enumerate(retrieval_result.documents[:3]):  # Show top 3
+                        doc_title = doc.metadata.get('title', doc.metadata.get('source', '未知来源'))
+                        doc_preview = doc.page_content[:50].replace('\n', ' ') + "..."
+                        yield emit_thinking(f"  📄 [{i+1}] {doc_title}: {doc_preview}")
+                    if doc_count > 3:
+                        yield emit_thinking(f"  ...还有 {doc_count - 3} 条资料")
+                    yield emit_thinking("📝 正在组织回答...")
                 else:
-                    yield emit_thinking("知识库里没有找到直接相关的资料，将结合常识为你回答。")
+                    yield emit_thinking("⚠️ 知识库里没有找到直接相关的资料，将结合常识为你回答。")
                 
                 sources = retrieval_result.sources or [
                     {"type": "rag", "info": "CookHero 知识库"}
@@ -138,13 +153,16 @@ class ConversationService:
                 messages_for_llm = self.context_manager.build_llm_messages_from_dicts(
                     history, extra_system_prompt=context_prompt
                 )
+                
+                yield emit_thinking("🤖 开始生成回答...")
+                
                 async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                     full_response += chunk
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
                 
             except Exception as e:
                 logger.error(f"RAG error: {e}", exc_info=True)
-                yield emit_thinking("检索遇到问题，改为直接回答你的问题。")
+                yield emit_thinking(f"❌ 检索遇到问题: {str(e)[:50]}，改为直接回答。")
                 # Fallback to direct LLM
                 messages_for_llm = self.context_manager.build_llm_messages_from_dicts(history)
                 async for chunk in self.llm_orchestrator.stream(messages_for_llm):
@@ -152,6 +170,7 @@ class ConversationService:
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
         else:
             # Direct LLM conversation
+            yield emit_thinking("💬 无需检索知识库，直接回答...")
             messages_for_llm = self.context_manager.build_llm_messages_from_dicts(history)
             async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                 full_response += chunk

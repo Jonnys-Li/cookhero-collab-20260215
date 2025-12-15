@@ -1,10 +1,17 @@
 # Global Instructions
 
-1. **No automatic git commit**  
-   After completing any request that involves code changes or updates, **do not perform git commit automatically** unless explicitly instructed by the user.
+## 1. Task Decomposition & Planning
+- For multiple or complex tasks, think through and analyze carefully first
+- Create a to-do list breaking down tasks into executable steps
+- Process each subtask sequentially by priority
 
-2. **Use virtual environment for testing or running code**  
-   When running or testing code, always ensure that the **virtual environment** located in the root directory of the project is activated before execution. Use the following command to activate the environment:
-   ```bash
-   source .venv/bin/activate
-   ```
+## 2. Git Operations
+- **Never execute git commit automatically** after code changes
+- Only perform git operations when explicitly instructed by user
+
+## 3. Python Environment
+- Always activate the virtual environment in project root before running/testing code
+- Activation command: `source .venv/bin/activate`
+
+## 4. Frontend Build
+- After modifying frontend code, run the following command to compile and check for errors: `npm run build`
