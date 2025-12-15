@@ -98,9 +98,10 @@ class ConversationService:
             return f"data: {json.dumps({'type': 'thinking', 'content': step})}\n\n"
         
         logger.info(
-            "chat route need_rag=%s intent=%s history=%d",
+            "chat route need_rag=%s intent=%s reason=%s history_len=%d",
             intent_result.need_rag,
             intent_result.intent.value,
+            intent_result.reason[:120],
             len(history),
         )
 

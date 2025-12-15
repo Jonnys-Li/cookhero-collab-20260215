@@ -129,12 +129,6 @@ class IntentDetector:
             }
             intent = intent_map.get(intent_str, QueryIntent.GENERAL_CHAT)
 
-            logger.info(
-                "intent detected need_rag=%s intent=%s reason=%s",
-                need_rag,
-                intent.value,
-                reason[:120],
-            )
             return IntentDetectionResult(
                 need_rag=need_rag,
                 intent=intent,
