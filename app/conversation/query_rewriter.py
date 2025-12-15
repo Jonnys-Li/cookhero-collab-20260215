@@ -78,9 +78,9 @@ class QueryRewriter:
 
             if rewritten and rewritten != current_query:
                 logger.info(
-                    "Query rewritten with history: '%s' -> '%s'",
-                    current_query,
-                    rewritten,
+                    "query rewrite: '%s' -> '%s'",
+                    current_query[:80],
+                    rewritten[:80],
                 )
                 return rewritten
 

@@ -50,7 +50,6 @@ class ConversationService:
         self.llm_orchestrator = LLMOrchestrator(llm_config=self.llm_config)
         self.intent_detector = IntentDetector(llm_config=self.llm_config)
         self.query_rewriter = QueryRewriter(llm_config=self.llm_config)
-        logger.info("ConversationService initialized.")
     
     async def chat(
         self,
@@ -98,9 +97,15 @@ class ConversationService:
             thinking_steps.append(step)
             return f"data: {json.dumps({'type': 'thinking', 'content': step})}\n\n"
         
+        logger.info(
+            "chat route need_rag=%s intent=%s history=%d",
+            intent_result.need_rag,
+            intent_result.intent.value,
+            len(history),
+        )
+
         if intent_result.need_rag:
             # Use RAG pipeline with history-aware query rewriting
-            logger.info(f"Using RAG for query: {message}")
             yield emit_thinking("正在分析你的问题并检索 CookHero 知识库...")
             
             try:
@@ -143,7 +148,6 @@ class ConversationService:
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
         else:
             # Direct LLM conversation
-            logger.info(f"Using direct LLM for query: {message}")
             messages_for_llm = self.context_manager.build_llm_messages_from_dicts(history)
             async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                 full_response += chunk

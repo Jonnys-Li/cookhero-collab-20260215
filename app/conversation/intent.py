@@ -91,9 +91,7 @@ class IntentDetector:
             base_url=self.llm_config.base_url,
         )
         self.chain = INTENT_DETECTION_PROMPT | self.llm | StrOutputParser()
-        logger.info(
-            "IntentDetector initialized with model: %s", self.llm_config.model_name
-        )
+        logger.info("IntentDetector initialized")
 
     def detect(
         self,
@@ -111,8 +109,6 @@ class IntentDetector:
         try:
             response = self.chain.invoke({"query": query, "history": history_str})
             content = response.strip()
-
-            logger.info("Intent detection response: %s", content)
 
             if content.startswith("```"):
                 content = content.strip("```").strip()
@@ -134,10 +130,10 @@ class IntentDetector:
             intent = intent_map.get(intent_str, QueryIntent.GENERAL_CHAT)
 
             logger.info(
-                "Intent detected: need_rag=%s, intent=%s, reason=%s",
+                "intent detected need_rag=%s intent=%s reason=%s",
                 need_rag,
                 intent.value,
-                reason,
+                reason[:120],
             )
             return IntentDetectionResult(
                 need_rag=need_rag,
