@@ -36,8 +36,13 @@ class QueryPlanner:
         self._metadata_filter_extractor = metadata_filter_extractor
         self._cache_manager = cache_manager
 
-    def prepare(self, query: str, metadata_catalog: Dict[str, Dict[str, List[str]]]) -> QueryPlan:
-        rewritten_query = self._generation_module.rewrite_query(query)
+    def prepare(
+        self,
+        query: str,
+        metadata_catalog: Dict[str, Dict[str, List[str]]],
+        skip_rewrite: bool = False,
+    ) -> QueryPlan:
+        rewritten_query = query if skip_rewrite else self._generation_module.rewrite_query(query)
         metadata_expression = self._metadata_filter_extractor.build_filter_expression(
             query,
             metadata_catalog,

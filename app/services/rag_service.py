@@ -220,7 +220,8 @@ class RAGService:
     def retrieve(
         self, 
         query: str, 
-        use_intelligent_ranker: bool = True
+        use_intelligent_ranker: bool = True,
+        skip_rewrite: bool = False,
     ) -> RetrievalResult:
         """
         Perform query rewriting and retrieval only, without LLM generation.
@@ -243,7 +244,11 @@ class RAGService:
         logger.info("retrieval start query='%s'", query[:80])
 
         # Query planning (rewrite + metadata extraction)
-        plan = self._query_planner.prepare(query, self.metadata_catalog)
+        plan = self._query_planner.prepare(
+            query,
+            self.metadata_catalog,
+            skip_rewrite=skip_rewrite,
+        )
         
         # Execute retrieval
         all_retrieved_docs = self._retrieval_executor.retrieve(
@@ -297,7 +302,8 @@ class RAGService:
         self, 
         query: str, 
         stream: bool = False, 
-        use_intelligent_ranker: bool = True
+        use_intelligent_ranker: bool = True,
+        skip_rewrite: bool = False,
     ) -> str | Generator[str, None, None]:
         """
         Full RAG pipeline: query rewriting + retrieval + LLM generation.
@@ -315,7 +321,11 @@ class RAGService:
         if not all([self.retrieval_modules, self.generation_module, self.data_sources]):
             raise RuntimeError("RAG Service is not properly initialized.")
 
-        plan = self._query_planner.prepare(query, self.metadata_catalog)
+        plan = self._query_planner.prepare(
+            query,
+            self.metadata_catalog,
+            skip_rewrite=skip_rewrite,
+        )
 
         retrieval_top_k = self.config.retrieval.top_k
         all_retrieved_docs = self._retrieval_executor.retrieve(

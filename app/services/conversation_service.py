@@ -115,7 +115,10 @@ class ConversationService:
                 )
                 
                 # Retrieve context once and reuse for generation + sources
-                retrieval_result = rag_service_instance.retrieve(rewritten_query)
+                retrieval_result = rag_service_instance.retrieve(
+                    rewritten_query,
+                    skip_rewrite=True,
+                )
                 doc_count = len(retrieval_result.documents)
                 if doc_count:
                     yield emit_thinking(f"从知识库中找到 {doc_count} 条相关资料，正在组织回答...")
