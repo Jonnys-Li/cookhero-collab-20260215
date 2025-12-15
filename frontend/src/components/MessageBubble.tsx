@@ -81,8 +81,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           <div className={`
             text-sm leading-relaxed
             ${isUser 
-              ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white px-4 py-3 rounded-2xl rounded-tr-sm shadow-sm' 
-              : 'prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-800/50 px-4 py-3 rounded-2xl rounded-tl-sm border border-gray-200 dark:border-gray-700'
+              ? 'bg-gradient-to-br from-blue-500 to-blue-500 text-white px-4 py-1 rounded-2xl shadow-sm' 
+              : 'prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100 bg-gray-50 dark:bg-gray-800/50 px-4 py-1 rounded-2xl border border-gray-200 dark:border-gray-700'
             }
           `}>
             <MarkdownRenderer content={message.content.trim()} />
