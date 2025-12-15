@@ -1,42 +1,20 @@
 import json
 import logging
-import uuid
-from dataclasses import dataclass, field
-from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional
 
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
 from app.config import settings
-from app.conversation import IntentDetector, QueryRewriter
+from app.conversation import (
+    ContextManager,
+    IntentDetectionResult,
+    IntentDetector,
+    LLMOrchestrator,
+    Message,
+    QueryRewriter,
+    conversation_store,
+)
 from app.services.rag_service import rag_service_instance
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class Message:
-    """Represents a single message in a conversation."""
-    role: str  # "user" or "assistant"
-    content: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    sources: Optional[List[Dict]] = None  # RAG sources if any
-    intent: Optional[str] = None  # Detected intent
-    thinking: Optional[List[str]] = None  # Intermediate reasoning steps
-
-
-@dataclass
-class Conversation:
-    """Represents a conversation session."""
-    id: str
-    messages: List[Message] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-
-
-# In-memory conversation store (replace with Redis/DB for production)
-_conversations: Dict[str, Conversation] = {}
 
 
 SYSTEM_PROMPT = """你是 CookHero，一位友好、专业且富有耐心的烹饪助手。
@@ -66,58 +44,13 @@ class ConversationService:
     """
     
     def __init__(self):
-        """Initialize the conversation service."""
+        """Initialize the conversation service with modular components."""
         self.llm_config = settings.llm
-        
-        # Initialize LLM for general conversation
-        self.llm = ChatOpenAI(
-            model=self.llm_config.model_name,
-            temperature=self.llm_config.temperature,
-            max_completion_tokens=self.llm_config.max_tokens,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url,
-            streaming=True
-        )
-        
-        # Initialize intent detector & query rewriter with shared LLM config
+        self.context_manager = ContextManager(system_prompt=SYSTEM_PROMPT)
+        self.llm_orchestrator = LLMOrchestrator(llm_config=self.llm_config)
         self.intent_detector = IntentDetector(llm_config=self.llm_config)
         self.query_rewriter = QueryRewriter(llm_config=self.llm_config)
-        
         logger.info("ConversationService initialized.")
-    
-    def get_or_create_conversation(self, conversation_id: Optional[str] = None) -> Conversation:
-        """Get existing conversation or create a new one."""
-        if conversation_id and conversation_id in _conversations:
-            return _conversations[conversation_id]
-        
-        new_id = conversation_id or str(uuid.uuid4())
-        conversation = Conversation(id=new_id)
-        _conversations[new_id] = conversation
-        return conversation
-    
-    def _build_chat_history(self, conversation: Conversation, limit: int = 10):
-        """Build chat history for LLM context."""
-        from langchain_core.messages import BaseMessage
-        messages: List[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
-        
-        # Get last N messages for context
-        recent_messages = conversation.messages[-limit:]
-        
-        for msg in recent_messages:
-            if msg.role == "user":
-                messages.append(HumanMessage(content=msg.content))
-            else:
-                messages.append(AIMessage(content=msg.content))
-        
-        return messages
-    
-    def _build_history_list(self, conversation: Conversation, limit: int = 10) -> List[Dict[str, str]]:
-        """Build chat history as a simple list of dicts for query rewriting."""
-        recent_messages = conversation.messages
-        return [
-            {"role": msg.role, "content": msg.content}
-            for msg in recent_messages
-        ]
     
     async def chat(
         self,
@@ -134,18 +67,21 @@ class ConversationService:
         - {"type": "sources", "data": [...]} - RAG sources (if any)
         - {"type": "done", "conversation_id": "..."} - Completion signal
         """
-        conversation = self.get_or_create_conversation(conversation_id)
+        conversation = conversation_store.get_or_create(conversation_id)
         
         # Add user message to history
         user_message = Message(role="user", content=message)
-        conversation.messages.append(user_message)
-        conversation.updated_at = datetime.now()
+        conversation_store.add_message(conversation, user_message)
+        self.context_manager.trim_history(conversation, max_messages=100)
         
-        # Detect intent
-        need_rag, intent, reason = self.intent_detector.detect(message)
+        # Detect intent using preformatted history
+        history_text = self.context_manager.build_history_text(conversation)
+        intent_result: IntentDetectionResult = self.intent_detector.detect(
+            message, history_text
+        )
         
         # Yield intent information
-        yield f"data: {json.dumps({'type': 'intent', 'data': {'need_rag': need_rag, 'intent': intent.value, 'reason': reason}})}\n\n"
+        yield f"data: {json.dumps({'type': 'intent', 'data': {'need_rag': intent_result.need_rag, 'intent': intent_result.intent.value, 'reason': intent_result.reason}})}\n\n"
         
         sources: List[Dict] = []
         full_response = ""
@@ -155,18 +91,16 @@ class ConversationService:
             thinking_steps.append(step)
             return f"data: {json.dumps({'type': 'thinking', 'content': step})}\n\n"
         
-        if need_rag:
+        if intent_result.need_rag:
             # Use RAG pipeline with history-aware query rewriting
             logger.info(f"Using RAG for query: {message}")
             yield emit_thinking("正在分析你的问题并检索 CookHero 知识库...")
             
             try:
                 # Build chat history for query rewriting
-                chat_history = self._build_history_list(conversation)
-                
                 # Rewrite query with chat history context
                 rewritten_query = self.query_rewriter.rewrite_with_history(
-                    message, chat_history
+                    message, history_text
                 )
                 
                 # Retrieve context once and reuse for generation + sources
@@ -186,10 +120,10 @@ class ConversationService:
                     retrieval_result.context,
                     rewritten_query
                 )
-                async for chunk in self._generate_llm_response(
-                    conversation,
-                    extra_system_prompt=context_prompt
-                ):
+                messages_for_llm = self.context_manager.build_llm_messages(
+                    conversation, extra_system_prompt=context_prompt
+                )
+                async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                     full_response += chunk
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
                 
@@ -197,13 +131,15 @@ class ConversationService:
                 logger.error(f"RAG error: {e}", exc_info=True)
                 yield emit_thinking("检索遇到问题，改为直接回答你的问题。")
                 # Fallback to direct LLM
-                async for chunk in self._direct_llm_response(conversation):
+                messages_for_llm = self.context_manager.build_llm_messages(conversation)
+                async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                     full_response += chunk
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
         else:
             # Direct LLM conversation
             logger.info(f"Using direct LLM for query: {message}")
-            async for chunk in self._direct_llm_response(conversation):
+            messages_for_llm = self.context_manager.build_llm_messages(conversation)
+            async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
         
@@ -212,36 +148,13 @@ class ConversationService:
             role="assistant",
             content=full_response,
             sources=sources if sources else None,
-            intent=intent.value,
+            intent=intent_result.intent.value,
             thinking=thinking_steps if thinking_steps else None
         )
-        conversation.messages.append(assistant_message)
+        conversation_store.add_message(conversation, assistant_message)
         
         # Yield completion signal
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': conversation.id})}\n\n"
-    
-    async def _direct_llm_response(
-        self,
-        conversation: Conversation
-    ) -> AsyncGenerator[str, None]:
-        """Generate a direct LLM response without RAG."""
-        async for chunk in self._generate_llm_response(conversation):
-            if chunk:
-                yield chunk
-
-    async def _generate_llm_response(
-        self,
-        conversation: Conversation,
-        extra_system_prompt: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """Stream responses from the base LLM with optional extra system guidance."""
-        chat_history = self._build_chat_history(conversation)
-        if extra_system_prompt:
-            chat_history.append(SystemMessage(content=extra_system_prompt))
-        
-        async for chunk in self.llm.astream(chat_history):
-            if chunk.content:
-                yield str(chunk.content)
 
     def _build_rag_context_prompt(self, context: str, rewritten_query: str) -> str:
         """Construct the system prompt that injects retrieved context for generation."""
@@ -253,64 +166,17 @@ class ConversationService:
             f"【检索到的参考内容】\n{sanitized_context}"
         )
     
-    async def _wrap_sync_generator(self, sync_gen):
-        """Wrap a synchronous generator as async."""
-        import asyncio
-        
-        def get_next():
-            try:
-                return next(sync_gen), False
-            except StopIteration:
-                return None, True
-        
-        loop = asyncio.get_event_loop()
-        while True:
-            result, done = await loop.run_in_executor(None, get_next)
-            if done:
-                break
-            if result:
-                yield result
-    
     def get_conversation_history(self, conversation_id: str) -> Optional[List[Dict]]:
         """Get conversation history."""
-        if conversation_id not in _conversations:
-            return None
-        
-        conversation = _conversations[conversation_id]
-        return [
-            {
-                "role": msg.role,
-                "content": msg.content,
-                "timestamp": msg.timestamp.isoformat(),
-                "sources": msg.sources,
-                "intent": msg.intent,
-                "thinking": msg.thinking,
-            }
-            for msg in conversation.messages
-        ]
+        return conversation_store.get_history(conversation_id)
     
     def clear_conversation(self, conversation_id: str) -> bool:
         """Clear a conversation."""
-        if conversation_id in _conversations:
-            del _conversations[conversation_id]
-            return True
-        return False
+        return conversation_store.clear(conversation_id)
 
     def list_conversations(self) -> list[dict]:
         """List all conversations with basic metadata for UI switching."""
-        result = []
-        for conv in _conversations.values():
-            result.append(
-                {
-                    "id": conv.id,
-                    "created_at": conv.created_at.isoformat(),
-                    "updated_at": conv.updated_at.isoformat(),
-                    "message_count": len(conv.messages),
-                    "last_message_preview": (conv.messages[-1].content[:80] if conv.messages else ""),
-                }
-            )
-        # Sort by updated_at desc to surface recent conversations first
-        return sorted(result, key=lambda x: x["updated_at"], reverse=True)
+        return conversation_store.list_conversations()
 
 
 # Singleton instance
