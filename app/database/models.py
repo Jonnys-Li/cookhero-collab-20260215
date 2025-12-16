@@ -1,7 +1,8 @@
 # app/database/models.py
 """
 SQLAlchemy ORM models for CookHero.
-Defines database schema for conversations and messages.
+Defines database schema for conversations, messages, user profiles,
+long-term memory, and conversation summaries.
 """
 
 import uuid
@@ -25,6 +26,38 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
     pass
+
+
+# ==================== User Model ====================
+
+class UserModel(Base):
+    """ORM model for application users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    occupation: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_users_username", "username", unique=True),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "username": self.username,
+            "occupation": self.occupation,
+            "bio": self.bio,
+            "created_at": self.created_at.isoformat(),
+        }
 
 
 class ConversationModel(Base):

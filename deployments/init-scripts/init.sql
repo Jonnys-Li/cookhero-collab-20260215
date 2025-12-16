@@ -1,4 +1,4 @@
--- init-scripts/01-init.sql
+-- init-scripts/init.sql
 -- PostgreSQL initialization script for CookHero
 -- This script runs when the container is first created
 
@@ -48,6 +48,23 @@ CREATE TRIGGER update_conversations_updated_at
     BEFORE UPDATE ON conversations
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(255) NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users(username);
+
+-- Add occupation and bio columns to users table (profile fields)
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS occupation VARCHAR(100),
+  ADD COLUMN IF NOT EXISTS bio TEXT;
+
+-- Optional: index on occupation for filtering
+CREATE INDEX IF NOT EXISTS ix_users_occupation ON users(occupation);
 
 -- Grant permissions (if using different roles)
 -- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO cookhero;
