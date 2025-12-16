@@ -1,15 +1,18 @@
 // src/App.tsx
-/**
- * Main App component for CookHero
- */
-
 import { useState } from 'react';
-import { Menu } from 'lucide-react';
+import type { ReactElement } from 'react';
+import { Menu, LogOut } from 'lucide-react';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ChatWindow, ChatInput, Sidebar } from './components';
 import { useConversation } from './hooks/useConversation';
 import { useTheme } from './hooks/useTheme';
+import { useAuth } from './hooks/useAuth';
+import LoginPage from './pages/Login';
+import RegisterPage from './pages/Register';
 
-function App() {
+function ConversationPage() {
+  const { token, username, logout } = useAuth();
+  const navigate = useNavigate();
   const {
     messages,
     conversationId,
@@ -19,7 +22,7 @@ function App() {
     sendMessage,
     selectConversation,
     clearMessages,
-  } = useConversation();
+  } = useConversation(token || undefined);
 
   const { isDark, toggleTheme } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -38,6 +41,11 @@ function App() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
   return (
     <div className="flex h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
       <Sidebar
@@ -52,7 +60,6 @@ function App() {
       />
 
       <div className="flex-1 flex flex-col h-full relative">
-        {/* Header */}
         <header className="h-14 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm flex items-center px-4 justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -67,16 +74,29 @@ function App() {
               <h1 className="font-bold text-gray-800 dark:text-gray-100">CookHero</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400 max-w-md">
+          <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-300">
             {conversationId && (
               <span className="font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded break-all whitespace-pre-wrap">
                 ID: {conversationId}
               </span>
             )}
+            {username && (
+              <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full">
+                <span className="font-semibold">{username}</span>
+                <button
+                  onClick={handleLogout}
+                  className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-100 flex items-center gap-1"
+                  title="Log out"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Logout</span>
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
-        <main className="flex-1 flex flex-col overflow-hidden relative">
+        <main className="flex-1 flex flex-col overflow-hidden relative bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-950">
           {error && (
             <div className="absolute top-4 left-4 right-4 z-10 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm">
               ⚠️ {error}
@@ -98,6 +118,35 @@ function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+function RequireAuth({ children }: { children: ReactElement }) {
+  const { isAuthenticated } = useAuth();
+  const location = useLocation();
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  return children;
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <ConversationPage />
+          </RequireAuth>
+        }
+      />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 

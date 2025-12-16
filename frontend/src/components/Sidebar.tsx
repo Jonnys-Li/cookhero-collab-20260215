@@ -1,4 +1,7 @@
 import { MessageSquare, Plus, PanelLeftClose, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import UserProfileModal from './UserProfileModal';
+import { useAuth } from '../hooks/useAuth';
 import { ThemeToggle } from './ThemeToggle';
 import type { ConversationSummary } from '../types';
 
@@ -23,6 +26,8 @@ export function Sidebar({
   isDark,
   toggleTheme,
 }: SidebarProps) {
+  const { username } = useAuth();
+  const [open, setOpen] = useState(false);
   return (
     <>
       {/* Mobile Overlay */}
@@ -102,14 +107,20 @@ export function Sidebar({
         <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-white/50 dark:bg-gray-900/50">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
-                U
-              </div>
-              <span className="font-medium">User</span>
+              <button onClick={() => setOpen(true)} className="flex items-center gap-3 focus:outline-none">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                  {username ? username.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div className="text-left">
+                  <div className="font-medium text-gray-900 dark:text-white">{username || 'User'}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">View & edit profile</div>
+                </div>
+              </button>
             </div>
             <ThemeToggle isDark={isDark} toggleTheme={toggleTheme} />
           </div>
         </div>
+        <UserProfileModal open={open} onClose={() => setOpen(false)} />
       </div>
     </>
   );

@@ -30,7 +30,7 @@ const waitForAnimationFrame = () =>
     }
   });
 
-export function useConversation() {
+export function useConversation(token?: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -40,16 +40,20 @@ export function useConversation() {
 
   const refreshConversations = useCallback(async () => {
     try {
-      const list = await listConversations();
+      const list = await listConversations(token);
       setConversations(list);
     } catch (err) {
       console.error('Failed to list conversations:', err);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
-    refreshConversations();
-  }, [refreshConversations]);
+    if (token) {
+      refreshConversations();
+    } else {
+      setConversations([]);
+    }
+  }, [refreshConversations, token]);
 
   const mapHistoryToMessages = useCallback(
     (history: ConversationHistoryResponse['messages']): Message[] => {
@@ -68,6 +72,10 @@ export function useConversation() {
 
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return;
+    if (!token) {
+      setError('Please log in to start chatting.');
+      return;
+    }
 
     setError(null);
     setIsLoading(true);
@@ -101,7 +109,7 @@ export function useConversation() {
       for await (const event of streamConversation({
         message: content,
         conversation_id: conversationId,
-      })) {
+      }, token)) {
         switch (event.type) {
           case 'intent':
             currentIntent = event.data as IntentInfo;
@@ -178,14 +186,14 @@ export function useConversation() {
     } finally {
       setIsLoading(false);
     }
-  }, [conversationId, isLoading, refreshConversations]);
+  }, [conversationId, isLoading, refreshConversations, token]);
   
   const selectConversation = useCallback(async (id: string) => {
     if (!id) return;
     setIsLoading(true);
     setError(null);
     try {
-      const history = await getConversationHistory(id);
+      const history = await getConversationHistory(id, token);
       setConversationId(history.conversation_id);
       setMessages(mapHistoryToMessages(history.messages));
     } catch (err) {
@@ -194,7 +202,7 @@ export function useConversation() {
     } finally {
       setIsLoading(false);
     }
-  }, [mapHistoryToMessages]);
+  }, [mapHistoryToMessages, token]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
