@@ -1,12 +1,15 @@
 # app/main.py
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from app.api.v1.endpoints import chat, conversation
+from app.api.v1.endpoints import chat, conversation, auth
 from app.config import settings
 from app.database.session import init_db, close_db
+from app.api.v1.endpoints import user  # noqa: E402
+from app.services.auth_service import auth_service
 import logging
 
 logging.basicConfig(level=logging.INFO,
@@ -44,9 +47,47 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+EXEMPT_PATHS = {
+    f"{settings.API_V1_STR}/auth/login",
+    f"{settings.API_V1_STR}/auth/register",
+}
+
+
+@app.middleware("http")
+async def auth_gateway(request: Request, call_next):
+    """Simple gateway: require JWT for all routes except login/register/docs/root."""
+    path = request.url.path
+    if (
+        path in EXEMPT_PATHS
+        or path == "/"
+        or path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path.startswith("/openapi")
+        or path.startswith("/static")
+    ):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.lower().startswith("bearer "):
+        return JSONResponse(status_code=401, content={"detail": "需要登录"})
+
+    token = auth_header.split(" ", 1)[1].strip()
+    identity = auth_service.decode_token(token)
+    if not identity or not identity.get("username"):
+        return JSONResponse(status_code=401, content={"detail": "登录已失效，请重新登录"})
+
+    # Attach user info to request state for downstream use (e.g., filtering by user)
+    request.state.username = identity.get("username")
+    request.state.user_id = identity.get("user_id")
+
+    return await call_next(request)
+
 # Include the API routers
 app.include_router(chat.router, prefix=settings.API_V1_STR, tags=["Chat"])
 app.include_router(conversation.router, prefix=settings.API_V1_STR, tags=["Conversation"])
+app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["Auth"])
+app.include_router(user.router, prefix=settings.API_V1_STR, tags=["User"])
 
 @app.get("/")
 async def root():

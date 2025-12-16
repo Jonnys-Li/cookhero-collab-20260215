@@ -8,6 +8,8 @@ Design:
 - All configs loaded from config.yml + .env secrets
 """
 
+import os
+
 from pydantic import BaseModel
 
 from app.config.database_config import DatabaseConfig
@@ -31,6 +33,13 @@ class Settings(BaseModel):
     API_V1_STR: str = "/api/v1"
     PROJECT_NAME: str = "CookHero"
     DEBUG: bool = False
+
+    # ==========================================================================
+    # Auth / Security
+    # ==========================================================================
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "decade")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))
     
     # ==========================================================================
     # Module Configurations
