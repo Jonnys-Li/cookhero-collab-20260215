@@ -6,7 +6,7 @@ Conversation API endpoints for multi-turn chat with RAG integration.
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -39,7 +39,7 @@ class ConversationSummary(BaseModel):
 
 
 @router.post("/conversation")
-async def conversation(request: ConversationRequest):
+async def conversation(request: ConversationRequest, http_request: Request):
     """
     Handle a conversation message with optional RAG integration.
     
@@ -68,7 +68,8 @@ async def conversation(request: ConversationRequest):
                 conversation_service.chat(
                     message=request.message,
                     conversation_id=request.conversation_id,
-                    stream=True
+                    user_id=getattr(http_request.state, "user_id", None),
+                    stream=True,
                 ),
                 media_type="text/event-stream",
                 headers={
@@ -87,7 +88,8 @@ async def conversation(request: ConversationRequest):
             async for event in conversation_service.chat(
                 message=request.message,
                 conversation_id=request.conversation_id,
-                stream=False
+                user_id=getattr(http_request.state, "user_id", None),
+                stream=False,
             ):
                 # Parse SSE event
                 if event.startswith("data: "):
@@ -177,7 +179,7 @@ async def clear_conversation(conversation_id: str):
 
 
 @router.get("/conversation")
-async def list_conversations() -> list[ConversationSummary]:
+async def list_conversations(http_request: Request) -> list[ConversationSummary]:
     """List all conversations for the current user (PostgreSQL store)."""
-    conversations = await conversation_service.list_conversations()
+    conversations = await conversation_service.list_conversations(user_id=getattr(http_request.state, "user_id", None))
     return [ConversationSummary(**c) for c in conversations]

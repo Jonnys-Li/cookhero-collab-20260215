@@ -44,7 +44,13 @@ class ConversationService:
     """
     
     def __init__(self):
-        """Initialize the conversation service with modular components."""
+        """
+        Initialize the conversation service with modular components.
+        
+        Args:
+            enable_memory: Whether to enable advanced memory features.
+                          Set to False for backward compatibility.
+        """
         self.llm_config = settings.llm
         self.context_manager = ContextManager(system_prompt=SYSTEM_PROMPT)
         self.llm_orchestrator = LLMOrchestrator(llm_config=self.llm_config)
@@ -55,6 +61,7 @@ class ConversationService:
         self,
         message: str,
         conversation_id: Optional[str] = None,
+        user_id: Optional[str] = None,
         stream: bool = True
     ) -> AsyncGenerator[str, None]:
         """
@@ -62,12 +69,19 @@ class ConversationService:
         
         Yields SSE-formatted events:
         - {"type": "intent", "data": {...}} - Detected intent
+        - {"type": "thinking", "content": "..."} - Thinking step
         - {"type": "text", "content": "..."} - Text chunk
         - {"type": "sources", "data": [...]} - RAG sources (if any)
         - {"type": "done", "conversation_id": "..."} - Completion signal
+        
+        Args:
+            message: The user's message
+            conversation_id: Optional existing conversation ID
+            user_id: Optional user ID for personalization and memory
+            stream: Whether to stream the response
         """
         # Get or create conversation in database
-        conversation = await conversation_repository.get_or_create(conversation_id)
+        conversation = await conversation_repository.get_or_create(conversation_id, user_id=user_id)
         conv_id = str(conversation.id)
         
         # Add user message to database
@@ -82,6 +96,7 @@ class ConversationService:
         
         # Detect intent using preformatted history
         history_text = self.context_manager.build_history_text_from_dicts(history)
+        print(history_text)
         intent_result: IntentDetectionResult = self.intent_detector.detect(
             message, history_text
         )
