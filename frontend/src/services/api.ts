@@ -102,10 +102,18 @@ export async function getConversationHistory(
 }
 
 /**
- * List conversations (in-memory for now)
+ * List conversations with pagination
  */
-export async function listConversations(token?: string): Promise<ConversationSummary[]> {
-  const response = await fetch(`${API_BASE}/conversation`, {
+export async function listConversations(
+  token?: string,
+  limit: number = 50,
+  offset: number = 0,
+): Promise<{ conversations: ConversationSummary[]; total_count: number }> {
+  const params = new URLSearchParams({
+    limit: limit.toString(),
+    offset: offset.toString(),
+  });
+  const response = await fetch(`${API_BASE}/conversation?${params}`, {
     headers: authHeaders(token),
   });
 
@@ -123,6 +131,46 @@ export async function clearConversation(conversationId: string, token?: string) 
   const response = await fetch(`${API_BASE}/conversation/${conversationId}`, {
     method: 'DELETE',
     headers: authHeaders(token),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Delete a conversation
+ */
+export async function deleteConversation(conversationId: string, token?: string) {
+  const response = await fetch(`${API_BASE}/conversation/${conversationId}`, {
+    method: 'DELETE',
+    headers: authHeaders(token),
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
+  }
+  
+  return response.json();
+}
+
+/**
+ * Update conversation title
+ */
+export async function updateConversationTitle(
+  conversationId: string,
+  title: string,
+  token?: string
+) {
+  const response = await fetch(`${API_BASE}/conversation/${conversationId}/title`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ title }),
   });
   
   if (!response.ok) {

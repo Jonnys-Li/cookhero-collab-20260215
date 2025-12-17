@@ -56,6 +56,13 @@ export interface ConversationSummary {
   last_message_preview?: string | null;
 }
 
+export interface ConversationListResponse {
+  conversations: ConversationSummary[];
+  total_count: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ConversationHistoryResponse {
   conversation_id: string;
   messages: Array<{
