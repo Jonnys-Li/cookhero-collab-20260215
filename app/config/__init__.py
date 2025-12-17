@@ -12,18 +12,27 @@ Usage:
     # Access global LLM configuration
     print(settings.llm.model_name)
     
+    # Access database configurations
+    print(settings.database.postgres.host)
+    print(settings.database.redis.host)
+    print(settings.database.milvus.host)
+    
     # Access RAG configuration
-    print(settings.rag.vector_store.host)
+    print(settings.rag.vector_store.collection_names)
     # or use the alias:
-    print(DefaultRAGConfig.vector_store.host)
+    print(DefaultRAGConfig.vector_store.collection_names)
 """
 
 from app.config.config import settings, Settings, DefaultRAGConfig
-from app.config.database_config import DatabaseConfig
+from app.config.database_config import (
+    DatabaseConfig,
+    PostgresConfig,
+    RedisConfig,
+    MilvusConfig,
+)
 from app.config.llm_config import LLMProviderConfig
 from app.config.rag_config import (
     RAGConfig,
-    LLMOverrideConfig,
     PathsConfig,
     VectorStoreConfig,
     EmbeddingConfig,
@@ -40,9 +49,13 @@ __all__ = [
     "settings",
     "Settings",
     "DefaultRAGConfig",
+    # Database configuration classes
     "DatabaseConfig",
+    "PostgresConfig",
+    "RedisConfig",
+    "MilvusConfig",
+    # LLM configuration
     "LLMProviderConfig",
-    "LLMOverrideConfig",
     # RAG configuration classes
     "RAGConfig",
     "PathsConfig",

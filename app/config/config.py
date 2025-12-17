@@ -6,6 +6,7 @@ Provides a single entry point for all application configuration.
 Design:
 - Settings: Top-level configuration class containing global and module configs
 - All configs loaded from config.yml + .env secrets
+- Environment variables are loaded via load_dotenv in config_loader
 """
 
 import os
@@ -25,7 +26,8 @@ class Settings(BaseModel):
     Contains:
     1. Global configuration (API prefix, project name, etc.)
     2. Global LLM provider configuration
-    3. Module-specific configurations (RAG, Database, etc.)
+    3. Database configurations (PostgreSQL, Redis, Milvus)
+    4. Module-specific configurations (RAG, etc.)
     """
     # ==========================================================================
     # Global Configuration
@@ -36,6 +38,7 @@ class Settings(BaseModel):
 
     # ==========================================================================
     # Auth / Security
+    # Note: Environment variables are already loaded via load_dotenv in config_loader
     # ==========================================================================
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "decade")
     JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
@@ -47,11 +50,11 @@ class Settings(BaseModel):
     # Global LLM provider configuration
     llm: LLMProviderConfig = load_llm_config()
 
+    # Database configurations (PostgreSQL, Redis, Milvus)
+    database: DatabaseConfig = load_database_config()
+
     # RAG configuration loaded from config.yml
     rag: RAGConfig = load_rag_config(llm)
-
-    # Database configuration
-    database: DatabaseConfig = load_database_config()
     
     class Config:
         arbitrary_types_allowed = True

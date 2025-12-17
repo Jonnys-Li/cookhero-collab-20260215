@@ -4,30 +4,13 @@ RAG (Retrieval-Augmented Generation) configuration models.
 These models define the structure for the config.yml file.
 
 Design principles:
-1. Common/shared configurations are extracted to avoid duplication
-2. Module-specific configs only define their unique fields
-3. Configs inherit common fields when not explicitly set
+1. Database connection configs are defined in DatabaseConfig and passed in
+2. RAG-specific configs only define their unique fields
+3. LLM config uses the global LLMProviderConfig directly
 """
 
 from pydantic import BaseModel
 from typing import List, Literal, Optional, Dict
-
-
-
-# =============================================================================
-# Common/Shared Configurations
-# =============================================================================
-
-class LLMOverrideConfig(BaseModel):
-    """
-    Optional per-module LLM overrides.
-    Only set fields that differ from the global LLM provider config.
-    """
-    model_name: Optional[str] = None
-    base_url: Optional[str] = None
-    api_key: Optional[str] = None
-    temperature: Optional[float] = None
-    max_tokens: Optional[int] = None
 
 
 # =============================================================================
@@ -40,10 +23,11 @@ class PathsConfig(BaseModel):
 
 
 class VectorStoreConfig(BaseModel):
-    """Vector database configuration."""
+    """
+    Vector store configuration.
+    Note: Connection settings (host, port, credentials) are in DatabaseConfig.milvus
+    """
     type: Literal["milvus"] = "milvus"
-    host: str = "localhost"
-    port: int = 19530
     collection_names: Dict[str, str] = {
         "recipes": "cook_hero_recipes",
         "tips": "cook_hero_tips",
@@ -66,13 +50,13 @@ class RetrievalConfig(BaseModel):
 class RerankerConfig(BaseModel):
     """
     Reranker configuration.
-    Inherits common LLM provider fields but can override them.
+    Note: api_key defaults to global LLM API key if not set.
     """
     enabled: bool = True
     type: Literal["siliconflow"] = "siliconflow"
     model_name: str = "Qwen/Qwen3-Reranker-8B"
     base_url: Optional[str] = "https://api.siliconflow.cn/v1/rerank"
-    api_key: Optional[str] = None  # Falls back to common LLM API key
+    api_key: Optional[str] = None  # Falls back to global LLM API key
     temperature: float = 0.0
     max_tokens: int = 8192
     score_threshold: float = 0.1
@@ -86,25 +70,17 @@ class CacheConfig(BaseModel):
     - L1: Exact match (Redis) - fast lookup for identical queries
     - L2: Semantic match (Milvus) - handles similar queries
     
-    Note: Only caches Query -> Retrieved Documents, NOT LLM responses.
+    Note: 
+    - Connection settings are in DatabaseConfig (redis/milvus)
+    - Only caches Query -> Retrieved Documents, NOT LLM responses.
     """
     enabled: bool = True
-    # Redis (L1 cache)
-    redis_host: str = "localhost"
-    redis_port: int = 6379
-    redis_db: int = 0
-    redis_password: Optional[str] = None  # Set in .env
     # TTL for both L1 and L2
     ttl: int = 3600  # 1 hour
     # L2 semantic cache
     l2_enabled: bool = True
     similarity_threshold: float = 0.92
-    vector_host: Optional[str] = None  # Falls back to vector_store.host
-    vector_port: Optional[int] = None  # Falls back to vector_store.port
     vector_collection: str = "cookhero_retrieval_cache"
-    vector_user: Optional[str] = None  # Set in .env
-    vector_password: Optional[str] = None  # Set in .env
-    vector_secure: bool = False
 
 
 class HowToCookConfig(BaseModel):
@@ -131,14 +107,12 @@ class DataSourceConfig(BaseModel):
 
 class RAGConfig(BaseModel):
     """
-    Main RAG configuration model (does not own LLM provider defaults).
+    Main RAG configuration model.
     
-    Uses global LLMProviderConfig from settings; modules may provide
-    optional overrides where needed.
+    Note: 
+    - Database connections are in DatabaseConfig and passed separately
+    - LLM configuration uses global LLMProviderConfig
     """
-    # Optional per-module LLM override
-    llm_override: Optional[LLMOverrideConfig] = None
-
     # Module configurations
     paths: PathsConfig = PathsConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()

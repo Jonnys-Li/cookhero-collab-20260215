@@ -1,18 +1,33 @@
 # app/config/config_loader.py
 """
 Configuration loader for CookHero.
-Loads from config.yml and merges with secrets from .env file.
+Loads from config.yml and merges with secrets from environment variables.
+
+Environment variable loading:
+- Uses load_dotenv() to load .env file into os.environ
+- All sensitive params are read from os.getenv()
+- Supports inheritance (e.g., RERANKER_API_KEY falls back to LLM_API_KEY)
 """
 
+import os
 from pathlib import Path
 from typing import Any, Dict
 
 import yaml
-from dotenv import dotenv_values
+from dotenv import load_dotenv
 
-from app.config.database_config import DatabaseConfig
+from app.config.database_config import (
+    DatabaseConfig,
+    MilvusConfig,
+    PostgresConfig,
+    RedisConfig,
+)
 from app.config.llm_config import LLMProviderConfig
 from app.config.rag_config import RAGConfig
+
+
+# Load .env file into environment variables at module import
+load_dotenv()
 
 
 def _load_config_data() -> Dict[str, Any]:
@@ -25,75 +40,116 @@ def _load_config_data() -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _load_secrets() -> Dict[str, Any]:
-    """Load secrets from .env."""
-    return dotenv_values(".env")
-
-
-def load_database_config() -> DatabaseConfig:
-    """Load database configuration with .env overrides."""
-    config_data = _load_config_data()
-    secrets = _load_secrets()
-
-    db_data = config_data.get("database", {}) or {}
-
-    # Override password from .env
-    db_password = secrets.get("DATABASE_PASSWORD")
-    if db_password:
-        db_data["password"] = db_password
-
-    return DatabaseConfig.model_validate(db_data)
-
-
 def load_llm_config() -> LLMProviderConfig:
-    """Load global LLM provider configuration with .env overrides."""
+    """
+    Load global LLM provider configuration.
+    
+    Environment variables:
+    - LLM_API_KEY: API key for LLM provider
+    """
     config_data = _load_config_data()
-    secrets = _load_secrets()
-
     llm_data = config_data.get("llm", {}) or {}
 
-    llm_api_key = secrets.get("LLM_API_KEY")
+    # Load API key from environment
+    llm_api_key = os.getenv("LLM_API_KEY")
     if llm_api_key:
         llm_data["api_key"] = llm_api_key
 
     return LLMProviderConfig.model_validate(llm_data)
 
 
-def load_rag_config(llm_config: LLMProviderConfig | None = None) -> RAGConfig:
+def load_database_config() -> DatabaseConfig:
     """
-    Load RAG configuration from YAML + .env, excluding global LLM defaults.
-    Optionally uses global LLM config to fill module fallbacks.
+    Load database configuration for PostgreSQL, Redis, and Milvus.
+    
+    Environment variables:
+    - DATABASE_PASSWORD: PostgreSQL password
+    - REDIS_PASSWORD: Redis password
+    - MILVUS_USER: Milvus username
+    - MILVUS_PASSWORD: Milvus password
     """
     config_data = _load_config_data()
-    secrets = _load_secrets()
+    db_root = config_data.get("database", {}) or {}
 
-    # Remove global LLM section to avoid duplication inside RAG config
-    rag_data: Dict[str, Any] = {k: v for k, v in config_data.items() if k != "llm"}
+    # PostgreSQL config from database.postgres
+    pg_data = dict(db_root.get("postgres", {}) or {})
+    db_password = os.getenv("DATABASE_PASSWORD")
+    if db_password:
+        pg_data["password"] = db_password
+    postgres_config = PostgresConfig.model_validate(pg_data)
 
-    # Reranker API key fallback to global LLM key if not explicitly set
-    if llm_config and llm_config.api_key:
-        rag_data.setdefault("reranker", {})
-        rag_data["reranker"].setdefault("api_key", llm_config.api_key)
-
-    # Reranker dedicated secret takes precedence
-    reranker_api_key = secrets.get("RERANKER_API_KEY")
-    if reranker_api_key:
-        rag_data.setdefault("reranker", {})
-        rag_data["reranker"]["api_key"] = reranker_api_key
-
-    # Load Redis password from .env if cache config exists
-    redis_password = secrets.get("REDIS_PASSWORD")
+    # Redis config from database.redis
+    redis_data = dict(db_root.get("redis", {}) or {})
+    redis_password = os.getenv("REDIS_PASSWORD")
     if redis_password:
-        rag_data.setdefault("cache", {})
-        rag_data["cache"]["redis_password"] = redis_password
+        redis_data["password"] = redis_password
+    redis_config = RedisConfig.model_validate(redis_data)
 
-    # Load cache vector credentials
-    cache_vector_user = secrets.get("CACHE_VECTOR_USER")
-    cache_vector_password = secrets.get("CACHE_VECTOR_PASSWORD")
-    rag_data.setdefault("cache", {})
-    if cache_vector_user:
-        rag_data["cache"]["vector_user"] = cache_vector_user
-    if cache_vector_password:
-        rag_data["cache"]["vector_password"] = cache_vector_password
+    # Milvus config from database.milvus
+    milvus_data = dict(db_root.get("milvus", {}) or {})
+    milvus_user = os.getenv("MILVUS_USER")
+    milvus_password = os.getenv("MILVUS_PASSWORD")
+    if milvus_user:
+        milvus_data["user"] = milvus_user
+    if milvus_password:
+        milvus_data["password"] = milvus_password
+    milvus_config = MilvusConfig.model_validate(milvus_data)
+
+    return DatabaseConfig(
+        postgres=postgres_config,
+        redis=redis_config,
+        milvus=milvus_config,
+    )
+
+
+def load_rag_config(llm_config: LLMProviderConfig | None = None) -> RAGConfig:
+    """
+    Load RAG configuration from YAML + environment variables.
+    
+    Environment variables:
+    - RERANKER_API_KEY: Dedicated reranker API key (falls back to LLM_API_KEY)
+    
+    Args:
+        llm_config: Global LLM config for API key fallback
+    """
+    config_data = _load_config_data()
+
+    # Build RAG config data (excluding database sections)
+    rag_data: Dict[str, Any] = {}
+
+    # Copy RAG-specific sections
+    for key in ["paths", "embedding", "retrieval", "data_source"]:
+        if key in config_data:
+            rag_data[key] = config_data[key]
+
+    # Vector store config (without host/port, those are in DatabaseConfig)
+    vs_data = config_data.get("vector_store", {}) or {}
+    rag_data["vector_store"] = {
+        "type": vs_data.get("type", "milvus"),
+        "collection_names": vs_data.get("collection_names", {}),
+    }
+
+    # Reranker config with API key inheritance
+    reranker_data = config_data.get("reranker", {}) or {}
+    
+    # API key priority: RERANKER_API_KEY > reranker.api_key in yaml > LLM_API_KEY
+    reranker_api_key = os.getenv("RERANKER_API_KEY")
+    if reranker_api_key:
+        reranker_data["api_key"] = reranker_api_key
+    elif not reranker_data.get("api_key") and llm_config and llm_config.api_key:
+        # Fall back to global LLM API key
+        reranker_data["api_key"] = llm_config.api_key
+    
+    rag_data["reranker"] = reranker_data
+
+    # Cache config (without connection details, those are in DatabaseConfig)
+    cache_data = config_data.get("cache", {}) or {}
+    rag_data["cache"] = {
+        "enabled": cache_data.get("enabled", True),
+        "ttl": cache_data.get("ttl", 3600),
+        "l2_enabled": cache_data.get("l2_enabled", True),
+        "similarity_threshold": cache_data.get("similarity_threshold", 0.92),
+        "vector_collection": cache_data.get("vector_collection", "cookhero_retrieval_cache"),
+    }
 
     return RAGConfig.model_validate(rag_data)
