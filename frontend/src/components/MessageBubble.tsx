@@ -70,12 +70,12 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
 
         {/* Spinner placeholder before text is ready */}
-        {!isUser && isThinkingPhase && (
+        {/* {!isUser && isThinkingPhase && (
           <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 mb-2">
             <Loader2 className="w-4 h-4 animate-spin text-orange-500" />
             <span>AI 正在准备回答...</span>
           </div>
-        )}
+        )} */}
 
         {/* Message Text (hide while only thinking) */}
         {isThinkingPhase ? null : (

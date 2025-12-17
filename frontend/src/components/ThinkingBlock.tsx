@@ -40,7 +40,7 @@ export function ThinkingBlock({ steps, isThinking }: ThinkingBlockProps) {
       </button>
       
       {isOpen && steps.length > 0 && (
-        <div className="p-3 pt-0 text-sm text-gray-600 dark:text-gray-300 space-y-1 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50">
+        <div className="p-3 text-sm text-gray-600 dark:text-gray-300 space-y-1 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900/50">
           {(
             steps.map((step, index) => (
               <div key={`${step}-${index}`} className="flex items-start gap-2 animate-in fade-in slide-in-from-left-1 duration-300">
