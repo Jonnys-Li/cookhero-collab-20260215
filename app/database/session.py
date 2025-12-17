@@ -21,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 # Create async engine
 _engine = create_async_engine(
-    settings.database.async_url,
-    pool_size=settings.database.pool_size,
-    max_overflow=settings.database.max_overflow,
-    pool_timeout=settings.database.pool_timeout,
-    pool_recycle=settings.database.pool_recycle,
-    echo=settings.database.echo,
+    settings.database.postgres.async_url,
+    pool_size=settings.database.postgres.pool_size,
+    max_overflow=settings.database.postgres.max_overflow,
+    pool_timeout=settings.database.postgres.pool_timeout,
+    pool_recycle=settings.database.postgres.pool_recycle,
+    echo=settings.database.postgres.echo,
 )
 
 # Create session factory

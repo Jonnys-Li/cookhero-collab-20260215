@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
 from app.config.rag_config import VectorStoreConfig
+from app.config.database_config import MilvusConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ METADATA_SCALAR_SCHEMA: Dict[str, Any] = {
 }
 
 def get_vector_store(
-    vs_config: VectorStoreConfig,
+    milvus_config: MilvusConfig,
     collection_name: str,
     embeddings: Embeddings,
     chunks: List[Document],
@@ -31,7 +32,8 @@ def get_vector_store(
     Connects to the Milvus collection, creating it if it doesn't exist.
     
     Args:
-        vs_config: The vector store configuration object.
+        vs_config: The vector store configuration object (collection names, type).
+        milvus_config: The Milvus connection configuration (host, port, credentials).
         collection_name: The specific name of the collection to connect to or create.
         embeddings: The embedding model instance to use.
         chunks: A list of Document chunks to be indexed if the collection is new.
@@ -40,7 +42,13 @@ def get_vector_store(
     Returns:
         An instance of the Milvus vector store.
     """
-    connection_args = {"host": vs_config.host, "port": vs_config.port}
+    connection_args = {"host": milvus_config.host, "port": milvus_config.port}
+    if milvus_config.user:
+        connection_args["user"] = milvus_config.user
+    if milvus_config.password:
+        connection_args["password"] = milvus_config.password
+    if milvus_config.secure:
+        connection_args["secure"] = milvus_config.secure
     alias = "default"
 
     logger.info(f"Managing Milvus connection at {connection_args['host']}:{connection_args['port']}")

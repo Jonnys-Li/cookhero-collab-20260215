@@ -2,7 +2,7 @@
 import logging
 from pathlib import Path
 
-from app.config import DefaultRAGConfig, RAGConfig
+from app.config import DefaultRAGConfig, RAGConfig, settings
 from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
 from app.rag.data_sources.tips_data_source import TipsDataSource
 from app.rag.embeddings.embedding_factory import get_embedding_model
@@ -53,7 +53,7 @@ def ingest_data_source(config: RAGConfig, embeddings, source_name: str, data_sou
     # 3. Vector Store Ingestion
     logger.info(f"Building and populating vector store for collection: '{collection_name}'")
     _ = get_vector_store(
-        vs_config=config.vector_store,
+        milvus_config=settings.database.milvus,
         collection_name=collection_name,
         embeddings=embeddings,
         chunks=child_chunks,

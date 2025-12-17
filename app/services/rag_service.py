@@ -12,8 +12,6 @@ from langchain_core.documents import Document
 
 from app.config import (
     DefaultRAGConfig,
-    LLMOverrideConfig,
-    LLMProviderConfig,
     RAGConfig,
     settings,
 )
@@ -73,7 +71,8 @@ class RAGService:
 
         logger.info("Initializing RAGService")
         self.config = config or DefaultRAGConfig
-        self.llm_config = self._resolve_llm_config(settings.llm, self.config.llm_override)
+        self.llm_config = settings.llm
+        self.db_config = settings.database
         
         self.data_sources: Dict[str, BaseDataSource] = {}
         self.retrieval_modules: Dict[str, RetrievalOptimizationModule] = {}
@@ -108,23 +107,21 @@ class RAGService:
         self.cache_manager: CacheManager | None = None
         if self.config.cache.enabled:
             embeddings = get_embedding_model(self.config)
-            cache_vector_host = self.config.cache.vector_host or self.config.vector_store.host
-            cache_vector_port = self.config.cache.vector_port or self.config.vector_store.port
             self.cache_manager = CacheManager(
-                redis_host=self.config.cache.redis_host,
-                redis_port=self.config.cache.redis_port,
-                redis_db=self.config.cache.redis_db,
-                redis_password=self.config.cache.redis_password,
+                redis_host=self.db_config.redis.host,
+                redis_port=self.db_config.redis.port,
+                redis_db=self.db_config.redis.db,
+                redis_password=self.db_config.redis.password,
                 ttl=self.config.cache.ttl,
                 similarity_threshold=self.config.cache.similarity_threshold,
                 embeddings=embeddings,
                 l2_enabled=self.config.cache.l2_enabled,
-                vector_host=cache_vector_host,
-                vector_port=cache_vector_port,
+                vector_host=self.db_config.milvus.host,
+                vector_port=self.db_config.milvus.port,
                 vector_collection=self.config.cache.vector_collection,
-                vector_user=self.config.cache.vector_user,
-                vector_password=self.config.cache.vector_password,
-                vector_secure=self.config.cache.vector_secure,
+                vector_user=self.db_config.milvus.user,
+                vector_password=self.db_config.milvus.password,
+                vector_secure=self.db_config.milvus.secure,
             )
             logger.info("Cache manager enabled")
         else:
@@ -191,7 +188,7 @@ class RAGService:
 
             # 3. Get Vector Store instance
             vector_store = get_vector_store(
-                vs_config=self.config.vector_store,
+                milvus_config=self.db_config.milvus,
                 collection_name=collection_name,
                 embeddings=embeddings,
                 chunks=child_chunks,
@@ -345,18 +342,6 @@ class RAGService:
             return result
         else:
             return (chunk for chunk in result)
-
-    @staticmethod
-    def _resolve_llm_config(
-        base_llm: LLMProviderConfig, override: LLMOverrideConfig | None
-    ) -> LLMProviderConfig:
-        """Apply optional module-level overrides to the global LLM config."""
-        if not override:
-            return base_llm
-
-        base_copy = base_llm.model_copy(deep=True)
-        override_data = {k: v for k, v in override.model_dump().items() if v is not None}
-        return base_copy.model_copy(update=override_data)
 
     # =========================================================================
     # Helper methods
