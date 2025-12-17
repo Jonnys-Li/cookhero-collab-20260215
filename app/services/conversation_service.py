@@ -1,14 +1,15 @@
+import asyncio
 import json
 import logging
+import os
 from typing import AsyncGenerator, Dict, List, Optional
 
 from app.config import settings
+from app.context import ContextCompressor, ContextManager
 from app.conversation import (
-    ContextManager,
     IntentDetectionResult,
     IntentDetector,
     LLMOrchestrator,
-    Message,
     QueryRewriter,
     conversation_repository,
 )
@@ -41,18 +42,34 @@ SYSTEM_PROMPT = """你是 CookHero，一位友好、专业且富有耐心的烹�
 class ConversationService:
     """
     Manages conversations with LLM and RAG integration.
+    
+    Context building strategy:
+    1. System Message - Base system prompt
+    2. Compressed Summary - Summary of compressed messages (if exists)
+    3. Uncompressed Messages - Original messages not yet compressed (history[compressed_count:])
+    4. Extra System Prompt - RAG context if applicable
+    
+    Key invariant: Every message is either in compressed_summary or in context as original.
     """
+    
+    # Number of recent uncompressed messages to keep before considering compression
+    RECENT_MESSAGES_LIMIT = 10
+    # Number of messages to compress each time
+    COMPRESSION_THRESHOLD = 6
     
     def __init__(self):
         """
         Initialize the conversation service with modular components.
-        
-        Args:
-            enable_memory: Whether to enable advanced memory features.
-                          Set to False for backward compatibility.
         """
         self.llm_config = settings.llm
-        self.context_manager = ContextManager(system_prompt=SYSTEM_PROMPT)
+        self.context_manager = ContextManager(
+            system_prompt=SYSTEM_PROMPT,
+        )
+        self.context_compressor = ContextCompressor(
+            llm_config=self.llm_config,
+            compression_threshold=self.COMPRESSION_THRESHOLD,
+            recent_messages_limit=self.RECENT_MESSAGES_LIMIT,
+        )
         self.llm_orchestrator = LLMOrchestrator(llm_config=self.llm_config)
         self.intent_detector = IntentDetector(llm_config=self.llm_config)
         self.query_rewriter = QueryRewriter(llm_config=self.llm_config)
@@ -91,12 +108,30 @@ class ConversationService:
             content=message,
         )
         
-        # Load recent history from database for context
+        # Load conversation history and compressed summary
         history = await conversation_repository.get_history(conv_id, limit=100) or []
+        compressed_summary, compressed_count = await conversation_repository.get_compressed_summary(conv_id)
         
-        # Detect intent using preformatted history
-        history_text = self.context_manager.build_history_text_from_dicts(history)
-        # print(history_text)
+        # Build history text for intent detection (includes compressed summary)
+        history_dicts = [{"role": h["role"], "content": h["content"]} for h in history]
+        history_text = self.context_manager.build_history_text(
+            history=history_dicts,
+            compressed_count=compressed_count,
+            compressed_summary=compressed_summary,
+        )
+
+        # check if the file debug_history.txt exists, if not create it
+        if not os.path.exists("./debug_history.txt"):
+            with open("./debug_history.txt", "w") as f:
+                f.write("")
+        with open("./debug_history.txt", "a") as f:
+            f.write(f"--- New Interaction ---\n")
+            f.write(f"Total History Messages: {len(history_dicts)}\n")
+            f.write(f"Compressed Count: {compressed_count}\n")
+            f.write(f"User Message:\n{message}\n")
+            f.write(f"History Text:\n{history_text}\n\n\n")
+
+        # Detect intent
         intent_result: IntentDetectionResult = self.intent_detector.detect(
             message, history_text
         )
@@ -166,8 +201,12 @@ class ConversationService:
                     retrieval_result.context,
                     rewritten_query
                 )
-                messages_for_llm = self.context_manager.build_llm_messages_from_dicts(
-                    history, extra_system_prompt=context_prompt
+                # Build LLM messages with compressed summary
+                messages_for_llm = self.context_manager.build_llm_messages(
+                    history_dicts,
+                    compressed_count=compressed_count,
+                    compressed_summary=compressed_summary,
+                    extra_system_prompt=context_prompt,
                 )
                 
                 yield emit_thinking("🤖 开始生成回答...")
@@ -179,15 +218,22 @@ class ConversationService:
             except Exception as e:
                 logger.error(f"RAG error: {e}", exc_info=True)
                 yield emit_thinking(f"❌ 检索遇到问题: {str(e)[:50]}，改为直接回答。")
-                # Fallback to direct LLM
-                messages_for_llm = self.context_manager.build_llm_messages_from_dicts(history)
+                messages_for_llm = self.context_manager.build_llm_messages(
+                    history_dicts,
+                    compressed_count=compressed_count,
+                    compressed_summary=compressed_summary,
+                )
                 async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                     full_response += chunk
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
         else:
             # Direct LLM conversation
             yield emit_thinking("💬 无需检索知识库，直接回答...")
-            messages_for_llm = self.context_manager.build_llm_messages_from_dicts(history)
+            messages_for_llm = self.context_manager.build_llm_messages(
+                history_dicts,
+                compressed_count=compressed_count,
+                compressed_summary=compressed_summary,
+            )
             async for chunk in self.llm_orchestrator.stream(messages_for_llm):
                 full_response += chunk
                 yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
@@ -204,6 +250,11 @@ class ConversationService:
         
         # Yield completion signal
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': conv_id})}\n\n"
+        
+        # Trigger async context compression if needed
+        asyncio.create_task(
+            self.context_compressor.maybe_compress(conv_id, conversation_repository)
+        )
 
     def _build_rag_context_prompt(self, context: str, rewritten_query: str) -> str:
         """Construct the system prompt that injects retrieved context for generation."""
