@@ -21,13 +21,10 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
-const waitForAnimationFrame = () =>
+// Use setTimeout instead of requestAnimationFrame to avoid browser throttling in background tabs
+const waitForNextTick = () =>
   new Promise<void>((resolve) => {
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(() => resolve());
-    } else {
-      setTimeout(resolve, 0);
-    }
+    setTimeout(resolve, 0);
   });
 
 export function useConversation(token?: string) {
@@ -35,6 +32,7 @@ export function useConversation(token?: string) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
@@ -79,6 +77,11 @@ export function useConversation(token?: string) {
 
     setError(null);
     setIsLoading(true);
+    setIsStreaming(true);
+
+    // Create abort controller for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
 
     // Add user message
     const userMessage: Message = {
@@ -109,7 +112,12 @@ export function useConversation(token?: string) {
       for await (const event of streamConversation({
         message: content,
         conversation_id: conversationId,
-      }, token)) {
+      }, token, abortController.signal)) {
+        // Check if aborted
+        if (abortController.signal.aborted) {
+          break;
+        }
+
         switch (event.type) {
           case 'intent':
             currentIntent = event.data as IntentInfo;
@@ -175,16 +183,39 @@ export function useConversation(token?: string) {
             break;
         }
 
-        await waitForAnimationFrame();
+        await waitForNextTick();
       }
+
+      // Mark streaming as complete even if loop finished without 'done' event
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === assistantMessageId
+            ? { ...msg, isStreaming: false }
+            : msg
+        )
+      );
     } catch (err) {
-      console.error('Failed to send message:', err);
-      setError(err instanceof Error ? err.message : 'Failed to send message');
-      
-      // Remove the failed assistant message
-      setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+      // Don't show error if it was an abort
+      if (err instanceof Error && err.name === 'AbortError') {
+        // Mark the message as stopped
+        setMessages(prev =>
+          prev.map(msg =>
+            msg.id === assistantMessageId
+              ? { ...msg, isStreaming: false, content: msg.content || '(Generation stopped)' }
+              : msg
+          )
+        );
+      } else {
+        console.error('Failed to send message:', err);
+        setError(err instanceof Error ? err.message : 'Failed to send message');
+        
+        // Remove the failed assistant message
+        setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+      }
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }, [conversationId, isLoading, refreshConversations, token]);
   
@@ -230,6 +261,7 @@ export function useConversation(token?: string) {
     conversationId,
     conversations,
     isLoading,
+    isStreaming,
     error,
     sendMessage,
     selectConversation,

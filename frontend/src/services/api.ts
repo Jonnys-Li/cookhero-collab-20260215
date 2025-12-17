@@ -22,7 +22,8 @@ const authHeaders = (token?: string): HeadersInit | undefined =>
  */
 export async function* streamConversation(
   request: ConversationRequest,
-  token?: string
+  token?: string,
+  signal?: AbortSignal
 ): AsyncGenerator<SSEEvent> {
   const response = await fetch(`${API_BASE}/conversation`, {
     method: 'POST',
@@ -34,6 +35,7 @@ export async function* streamConversation(
       ...request,
       stream: true,
     }),
+    signal,
   });
 
   if (!response.ok) {
@@ -50,6 +52,11 @@ export async function* streamConversation(
 
   try {
     while (true) {
+      // Check if aborted before reading
+      if (signal?.aborted) {
+        break;
+      }
+
       const { done, value } = await reader.read();
       
       if (done) break;
