@@ -263,9 +263,26 @@ class ConversationService:
         """Clear a conversation."""
         return await conversation_repository.clear(conversation_id)
 
-    async def list_conversations(self, user_id: Optional[str] = None) -> list[dict]:
-        """List all conversations with basic metadata for UI switching."""
-        return await conversation_repository.list_conversations(user_id=user_id)
+    async def list_conversations(
+        self,
+        user_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        """List all conversations with basic metadata for UI switching.
+        
+        Returns:
+            Tuple of (conversations list, total count)
+        """
+        return await conversation_repository.list_conversations(
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def update_conversation_title(self, conversation_id: str, title: str) -> bool:
+        """Update the title of a conversation."""
+        return await conversation_repository.update_title(conversation_id, title)
 
 
 # Singleton instance

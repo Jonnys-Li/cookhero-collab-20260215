@@ -33,6 +33,7 @@ class ConversationHistoryResponse(BaseModel):
 class ConversationSummary(BaseModel):
     """Summary model for listing conversations."""
     id: str
+    title: Optional[str] = None
     created_at: str
     updated_at: str
     message_count: int
@@ -195,8 +196,56 @@ async def clear_conversation(conversation_id: str):
     return {"message": "Conversation cleared successfully"}
 
 
+class UpdateTitleRequest(BaseModel):
+    """Request model for updating conversation title."""
+    title: str
+
+
+@router.put("/conversation/{conversation_id}/title")
+async def update_conversation_title(conversation_id: str, request: UpdateTitleRequest):
+    """
+    Update the title of a conversation.
+    
+    **Parameters:**
+    - `conversation_id`: The ID of the conversation
+    - `title`: The new title for the conversation
+    """
+    success = await conversation_service.update_conversation_title(conversation_id, request.title)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    return {"message": "Title updated successfully"}
+
+
+class ConversationListResponse(BaseModel):
+    """Response model for listing conversations."""
+    conversations: list[ConversationSummary]
+    total_count: int
+    limit: int
+    offset: int
+
+
 @router.get("/conversation")
-async def list_conversations(http_request: Request) -> list[ConversationSummary]:
-    """List all conversations for the current user (PostgreSQL store)."""
-    conversations = await conversation_service.list_conversations(user_id=getattr(http_request.state, "user_id", None))
-    return [ConversationSummary(**c) for c in conversations]
+async def list_conversations(
+    http_request: Request,
+    limit: int = 50,
+    offset: int = 0,
+) -> ConversationListResponse:
+    """List all conversations for the current user (PostgreSQL store).
+    
+    **Query Parameters:**
+    - `limit`: Maximum number of conversations to return (default: 50)
+    - `offset`: Number of conversations to skip (default: 0)
+    """
+    conversations, total_count = await conversation_service.list_conversations(
+        user_id=getattr(http_request.state, "user_id", None),
+        limit=limit,
+        offset=offset,
+    )
+    return ConversationListResponse(
+        conversations=[ConversationSummary(**c) for c in conversations],
+        total_count=total_count,
+        limit=limit,
+        offset=offset,
+    )

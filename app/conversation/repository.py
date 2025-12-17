@@ -155,14 +155,56 @@ class ConversationRepository:
             result = await session.execute(stmt)
             return result.rowcount > 0 # type: ignore
 
+    async def update_title(self, conversation_id: str, title: str) -> bool:
+        """Update the title of a conversation."""
+        async with get_session_context() as session:
+            try:
+                conv_uuid = uuid.UUID(conversation_id)
+            except ValueError:
+                return False
+
+            stmt = select(ConversationModel).where(ConversationModel.id == conv_uuid)
+            result = await session.execute(stmt)
+            conversation = result.scalar_one_or_none()
+
+            if not conversation:
+                return False
+
+            conversation.title = title
+            await session.flush()
+            
+            logger.info(
+                "Updated title for conversation %s to '%s'",
+                conversation_id,
+                title,
+            )
+            return True
+
     async def list_conversations(
         self,
         user_id: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[dict]:
-        """List conversations with metadata, ordered by updated_at desc."""
+    ) -> tuple[List[dict], int]:
+        """List conversations with metadata, ordered by updated_at desc.
+        
+        Returns:
+            Tuple of (conversations list, total count)
+        """
         async with get_session_context() as session:
+            # Base query for filtering
+            base_filter = []
+            if user_id:
+                base_filter.append(ConversationModel.user_id == user_id)
+            
+            # Get total count
+            count_stmt = select(func.count(ConversationModel.id))
+            if base_filter:
+                count_stmt = count_stmt.where(*base_filter)
+            count_result = await session.execute(count_stmt)
+            total_count = count_result.scalar() or 0
+            
+            # Get paginated conversations
             stmt = (
                 select(ConversationModel)
                 .options(selectinload(ConversationModel.messages))
@@ -171,13 +213,13 @@ class ConversationRepository:
                 .offset(offset)
             )
 
-            if user_id:
-                stmt = stmt.where(ConversationModel.user_id == user_id)
+            if base_filter:
+                stmt = stmt.where(*base_filter)
 
             result = await session.execute(stmt)
             conversations = result.scalars().all()
 
-            return [conv.to_dict() for conv in conversations]
+            return [conv.to_dict() for conv in conversations], total_count
 
     async def get_conversation(
         self, conversation_id: str
