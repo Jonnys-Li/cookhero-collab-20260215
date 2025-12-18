@@ -1,4 +1,5 @@
 # scripts/test_rag.py
+import asyncio
 import logging
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO,
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 from app.services.rag_service import rag_service_instance
 
-def test_rag_service():
+async def test_rag_service():
     """
     Tests the RAGService by asking a sample question.
     """
@@ -27,11 +28,8 @@ def test_rag_service():
         logger.info(f"\n--- Question {i+1}: {question} ---")
         try:
             logger.info("Streaming response:")
-            response_chunks = rag_service_instance.ask_with_generation(question, stream=False)
-            full_response = ""
-            for chunk in response_chunks:
-                print(chunk, end="", flush=True)
-                full_response += chunk
+            response = await rag_service_instance.ask_with_generation(question, stream=False)
+            print(response)
             print("\n")
             
         except Exception as e:
@@ -40,4 +38,4 @@ def test_rag_service():
     logger.info("--- RAG Service Test Finished ---")
 
 if __name__ == "__main__":
-    test_rag_service()
+    asyncio.run(test_rag_service())
