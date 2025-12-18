@@ -4,9 +4,8 @@ import type { ReactElement } from 'react';
 import { Menu, LogOut } from 'lucide-react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ChatWindow, ChatInput, Sidebar } from './components';
-import { useConversation } from './hooks/useConversation';
-import { useTheme } from './hooks/useTheme';
-import { useAuth } from './hooks/useAuth';
+import { useConversation } from './hooks';
+import { useTheme, useAuth } from './contexts';
 import LoginPage from './pages/Login';
 import RegisterPage from './pages/Register';
 
