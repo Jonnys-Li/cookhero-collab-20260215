@@ -79,6 +79,13 @@ export async function* streamConversation(
       }
     }
   } finally {
+    // Cancel the reader to properly close the underlying connection
+    // This is important for freeing up browser connection slots
+    try {
+      await reader.cancel();
+    } catch {
+      // Ignore cancel errors
+    }
     reader.releaseLock();
   }
 }
