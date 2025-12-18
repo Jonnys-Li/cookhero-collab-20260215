@@ -22,14 +22,17 @@ async def chat(request: ChatRequest):
     logger.info(f"Received chat request with query: '{request.query}'")
     
     try:
-        response_generator = rag_service_instance.ask_with_generation(request.query, stream=request.stream)
+        response = await rag_service_instance.ask_with_generation(request.query, stream=request.stream)
         
         if request.stream:
-            # For streaming responses
-            return StreamingResponse(response_generator, media_type="text/plain")
+            # For streaming responses (async generator)
+            async def async_generator():
+                async for chunk in response:
+                    yield chunk
+            return StreamingResponse(async_generator(), media_type="text/plain")
         else:
             # For non-streaming responses
-            return {"response": response_generator}
+            return {"response": response}
             
     except Exception as e:
         logger.error(f"Error processing chat request: {e}", exc_info=True)
