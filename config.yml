@@ -99,8 +99,8 @@ database:
     database: "cookhero"
     user: "cookhero"
     # password: loaded from .env (DATABASE_PASSWORD)
-    pool_size: 5
-    max_overflow: 10
+    pool_size: 20
+    max_overflow: 30
     pool_timeout: 30
     pool_recycle: 1800
     echo: false
