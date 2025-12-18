@@ -1,6 +1,11 @@
 // src/hooks/useConversation.ts
 /**
  * Custom hook for managing conversation state
+ * 
+ * Key features:
+ * - Supports switching conversations without interrupting ongoing streaming
+ * - Background streaming continues even when user switches away
+ * - Seamless restoration when switching back to a streaming conversation
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
@@ -27,12 +32,22 @@ interface StreamingState {
   messages: Message[];
   isStreaming: boolean;
   tempId?: string; // present when a new conversation hasn't received a server id yet
+  abortController?: AbortController; // controller for this conversation's stream
 }
 
 // Helper functions for localStorage streaming cache
 const saveStreamingCache = (cache: Map<string, StreamingState>) => {
   try {
-    const data = Array.from(cache.entries());
+    // Don't save abortController to localStorage (not serializable)
+    const data = Array.from(cache.entries()).map(([key, state]) => [
+      key,
+      {
+        conversationId: state.conversationId,
+        messages: state.messages,
+        isStreaming: state.isStreaming,
+        tempId: state.tempId,
+      },
+    ]);
     localStorage.setItem(STORAGE_KEYS.STREAMING_CACHE, JSON.stringify(data));
   } catch (e) {
     console.warn('Failed to save streaming cache to localStorage:', e);
@@ -43,16 +58,20 @@ const loadStreamingCache = (): Map<string, StreamingState> => {
   try {
     const data = localStorage.getItem(STORAGE_KEYS.STREAMING_CACHE);
     if (!data) return new Map();
-    const entries = JSON.parse(data) as Array<[string, StreamingState]>;
-    // Restore Date objects in messages
+    const entries = JSON.parse(data) as Array<[string, Omit<StreamingState, 'abortController'>]>;
+    // Restore Date objects in messages, mark as not streaming since we lost the connection
     return new Map(
       entries.map(([key, state]) => [
         key,
         {
           ...state,
+          // Mark as not streaming since the connection was lost on page reload
+          isStreaming: false,
           messages: state.messages.map(msg => ({
             ...msg,
             timestamp: new Date(msg.timestamp),
+            // Mark any streaming messages as complete since connection was lost
+            isStreaming: false,
           })),
         },
       ])
@@ -85,18 +104,44 @@ export function useConversation(token?: string) {
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  
-  // Track whether abort was triggered by user switching conversations vs stopping generation
-  const abortReasonRef = useRef<'switch' | 'stop' | null>(null);
   
   // Pagination state
   const [conversationOffset, setConversationOffset] = useState(0);
   const [hasMoreConversations, setHasMoreConversations] = useState(true);
   
-  // Cache for streaming state when switching conversations
+  // Cache for streaming state - supports multiple concurrent streaming conversations
   // Initialize from localStorage if available
   const streamingCacheRef = useRef<Map<string, StreamingState>>(loadStreamingCache());
+  
+  // Track current conversation ID in a ref to access in streaming callbacks
+  const currentConversationIdRef = useRef<string | undefined>(conversationId);
+  useEffect(() => {
+    currentConversationIdRef.current = conversationId;
+  }, [conversationId]);
+  
+  // Ref for setMessages to use in streaming callbacks without stale closure
+  const setMessagesRef = useRef(setMessages);
+  useEffect(() => {
+    setMessagesRef.current = setMessages;
+  }, [setMessages]);
+  
+  // Ref for setIsStreaming
+  const setIsStreamingRef = useRef(setIsStreaming);
+  useEffect(() => {
+    setIsStreamingRef.current = setIsStreaming;
+  }, [setIsStreaming]);
+  
+  // Ref for setConversationId
+  const setConversationIdRef = useRef(setConversationId);
+  useEffect(() => {
+    setConversationIdRef.current = setConversationId;
+  }, [setConversationId]);
+  
+  // Ref for setConversations
+  const setConversationsRef = useRef(setConversations);
+  useEffect(() => {
+    setConversationsRef.current = setConversations;
+  }, [setConversations]);
   
   // Ref for refreshConversations to avoid stale closure in sendMessage
   const refreshConversationsRef = useRef<((reset?: boolean) => Promise<void>) | null>(null);
@@ -194,9 +239,8 @@ export function useConversation(token?: string) {
     setIsLoading(true);
     setIsStreaming(true);
 
-    // Create abort controller for this request
+    // Create abort controller for this specific conversation's request
     const abortController = new AbortController();
-    abortControllerRef.current = abortController;
 
     // Add user message
     const userMessage: Message = {
@@ -205,8 +249,7 @@ export function useConversation(token?: string) {
       content: content.trim(),
       timestamp: new Date(),
     };
-    setMessages(prev => [...prev, userMessage]);
-
+    
     // Create assistant message placeholder (no content until LLM starts streaming)
     const assistantMessageId = generateId();
     const assistantMessage: Message = {
@@ -221,20 +264,23 @@ export function useConversation(token?: string) {
     // If we don't have a server conversation yet, create a provisional id so switching works
     let streamingConvId = conversationId ?? `temp-${assistantMessageId}`;
     const isTempConversation = !conversationId;
+    
+    // Capture current messages for initial state
+    const currentMessages = messages;
 
     // Add assistant placeholder and seed cache immediately so switching before first token is safe
-    setMessages(prev => {
-      const next = [...prev, assistantMessage];
-      streamingCacheRef.current.set(streamingConvId, {
-        conversationId: streamingConvId,
-        messages: next,
-        isStreaming: true,
-        tempId: isTempConversation ? streamingConvId : undefined,
-      });
-      // Also persist to localStorage immediately
-      saveStreamingCache(streamingCacheRef.current);
-      return next;
+    const initialMessages = [...currentMessages, userMessage, assistantMessage];
+    setMessages(initialMessages);
+    
+    // Store in cache with abort controller
+    streamingCacheRef.current.set(streamingConvId, {
+      conversationId: streamingConvId,
+      messages: initialMessages,
+      isStreaming: true,
+      tempId: isTempConversation ? streamingConvId : undefined,
+      abortController,
     });
+    saveStreamingCache(streamingCacheRef.current);
 
     // If this is a brand-new conversation, insert a provisional entry so it appears in the list
     if (isTempConversation) {
@@ -256,19 +302,27 @@ export function useConversation(token?: string) {
       });
     }
 
-    // Helper to update cache
-    const updateCache = (newMessages: Message[], streaming: boolean) => {
-      if (streamingConvId) {
-        const existing = streamingCacheRef.current.get(streamingConvId);
-        const updatedState = {
-          conversationId: streamingConvId,
-          messages: newMessages,
-          isStreaming: streaming,
-          tempId: existing?.tempId ?? (isTempConversation ? streamingConvId : undefined),
-        };
-        streamingCacheRef.current.set(streamingConvId, updatedState);
-        // Persist to localStorage
-        saveStreamingCache(streamingCacheRef.current);
+    // Helper to update cache and optionally UI
+    const updateStreamingState = (
+      updater: (messages: Message[]) => Message[],
+      streaming: boolean
+    ) => {
+      const cached = streamingCacheRef.current.get(streamingConvId);
+      if (!cached) return;
+      
+      const updatedMessages = updater(cached.messages);
+      const updatedState: StreamingState = {
+        ...cached,
+        messages: updatedMessages,
+        isStreaming: streaming,
+      };
+      streamingCacheRef.current.set(streamingConvId, updatedState);
+      saveStreamingCache(streamingCacheRef.current);
+      
+      // Only update UI if this conversation is currently displayed
+      if (currentConversationIdRef.current === streamingConvId) {
+        setMessagesRef.current(updatedMessages);
+        setIsStreamingRef.current(streaming);
       }
     };
 
@@ -290,15 +344,14 @@ export function useConversation(token?: string) {
         switch (event.type) {
           case 'intent':
             currentIntent = event.data as IntentInfo;
-            setMessages(prev => {
-              const updated = prev.map(msg =>
+            updateStreamingState(
+              msgs => msgs.map(msg =>
                 msg.id === assistantMessageId
                   ? { ...msg, intent: currentIntent }
                   : msg
-              );
-              updateCache(updated, true);
-              return updated;
-            });
+              ),
+              true
+            );
             break;
 
           case 'thinking':
@@ -306,43 +359,40 @@ export function useConversation(token?: string) {
               const thought = event.content || (typeof event.data === 'string' ? event.data : '');
               if (thought) {
                 currentThinking = [...currentThinking, thought];
-                setMessages(prev => {
-                  const updated = prev.map(msg =>
+                updateStreamingState(
+                  msgs => msgs.map(msg =>
                     msg.id === assistantMessageId
                       ? { ...msg, thinking: currentThinking }
                       : msg
-                  );
-                  updateCache(updated, true);
-                  return updated;
-                });
+                  ),
+                  true
+                );
               }
             }
             break;
 
           case 'text':
             currentContent += event.content || '';
-            setMessages(prev => {
-              const updated = prev.map(msg =>
+            updateStreamingState(
+              msgs => msgs.map(msg =>
                 msg.id === assistantMessageId
                   ? { ...msg, content: currentContent }
                   : msg
-              );
-              updateCache(updated, true);
-              return updated;
-            });
+              ),
+              true
+            );
             break;
 
           case 'sources':
             currentSources = event.data as Source[];
-            setMessages(prev => {
-              const updated = prev.map(msg =>
+            updateStreamingState(
+              msgs => msgs.map(msg =>
                 msg.id === assistantMessageId
                   ? { ...msg, sources: currentSources }
                   : msg
-              );
-              updateCache(updated, true);
-              return updated;
-            });
+              ),
+              true
+            );
             break;
 
           case 'done':
@@ -356,27 +406,32 @@ export function useConversation(token?: string) {
                   streamingCacheRef.current.set(newId, { ...cached, conversationId: newId, tempId: streamingConvId });
                 }
                 // Replace provisional conversation list entry
-                setConversations(prev =>
+                setConversationsRef.current(prev =>
                   prev.map(c => (c.id === streamingConvId ? { ...c, id: newId } : c))
                 );
+                
+                // Update current conversation ID if still viewing this conversation
+                if (currentConversationIdRef.current === streamingConvId) {
+                  setConversationIdRef.current(newId);
+                }
               }
               streamingConvId = newId;
-              setConversationId(newId);
               refreshConversationsRef.current?.(true);
             }
-            setMessages(prev => {
-              const updated = prev.map(msg =>
+            
+            // Mark streaming as complete
+            updateStreamingState(
+              msgs => msgs.map(msg =>
                 msg.id === assistantMessageId
                   ? { ...msg, isStreaming: false }
                   : msg
-              );
-              return updated;
-            });
+              ),
+              false
+            );
+            
             // Clear cache when streaming is done
-            if (streamingConvId) {
-              streamingCacheRef.current.delete(streamingConvId);
-              clearStreamingCache(streamingConvId);
-            }
+            streamingCacheRef.current.delete(streamingConvId);
+            clearStreamingCache(streamingConvId);
             break;
         }
 
@@ -384,98 +439,67 @@ export function useConversation(token?: string) {
       }
 
       // Mark streaming as complete even if loop finished without 'done' event
-      setMessages(prev => {
-        const updated = prev.map(msg =>
+      updateStreamingState(
+        msgs => msgs.map(msg =>
           msg.id === assistantMessageId
             ? { ...msg, isStreaming: false }
             : msg
-        );
-        return updated;
-      });
+        ),
+        false
+      );
+      
       // Clear cache when streaming is done
-      if (streamingConvId) {
+      streamingCacheRef.current.delete(streamingConvId);
+      clearStreamingCache(streamingConvId);
+      
+    } catch (err) {
+      // Don't show error if it was an abort (user explicitly stopped)
+      if (err instanceof Error && err.name === 'AbortError') {
+        // User explicitly stopped generation - update UI to show stopped state
+        updateStreamingState(
+          msgs => msgs.map(msg =>
+            msg.id === assistantMessageId
+              ? { ...msg, isStreaming: false, content: msg.content || '(Generation stopped)' }
+              : msg
+          ),
+          false
+        );
+        // Clear cache since user stopped it explicitly
         streamingCacheRef.current.delete(streamingConvId);
         clearStreamingCache(streamingConvId);
-      }
-    } catch (err) {
-      // Don't show error if it was an abort
-      if (err instanceof Error && err.name === 'AbortError') {
-        const reason = abortReasonRef.current;
-        abortReasonRef.current = null;
-        
-        if (reason === 'switch') {
-          // User switched to another conversation - preserve cache as-is for potential return
-          // Don't modify the cache content, just mark streaming as stopped
-          if (streamingConvId) {
-            const cached = streamingCacheRef.current.get(streamingConvId);
-            if (cached) {
-              // Preserve current content, just mark as not streaming
-              const updatedMessages = cached.messages.map(msg =>
-                msg.id === assistantMessageId
-                  ? { ...msg, isStreaming: false }
-                  : msg
-              );
-              streamingCacheRef.current.set(streamingConvId, {
-                ...cached,
-                messages: updatedMessages,
-                isStreaming: false,
-              });
-              saveStreamingCache(streamingCacheRef.current);
-            }
-          }
-          // Don't update local messages state since user has switched away
-        } else {
-          // User explicitly stopped generation - update UI to show stopped state
-          setMessages(prev =>
-            prev.map(msg =>
-              msg.id === assistantMessageId
-                ? { ...msg, isStreaming: false, content: msg.content || '(Generation stopped)' }
-                : msg
-            )
-          );
-          // Clear cache since user stopped it explicitly
-          if (streamingConvId) {
-            streamingCacheRef.current.delete(streamingConvId);
-            clearStreamingCache(streamingConvId);
-          }
-        }
       } else {
         console.error('Failed to send message:', err);
-        setError(err instanceof Error ? err.message : 'Failed to send message');
         
-        // Remove the failed assistant message
-        setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+        // Only show error if this conversation is currently displayed
+        if (currentConversationIdRef.current === streamingConvId) {
+          setError(err instanceof Error ? err.message : 'Failed to send message');
+          // Remove the failed assistant message
+          setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+        }
         
         // Clear cache on real error
-        if (streamingConvId) {
-          streamingCacheRef.current.delete(streamingConvId);
-          clearStreamingCache(streamingConvId);
-          // Also remove temp conversation from list
-          if (isTempConversation) {
-            setConversations(prev => prev.filter(c => c.id !== streamingConvId));
-          }
+        streamingCacheRef.current.delete(streamingConvId);
+        clearStreamingCache(streamingConvId);
+        
+        // Also remove temp conversation from list
+        if (isTempConversation) {
+          setConversationsRef.current(prev => prev.filter(c => c.id !== streamingConvId));
         }
       }
     } finally {
-      setIsLoading(false);
-      setIsStreaming(false);
-      abortControllerRef.current = null;
+      // Only update loading state if this conversation is still displayed
+      if (currentConversationIdRef.current === streamingConvId) {
+        setIsLoading(false);
+        setIsStreaming(false);
+      }
     }
-  }, [conversationId, isLoading, token]);
+  }, [conversationId, isLoading, token, messages]);
   
   const selectConversation = useCallback(async (id: string) => {
     if (!id) return;
     
-    // Abort any ongoing streaming request before switching
-    if (abortControllerRef.current) {
-      abortReasonRef.current = 'switch';
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    
-    // Reset streaming state immediately when switching
-    setIsStreaming(false);
-    setIsLoading(false);
+    // Don't abort ongoing requests - let them continue in background
+    // Just switch the view
     
     // Check if we have cached streaming state for this conversation
     const cachedState = streamingCacheRef.current.get(id);
@@ -484,6 +508,8 @@ export function useConversation(token?: string) {
       setConversationId(cachedState.conversationId);
       setMessages(cachedState.messages);
       setIsStreaming(cachedState.isStreaming);
+      setIsLoading(cachedState.isStreaming); // Show loading if still streaming
+      setError(null);
       return;
     }
     
@@ -498,6 +524,8 @@ export function useConversation(token?: string) {
       return;
     }
     
+    // Reset streaming state when switching to a non-cached conversation
+    setIsStreaming(false);
     setIsLoading(true);
     setError(null);
     try {
@@ -513,16 +541,13 @@ export function useConversation(token?: string) {
   }, [mapHistoryToMessages, token]);
 
   const clearMessages = useCallback(() => {
-    // Abort any ongoing streaming request
-    if (abortControllerRef.current) {
-      abortReasonRef.current = 'switch';
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
+    // When starting a new chat, don't abort ongoing requests for other conversations
+    // Just clear the current view
     setMessages([]);
     setConversationId(undefined);
     setError(null);
     setIsStreaming(false);
+    setIsLoading(false);
   }, []);
 
   const removeConversation = useCallback(async (id: string) => {
@@ -530,7 +555,12 @@ export function useConversation(token?: string) {
     
     // Handle temp conversations (not yet saved to server)
     if (id.startsWith('temp-')) {
-      // Just remove from local state
+      // Abort if streaming
+      const cached = streamingCacheRef.current.get(id);
+      if (cached?.abortController) {
+        cached.abortController.abort();
+      }
+      // Remove from local state
       streamingCacheRef.current.delete(id);
       clearStreamingCache(id);
       setConversations(prev => prev.filter(c => c.id !== id));
@@ -542,6 +572,12 @@ export function useConversation(token?: string) {
     }
     
     try {
+      // Abort if streaming
+      const cached = streamingCacheRef.current.get(id);
+      if (cached?.abortController) {
+        cached.abortController.abort();
+      }
+      
       await deleteConversation(id, token);
       // Clear cache for this conversation
       streamingCacheRef.current.delete(id);
@@ -580,11 +616,14 @@ export function useConversation(token?: string) {
   }, [token]);
 
   const stopGeneration = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortReasonRef.current = 'stop';
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+    // Stop the current conversation's streaming
+    if (conversationId) {
+      const cached = streamingCacheRef.current.get(conversationId);
+      if (cached?.abortController) {
+        cached.abortController.abort();
+      }
     }
+    
     setIsLoading(false);
     setIsStreaming(false);
     
@@ -594,7 +633,7 @@ export function useConversation(token?: string) {
         msg.isStreaming ? { ...msg, isStreaming: false } : msg
       )
     );
-  }, []);
+  }, [conversationId]);
 
   return {
     messages,
