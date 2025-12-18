@@ -18,16 +18,8 @@ import {
   streamConversation,
   updateConversationTitle,
 } from '../services/api';
-
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
-}
-
-// Use setTimeout instead of requestAnimationFrame to avoid browser throttling in background tabs
-const waitForNextTick = () =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, 0);
-  });
+import { STORAGE_KEYS, CONVERSATIONS_PAGE_SIZE } from '../constants';
+import { generateId, waitForNextTick } from '../utils';
 
 // Type for streaming state cache
 interface StreamingState {
@@ -37,14 +29,11 @@ interface StreamingState {
   tempId?: string; // present when a new conversation hasn't received a server id yet
 }
 
-// localStorage key for streaming cache
-const STREAMING_CACHE_KEY = 'cookhero_streaming_cache';
-
 // Helper functions for localStorage streaming cache
 const saveStreamingCache = (cache: Map<string, StreamingState>) => {
   try {
     const data = Array.from(cache.entries());
-    localStorage.setItem(STREAMING_CACHE_KEY, JSON.stringify(data));
+    localStorage.setItem(STORAGE_KEYS.STREAMING_CACHE, JSON.stringify(data));
   } catch (e) {
     console.warn('Failed to save streaming cache to localStorage:', e);
   }
@@ -52,7 +41,7 @@ const saveStreamingCache = (cache: Map<string, StreamingState>) => {
 
 const loadStreamingCache = (): Map<string, StreamingState> => {
   try {
-    const data = localStorage.getItem(STREAMING_CACHE_KEY);
+    const data = localStorage.getItem(STORAGE_KEYS.STREAMING_CACHE);
     if (!data) return new Map();
     const entries = JSON.parse(data) as Array<[string, StreamingState]>;
     // Restore Date objects in messages
@@ -81,7 +70,7 @@ const clearStreamingCache = (conversationId?: string) => {
       cache.delete(conversationId);
       saveStreamingCache(cache);
     } else {
-      localStorage.removeItem(STREAMING_CACHE_KEY);
+      localStorage.removeItem(STORAGE_KEYS.STREAMING_CACHE);
     }
   } catch (e) {
     console.warn('Failed to clear streaming cache:', e);
@@ -104,7 +93,6 @@ export function useConversation(token?: string) {
   // Pagination state
   const [conversationOffset, setConversationOffset] = useState(0);
   const [hasMoreConversations, setHasMoreConversations] = useState(true);
-  const CONVERSATIONS_PAGE_SIZE = 30;
   
   // Cache for streaming state when switching conversations
   // Initialize from localStorage if available
