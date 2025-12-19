@@ -200,6 +200,7 @@ class ConversationService:
                 retrieval_result = await rag_service_instance.retrieve(
                     rewritten_query,
                     skip_rewrite=True,
+                    user_id=user_id,
                 )
                 doc_count = len(retrieval_result.documents)
                 

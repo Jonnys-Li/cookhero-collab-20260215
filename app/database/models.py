@@ -161,3 +161,73 @@ class MessageModel(Base):
             "intent": self.intent,
             "thinking": self.thinking,
         }
+
+
+class KnowledgeDocumentModel(Base):
+    """
+    Unified knowledge document model for all document types.
+    Stores both public documents (HowToCook recipes/tips) and personal documents.
+    For public documents, user_id is NULL.
+    """
+
+    __tablename__ = "knowledge_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # NULL for public documents (GLOBAL), actual user_id for personal documents
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    dish_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(100), nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(50), nullable=False)
+    # "recipes" for public recipes/tips, "personal" for user-owned documents
+    data_source: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    # "recipes", "tips", "personal" - more specific type
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Original file path or identifier
+    source: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Whether this is a dish index document
+    is_dish_index: Mapped[bool] = mapped_column(default=False, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now, onupdate=datetime.now, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_knowledge_docs_user_category", "user_id", "category"),
+        Index("ix_knowledge_docs_data_source", "data_source"),
+        Index("ix_knowledge_docs_source_type", "source_type"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "user_id": str(self.user_id) if self.user_id else "GLOBAL",
+            "dish_name": self.dish_name,
+            "category": self.category,
+            "difficulty": self.difficulty,
+            "data_source": self.data_source,
+            "source_type": self.source_type,
+            "source": self.source,
+            "is_dish_index": self.is_dish_index,
+            "content": self.content,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+    def to_metadata(self) -> dict:
+        """Convert to metadata dict for vector store."""
+        return {
+            "source": self.source,
+            "parent_id": None,  # Will be set when creating chunks
+            "dish_name": self.dish_name,
+            "category": self.category,
+            "difficulty": self.difficulty,
+            "is_dish_index": self.is_dish_index,
+            "data_source": self.data_source,
+            "user_id": str(self.user_id) if self.user_id else "GLOBAL",
+            "source_type": self.source_type,
+        }
