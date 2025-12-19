@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactElement } from 'react';
 import { BookOpen, Menu, LogOut, MessageSquare } from 'lucide-react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
@@ -35,7 +35,23 @@ function ConversationPage() {
   const { isDark, toggleTheme } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [suggestionText, setSuggestionText] = useState<string>('');
-  const [mainView, setMainView] = useState<MainView>('chat');
+  const [mainView, setMainView] = useState<MainView>(() => {
+    try {
+      const stored = localStorage.getItem('cookhero:mainView');
+      if (stored === 'chat' || stored === 'knowledge') return stored;
+    } catch (err) {
+      // no-op: fall back to default
+    }
+    return 'chat';
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('cookhero:mainView', mainView);
+    } catch (err) {
+      // ignore storage errors
+    }
+  }, [mainView]);
 
   const handleNewChat = () => {
     clearMessages();
