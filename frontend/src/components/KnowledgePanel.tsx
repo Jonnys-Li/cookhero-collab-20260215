@@ -200,12 +200,14 @@ export default function KnowledgePanel() {
 
   const handleDelete = async (docId: string) => {
     if (!token) return;
+    const deletedDoc = documents.find((d) => d.id === docId);
     setDeleting(true);
     try {
       await deletePersonalDocument(docId, token);
       setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      await Promise.all([loadDocuments(), loadOptions()]);
       setDeleteConfirmId(null);
-      setSuccess('文档已删除');
+      setSuccess(`已删除「${deletedDoc?.dish_name ?? '文档'}」`);
     } catch (err: any) {
       setError(err?.message || '删除失败');
     } finally {
