@@ -43,13 +43,33 @@ class VectorCacheBackend(ABC):
         embedding: List[float],
         payload: Any,
         ttl_seconds: int | None = None,
+        scope: str | None = None,
     ) -> bool:
-        """Add a vector with payload to the cache, optionally expiring it."""
+        """Add a vector with payload to the cache, optionally expiring it.
+        
+        Args:
+            key: Unique cache key
+            embedding: Vector embedding for semantic search
+            payload: Data to cache
+            ttl_seconds: Optional TTL for cache expiration
+            scope: Optional scope identifier (e.g., user_id) for isolation
+        """
         pass
     
     @abstractmethod
-    def search(self, embedding: List[float], threshold: float) -> Optional[Tuple[Any, float]]:
-        """Search for similar vectors, returning (payload, similarity_score) if found."""
+    def search(
+        self,
+        embedding: List[float],
+        threshold: float,
+        scope: str | None = None,
+    ) -> Optional[Tuple[Any, float]]:
+        """Search for similar vectors, returning (payload, similarity_score) if found.
+        
+        Args:
+            embedding: Query vector embedding
+            threshold: Minimum similarity threshold
+            scope: Optional scope to filter results (e.g., user_id)
+        """
         pass
     
     @abstractmethod

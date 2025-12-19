@@ -18,6 +18,12 @@ METADATA_SCALAR_SCHEMA: Dict[str, Any] = {
     "category": {"dtype": DataType.VARCHAR, "max_length": 128},
     "difficulty": {"dtype": DataType.VARCHAR, "max_length": 64},
     "dish_name": {"dtype": DataType.VARCHAR, "max_length": 256},
+    "user_id": {"dtype": DataType.VARCHAR, "max_length": 64},
+    "parent_id": {"dtype": DataType.VARCHAR, "max_length": 64},
+    "source": {"dtype": DataType.VARCHAR, "max_length": 256},
+    "data_source": {"dtype": DataType.VARCHAR, "max_length": 64},
+    "source_type": {"dtype": DataType.VARCHAR, "max_length": 64},
+    "is_dish_index": {"dtype": DataType.BOOL},
 }
 
 def get_vector_store(
@@ -67,23 +73,58 @@ def get_vector_store(
 
     if not collection_exists:
         logger.info(f"Milvus collection '{collection_name}' not found. Creating via LangChain...")
-        if not chunks:
-            raise ValueError("Cannot build a new collection from an empty list of chunks.")
 
         # Use BM25BuiltInFunction for hybrid search (dense + sparse vectors)
         logger.info("Initializing Milvus with BM25 built-in function for hybrid search")
         logger.info(f"Adding metadata scalar fields for filtering: {list(METADATA_SCALAR_SCHEMA.keys())}")
         
-        vector_store = Milvus.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            collection_name=collection_name,
-            connection_args=connection_args,
-            text_field="text",
-            vector_field=["dense", "sparse"],  # dense for embeddings, sparse for BM25
-            builtin_function=BM25BuiltInFunction(),
-            metadata_schema=METADATA_SCALAR_SCHEMA,  # Add scalar fields for filtering
-        )
+        if chunks:
+            # Normal path: create collection with documents
+            vector_store = Milvus.from_documents(
+                documents=chunks,
+                embedding=embeddings,
+                collection_name=collection_name,
+                connection_args=connection_args,
+                text_field="text",
+                vector_field=["dense", "sparse"],  # dense for embeddings, sparse for BM25
+                builtin_function=BM25BuiltInFunction(),
+                metadata_schema=METADATA_SCALAR_SCHEMA,  # Add scalar fields for filtering
+            )
+        else:
+            # Empty chunks: create collection with a placeholder document to ensure schema is created,
+            # then delete the placeholder. This ensures metadata_schema fields are properly created.
+            logger.info("Creating collection with placeholder document to ensure schema fields are created")
+            placeholder_doc = Document(
+                page_content="__placeholder__",
+                metadata={
+                    "category": "__placeholder__",
+                    "difficulty": "__placeholder__",
+                    "dish_name": "__placeholder__",
+                    "user_id": "__placeholder__",
+                    "parent_id": "__placeholder__",
+                    "source": "__placeholder__",
+                    "data_source": "__placeholder__",
+                    "source_type": "__placeholder__",
+                    "is_dish_index": False,
+                }
+            )
+            vector_store = Milvus.from_documents(
+                documents=[placeholder_doc],
+                embedding=embeddings,
+                collection_name=collection_name,
+                connection_args=connection_args,
+                text_field="text",
+                vector_field=["dense", "sparse"],
+                builtin_function=BM25BuiltInFunction(),
+                metadata_schema=METADATA_SCALAR_SCHEMA,
+            )
+            # Delete the placeholder document
+            try:
+                vector_store.col.delete(expr='text == "__placeholder__"')  # type: ignore
+                logger.info("Placeholder document deleted, empty collection with schema ready")
+            except Exception as e:
+                logger.warning(f"Failed to delete placeholder document: {e}")
+        
         logger.info(f"Successfully created and populated Milvus collection: {collection_name}")
     else:
         logger.info(f"Connecting to existing Milvus collection: {collection_name}")

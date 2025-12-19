@@ -91,6 +91,7 @@ class CacheManager:
                 socket_timeout=5,
             )
             client.ping()
+            client.flushdb()
             self.redis_client = client
             self.keyword_cache = RedisKeywordCache(client)
             logger.info(f"Redis L1 cache connected: {redis_host}:{redis_port}")
@@ -131,15 +132,17 @@ class CacheManager:
         """Compute SHA256 hash of a text string."""
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
     
-    def _get_cache_key(self, data_source: str, query: str) -> str:
+    def _get_cache_key(self, data_source: str, query: str, scope: str | None = None) -> str:
         """Generate cache key for retrieval results."""
         query_hash = self._compute_hash(query)
-        return f"rag:retrieval:{data_source}:{query_hash}"
+        scope_label = scope or "global"
+        return f"rag:retrieval:{data_source}:{scope_label}:{query_hash}"
     
     def get(
         self,
         data_source: str,
-        query: str
+        query: str,
+        scope: str | None = None,
     ) -> Optional[List[Document]]:
         """
         Get cached retrieval results using L1 + L2 strategy.
@@ -154,7 +157,7 @@ class CacheManager:
         # Try L1 cache first (exact match)
         if self.keyword_cache:
             try:
-                cache_key = self._get_cache_key(data_source, query)
+                cache_key = self._get_cache_key(data_source, query, scope)
                 cached_data = self.keyword_cache.get(cache_key)
                 
                 if cached_data:
@@ -168,7 +171,11 @@ class CacheManager:
         if self._should_use_l2():
             try:
                 query_embedding = self.embeddings.embed_query(query)  # type: ignore
-                result = self.vector_cache.search(query_embedding, self.similarity_threshold)  # type: ignore
+                result = self.vector_cache.search(  # type: ignore
+                    query_embedding,
+                    self.similarity_threshold,
+                    scope=scope,
+                )
                 
                 if result:
                     cached_data, similarity = result
@@ -186,7 +193,8 @@ class CacheManager:
         self,
         data_source: str,
         query: str,
-        documents: List[Document]
+        documents: List[Document],
+        scope: str | None = None,
     ) -> bool:
         """
         Cache retrieval results in L1 + L2.
@@ -205,7 +213,7 @@ class CacheManager:
         # Store in L1 cache
         if self.keyword_cache:
             try:
-                cache_key = self._get_cache_key(data_source, query)
+                cache_key = self._get_cache_key(data_source, query, scope)
                 stored = self.keyword_cache.set(cache_key, serialized, ttl_seconds=self.ttl)
                 if stored:
                     logger.info(f"L1 cache SET for '{data_source}': {len(documents)} documents (TTL={self.ttl}s)")
@@ -219,12 +227,14 @@ class CacheManager:
         if self._should_use_l2():
             try:
                 query_embedding = self.embeddings.embed_query(query)  # type: ignore
-                cache_key = self._compute_hash(f"{data_source}:{query}")
+                scoped = scope or "global"
+                cache_key = self._compute_hash(f"{data_source}:{scoped}:{query}")
                 stored = self.vector_cache.add(  # type: ignore
                     cache_key,
                     query_embedding,
                     serialized,
                     ttl_seconds=self.ttl,
+                    scope=scope,
                 )
                 if stored:
                     logger.info(f"L2 cache SET for '{data_source}': semantic index updated")
@@ -232,44 +242,6 @@ class CacheManager:
                     success = False
             except Exception as e:
                 logger.warning(f"Error writing L2 cache: {e}")
-                success = False
-        
-        return success
-    
-    def invalidate(self, data_source: Optional[str] = None) -> bool:
-        """
-        Invalidate cache entries.
-        
-        Args:
-            data_source: If provided, only invalidate entries for this source.
-                        If None, invalidate all entries.
-            
-        Returns:
-            True if invalidation succeeded, False otherwise
-        """
-        success = True
-        
-        if self.keyword_cache:
-            try:
-                pattern = f"rag:retrieval:{data_source}:*" if data_source else "rag:retrieval:*"
-                cleared = self.keyword_cache.clear(pattern)
-                if cleared:
-                    logger.info(f"L1 cache invalidated: pattern='{pattern}'")
-                else:
-                    success = False
-            except Exception as e:
-                logger.warning(f"Error clearing L1 cache: {e}")
-                success = False
-        
-        if self.vector_cache:
-            try:
-                cleared = self.vector_cache.clear()
-                if cleared:
-                    logger.info("L2 cache invalidated")
-                else:
-                    success = False
-            except Exception as e:
-                logger.warning(f"Error clearing L2 cache: {e}")
                 success = False
         
         return success

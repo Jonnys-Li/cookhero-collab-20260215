@@ -127,6 +127,7 @@ class MilvusVectorCache(VectorCacheBackend):
         embedding: List[float],
         payload: Any,
         ttl_seconds: int | None = None,
+        scope: str | None = None,
     ) -> bool:
         vector = np.asarray(embedding, dtype="float32")
         if vector.ndim != 1 or vector.shape[0] != self._dimension:
@@ -143,6 +144,7 @@ class MilvusVectorCache(VectorCacheBackend):
             return False
         normalized = (vector / norm).tolist()
         expires_at = time.time() + ttl_seconds if ttl_seconds else 0.0
+        scope_value = scope or "global"
 
         self._delete_existing(key)
         try:
@@ -157,13 +159,19 @@ class MilvusVectorCache(VectorCacheBackend):
                 [normalized],
                 [payload_str],
                 [float(expires_at)],
+                [scope_value],
             ])
             return True
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to insert cache entry into Milvus: %s", exc)
             return False
 
-    def search(self, embedding: List[float], threshold: float) -> Optional[Tuple[Any, float]]:
+    def search(
+        self,
+        embedding: List[float],
+        threshold: float,
+        scope: str | None = None,
+    ) -> Optional[Tuple[Any, float]]:
         if not self._collection:
             return None
         vector = np.asarray(embedding, dtype="float32")
@@ -175,7 +183,7 @@ class MilvusVectorCache(VectorCacheBackend):
             logger.debug("Skipping L2 cache lookup for zero vector query")
             return None
         normalized = (vector / norm).tolist()
-        expr = self._build_valid_expr()
+        expr = self._build_valid_expr(scope)
         try:
             results = self._collection.search(
                 data=[normalized],
@@ -249,6 +257,9 @@ class MilvusVectorCache(VectorCacheBackend):
             raise RuntimeError(f"Failed to connect to Milvus for cache: {exc}") from exc
 
     def _get_or_create_collection(self, force_build: bool) -> Collection:
+        if utility.has_collection(self._collection_name, using=self._alias):
+            _ = utility.drop_collection(self._collection_name, using=self._alias)
+
         if force_build or not utility.has_collection(self._collection_name, using=self._alias):
             schema = CollectionSchema(
                 fields=[
@@ -272,6 +283,11 @@ class MilvusVectorCache(VectorCacheBackend):
                     FieldSchema(
                         name="expires_at",
                         dtype=DataType.DOUBLE,
+                    ),
+                    FieldSchema(
+                        name="scope",
+                        dtype=DataType.VARCHAR,
+                        max_length=128,
                     ),
                 ],
                 description="CookHero retrieval L2 cache",
@@ -298,7 +314,10 @@ class MilvusVectorCache(VectorCacheBackend):
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.debug("Failed to delete existing Milvus cache key %s: %s", cache_key, exc)
 
-    def _build_valid_expr(self) -> str:
+    def _build_valid_expr(self, scope: str | None = None) -> str:
         now = time.time()
-        return f"(expires_at == 0) or (expires_at > {now})"
+        ttl_expr = f"((expires_at == 0) or (expires_at > {float(now)}))"
+        scope_value = scope or "global"
+        scope_expr = f'(scope == "{scope_value}")'
+        return f"{ttl_expr} and {scope_expr}"
 
