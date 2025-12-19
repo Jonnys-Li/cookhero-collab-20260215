@@ -1,100 +1,132 @@
 # scripts/run_ingestion.py
+"""
+Data ingestion pipeline for CookHero.
+Loads documents from local files, stores them in PostgreSQL,
+and creates vector embeddings in Milvus.
+"""
+
+import asyncio
 import logging
 from pathlib import Path
 
-from app.config import DefaultRAGConfig, RAGConfig, settings
-from app.rag.data_sources.howtocook_data_source import HowToCookDataSource
-from app.rag.data_sources.tips_data_source import TipsDataSource
+from app.config import DefaultRAGConfig, settings
+from app.database.session import init_db, close_db
+from app.database.document_repository import document_repository
+from scripts.howtocook_loader import HowToCookLoader
 from app.rag.embeddings.embedding_factory import get_embedding_model
 from app.rag.vector_stores.vector_store_factory import get_vector_store
 
 # --- Setup Logging ---
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
-def ingest_data_source(config: RAGConfig, embeddings, source_name: str, data_source_class, data_source_config):
+async def ingest_howtocook(config, embeddings) -> None:
     """
-    Ingests data from a single data source into a specified Milvus collection.
+    Ingest HowToCook data (recipes + tips) into PostgreSQL and Milvus.
     """
-    logger.info(f"--- Starting Ingestion for Source: {source_name} ---")
+    logger.info("=== Starting HowToCook Ingestion ===")
 
-    # 1. Data Source and Preparation
-    data_path = Path(config.paths.base_data_path) / data_source_config.path_suffix
-    logger.info(f"Preparing data from source path: {data_path}")
+    # 1. Load documents from local files
+    source_config = config.data_source.howtocook
+    data_path = Path(config.paths.base_data_path) / source_config.path_suffix
+    tips_path = Path(config.paths.base_data_path) / source_config.tips_path_suffix
+
+    logger.info("Loading documents from: %s, %s", data_path, tips_path)
     
-    # Dynamically create the data source instance with the correct parameters
-    if hasattr(data_source_config, 'window_size'):
-        # For GenericTextDataSource or any other with window_size
-        data_source = data_source_class(
-            data_path=str(data_path),
-            window_size=data_source_config.window_size
-        )
-    elif hasattr(data_source_config, 'headers_to_split_on'):
-        # For HowToCookDataSource and TipsDataSource
-        data_source = data_source_class(
-            data_path=str(data_path),
-            headers_to_split_on=data_source_config.headers_to_split_on
-        )
-    else:
-        # Default case, if no specific config is found
-        data_source = data_source_class(data_path=str(data_path))
+    loader = HowToCookLoader(
+        data_path=str(data_path),
+        tips_path=str(tips_path),
+        headers_to_split_on=source_config.headers_to_split_on,
+    )
+    
+    parsed_docs = loader.load_documents()
+    logger.info("Parsed %d documents from local files", len(parsed_docs))
 
-    child_chunks = data_source.get_chunks()
-    logger.info(f"Data preparation complete for {source_name}.")
+    # 2. Delete existing recipes documents from PostgreSQL
+    logger.info("Clearing existing recipes documents from PostgreSQL...")
+    deleted_count = await document_repository.delete_by_data_source("recipes")
+    logger.info("Deleted %d existing documents", deleted_count)
 
-    # 2. Get Collection Name
-    collection_name = config.vector_store.collection_names.get(source_name)
+    # 3. Insert documents into PostgreSQL
+    logger.info("Inserting documents into PostgreSQL...")
+    doc_dicts = [doc.to_dict() for doc in parsed_docs]
+    await document_repository.create_batch(doc_dicts)
+    logger.info("Inserted %d documents into PostgreSQL", len(parsed_docs))
+
+    # 4. Create chunks for vector store
+    logger.info("Creating chunks for vector indexing...")
+    chunks = loader.create_chunks(parsed_docs)
+    logger.info("Created %d chunks", len(chunks))
+
+    # 5. Index chunks in Milvus (with force_rebuild=True)
+    collection_name = config.vector_store.collection_names.get("recipes")
     if not collection_name:
-        logger.error(f"Collection name for source '{source_name}' not found in config. Skipping.")
+        logger.error("Collection name for 'recipes' not found in config")
         return
 
-    # 3. Vector Store Ingestion
-    logger.info(f"Building and populating vector store for collection: '{collection_name}'")
+    logger.info("Indexing chunks in Milvus collection: %s", collection_name)
     _ = get_vector_store(
         milvus_config=settings.database.milvus,
         collection_name=collection_name,
         embeddings=embeddings,
-        chunks=child_chunks,
-        force_rebuild=True
+        chunks=chunks,
+        force_rebuild=True,
     )
-    logger.info(f"--- Ingestion for Source: {source_name} Finished ---")
+    logger.info("Successfully indexed %d chunks in Milvus", len(chunks))
+
+    logger.info("=== HowToCook Ingestion Complete ===")
 
 
-def main():
+async def ensure_personal_collection(config, embeddings) -> None:
     """
-    Main function to run the data ingestion and indexing pipeline for all configured sources.
-    This script will drop and rebuild the existing Milvus collections.
+    Ensure the personal documents collection exists in Milvus.
+    Creates an empty collection if it doesn't exist.
     """
-    logger.info("--- Starting CookHero Data Ingestion Pipeline ---")
+    collection_name = config.vector_store.collection_names.get("personal")
+    if not collection_name:
+        logger.warning("Personal collection not configured, skipping")
+        return
+
+    logger.info("Ensuring personal documents collection exists: %s", collection_name)
+    _ = get_vector_store(
+        milvus_config=settings.database.milvus,
+        collection_name=collection_name,
+        embeddings=embeddings,
+        chunks=[],  # Empty - will create with placeholder if needed
+        force_rebuild=False,  # Don't drop existing personal docs
+    )
+    logger.info("Personal documents collection ready")
+
+
+async def main():
+    """Main ingestion pipeline."""
+    logger.info("=== Starting CookHero Data Ingestion Pipeline ===")
 
     config = DefaultRAGConfig
 
-    # Initialize embedding model once
-    logger.info("Initializing embedding model...")
-    embeddings = get_embedding_model(config)
+    # Initialize database
+    logger.info("Initializing database...")
+    await init_db()
 
-    # Ingest HowToCook recipes
-    ingest_data_source(
-        config=config,
-        embeddings=embeddings,
-        source_name="recipes",
-        data_source_class=HowToCookDataSource,
-        data_source_config=config.data_source.howtocook
-    )
+    try:
+        # Initialize embedding model
+        logger.info("Initializing embedding model...")
+        embeddings = get_embedding_model(config)
 
-    # Ingest Tips
-    ingest_data_source(
-        config=config,
-        embeddings=embeddings,
-        source_name="tips",
-        data_source_class=TipsDataSource,
-        data_source_config=config.data_source.tips
-    )
+        # Ingest HowToCook data
+        await ingest_howtocook(config, embeddings)
 
-    logger.info("--- CookHero Data Ingestion Pipeline Finished ---")
+        # Ensure personal collection exists
+        await ensure_personal_collection(config, embeddings)
+
+        logger.info("=== CookHero Data Ingestion Pipeline Complete ===")
+    finally:
+        await close_db()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
