@@ -12,6 +12,9 @@ export * from './chat';
 // Layout components
 export * from './layout';
 
+// Knowledge components
+export { default as KnowledgePanel } from './KnowledgePanel';
+
 // Legacy exports for backward compatibility
 // These can be removed once all imports are updated
 export { ChatInput } from './chat';

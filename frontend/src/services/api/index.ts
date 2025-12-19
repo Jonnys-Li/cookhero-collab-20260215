@@ -7,6 +7,7 @@ export * from './client';
 export * from './auth';
 export * from './user';
 export * from './conversation';
+export * from './knowledge';
 
 // Named exports for backward compatibility
 export {
@@ -18,6 +19,12 @@ export {
   getProfile,
   updateProfile,
 } from './user';
+
+export {
+  listPersonalDocuments,
+  createPersonalDocument,
+  getKnowledgeMetadataOptions,
+} from './knowledge';
 
 export {
   streamConversation,
