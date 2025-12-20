@@ -154,7 +154,7 @@ class RAGService:
                 logger.warning("Failed to connect to %s collection: %s", name, e)
 
     # =========================================================================
-    # Public API - Two main interfaces
+    # Public API
     # =========================================================================
 
     async def retrieve(
@@ -190,7 +190,6 @@ class RAGService:
 
         # Rerank if enabled
         reranked_docs = await self._rerank_if_needed(rewritten_query, all_retrieved_docs)
-        self._log_retrieval_summary("reranked", reranked_docs)
         
         # Post-process: fetch parent documents from database
         processed_docs = await document_processor.post_process_retrieval(reranked_docs)
@@ -209,46 +208,6 @@ class RAGService:
             context=context,
             documents=processed_docs,
             sources=sources
-        )
-
-    async def ask_with_generation(
-        self, 
-        query: str, 
-        stream: bool = False, 
-        use_intelligent_ranker: bool = True,
-        skip_rewrite: bool = False,
-        user_id: str | None = None,
-    ):
-        """Full RAG pipeline: query rewriting + retrieval + LLM generation."""
-        if not self.retrieval_modules:
-            raise RuntimeError("RAG Service is not properly initialized.")
-
-        # Query rewriting and metadata extraction (no DB access)
-        rewritten_query = query if skip_rewrite else await self.generation_module.rewrite_query(query)
-        filter_catalog = document_repository.get_metadata_for_filter(user_id)
-        metadata_expression = await self.metadata_filter_extractor.build_filter_expression(
-            query, filter_catalog
-        )
-
-        # Retrieval
-        all_retrieved_docs = await self._execute_retrieval(
-            rewritten_query,
-            self.config.retrieval.top_k,
-            use_intelligent_ranker,
-            metadata_expression,
-            user_id,
-        )
-
-        # Rerank and process
-        reranked_docs = await self._rerank_if_needed(rewritten_query, all_retrieved_docs)
-        processed_docs = await document_processor.post_process_retrieval(reranked_docs)
-        context_parts = [doc.page_content for doc in processed_docs]
-        
-        # Generate response
-        return await self.generation_module.generate_response(
-            query=rewritten_query,
-            context_docs=context_parts,
-            stream=stream,
         )
 
     # =========================================================================
