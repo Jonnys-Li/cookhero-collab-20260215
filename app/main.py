@@ -10,6 +10,7 @@ from app.config import settings
 from app.database.session import init_db, close_db
 from app.database.document_repository import DocumentRepository
 from app.services.auth_service import auth_service
+from app.services.rag_service import rag_service_instance
 import logging
 
 logging.basicConfig(level=logging.INFO,
@@ -29,6 +30,12 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing metadata cache...")
     await DocumentRepository.init_all_metadata_cache()
     logger.info("Metadata cache initialized.")
+
+    # Clear Redis cache on startup
+    logger.info("Clearing Redis cache...")
+    if rag_service_instance.cache_manager and rag_service_instance.cache_manager.redis_client:
+        await rag_service_instance.cache_manager.redis_client.flushdb()  
+    logger.info("Redis cache cleared.")
     
     yield
     # Shutdown
