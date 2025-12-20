@@ -1,5 +1,5 @@
-import logging
-from typing import List
+import logging, json
+import re
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,70 +10,36 @@ from app.config import LLMProviderConfig, settings
 logger = logging.getLogger(__name__)
 
 HISTORY_REWRITE_PROMPT_TEMPLATE = """
-<|system|>
-你是 CookHero 的「检索查询重写器」，负责将用户的当前问题结合对话历史，重写为**完整、独立、自然、适合菜谱与烹饪知识库检索的一句话查询**。
-你的输出将直接用于语义检索，因此必须**准确、明确、无歧义**。
+<|system|>。
+你是 CookHero 的「检索查询重写器」。你的任务是：**将用户的当前问题结合对话历史，重写为一条完整、独立、自然、可直接用于菜谱与烹饪知识库语义检索的一句话查询**
 
-【重写原则（必须遵守）】
+【重写规则（必须严格遵守）】
 
-1. **消解指代**
-- 将“它 / 这个 / 那个 / 第一个 / 上一道”等指代词替换为具体菜品、食材或对象
-- 对象必须来自对话历史，禁止猜测
+1. 指代消解  
+- 将“它 / 这个 / 那个 / 第一个 / 上一道”等指代词，替换为对话历史中已明确出现的具体菜品、食材或对象  
+- 禁止猜测或引入未出现的信息  
 
-2. **补全必要上下文**
-- 若当前问题无法独立理解，需补充前文中**直接相关且必要**的信息
-- 只补充与“做什么 / 怎么做 / 推荐什么”直接相关的内容
+2. 上下文补全  
+- 若当前问题无法独立理解，补充**对检索必要且直接相关**的历史信息  
+- 只补充与“做什么 / 怎么做 / 推荐什么”直接相关的内容  
 
-3. **保持自然语言**
-- 输出必须是完整、通顺的一句话
-- 使用自然问句或陈述句
-- 禁止关键词堆砌、列表、标签
+3. 语言要求  
+- 输出必须是**一整句**通顺、自然的中文  
+- 使用自然问句或陈述句  
+- 禁止列表、标签、关键词堆砌  
 
-4. **语义扩展（仅限抽象概念）**
-- 可将抽象偏好转写为明确含义：
-  - “清淡” → “口味清淡、不油腻”
-  - “荤素搭配” → “既有肉类又有蔬菜的菜品”
-- 不得引入新的具体条件
+4. 抽象偏好明确化（仅限已有语义）  
+- 可将抽象描述转为等价的明确表达  
+  - “清淡” → “口味清淡、不油腻”  
+- 不得新增具体条件或限制  
 
-5. **严格禁止幻觉**
-- 未出现的信息一律不得添加
-- 不要擅自加入“简单 / 快速 / 健康 / 低脂 / 辣”等描述
+5. 幻觉与扩展限制  
+- 对话中未出现的信息一律不得添加  
+- 不得擅自加入“简单 / 快速 / 健康 / 低脂 / 辣”等描述  
 
-6. **模糊问题的安全澄清**
-- 若问题本身过于模糊（如“我饿了”“吃点啥”）
-- 重写为**不设限、不假设**的通用请求
-
-【示例（仅用于理解规则，不要照抄）】
-
-示例1（指代消解）  
-    对话历史：  
-    User: 推荐几道鸡胸肉的做法  
-    Assistant: 可以试试鸡胸肉沙拉、黑椒鸡胸肉、鸡胸肉炒蔬菜  
-    当前问题：第二个怎么做  
-    → 黑椒鸡胸肉的详细做法是什么？
-
-示例2（承接追问）  
-    对话历史：  
-    User: 红烧肉怎么做  
-    Assistant: 需要小火慢炖  
-    当前问题：要炖多久  
-    → 红烧肉一般需要炖多长时间？
-
-示例3（模糊问题）  
-对话历史：无  
-当前问题：我饿了  
-→ 你能推荐一些可以在家制作的菜谱吗？
-
-示例4（抽象偏好扩展）  
-对话历史：无  
-当前问题：推荐点清淡的菜  
-→ 有哪些口味清淡、不油腻的菜品？
-
-【输出要求（强约束）】
-
-- 只输出 **1 句** 重写后的查询
-- 禁止前缀、后缀、解释、Markdown、换行
-- 不要重复“根据对话历史”“请问”等多余话语
+6. 模糊问题处理  
+- 若问题本身无法确定具体对象（如“我饿了”“吃点啥”）  
+- 重写为**不设限、不假设条件**的通用菜谱请求  
 
 <|user|>
 【对话历史】
@@ -81,6 +47,15 @@ HISTORY_REWRITE_PROMPT_TEMPLATE = """
 
 【当前问题】
 {query}
+
+【输出格式（强约束）】
+
+你 **必须且只能** 输出以下 JSON，对象结构固定，不得添加或省略字段，不得输出任何多余文本：
+
+{{
+  "query": "<重写后的一句话查询>"
+}}
+
 <|assistant|>
 """
 
@@ -103,27 +78,43 @@ class QueryRewriter:
             base_url=self.llm_config.base_url,
         )
 
-    async def rewrite_with_history(
+        self.chain = HISTORY_REWRITE_PROMPT | self.rewrite_llm | StrOutputParser()
+
+        self.JSON_BLOCK_RE = re.compile(
+            r"\{[\s\S]*?\}",
+            re.MULTILINE
+        )
+
+    def extract_first_valid_json(self, content: str) -> dict:
+        for m in self.JSON_BLOCK_RE.findall(content):
+            try:
+                return json.loads(m)
+            except json.JSONDecodeError:
+                continue
+        raise ValueError("未找到任何可解析的 JSON")
+
+    async def rewrite(
         self, current_query: str, history_text: str
     ) -> str:
         if not history_text.strip():
             return current_query
 
+        debugc = ""
+
         try:
-            chain = HISTORY_REWRITE_PROMPT | self.rewrite_llm | StrOutputParser()
-            rewritten = (
-                await chain.ainvoke({"history": history_text, "query": current_query})
+            content = (
+                await self.chain.ainvoke({"history": history_text, "query": current_query})
             ).strip()
 
-            if rewritten and rewritten != current_query:
-                logger.info(
-                    "query rewrite: '%s' -> '%s'",
-                    current_query[:80],
-                    rewritten[:80],
-                )
-                return rewritten
+            debugc = content
+
+            result = self.extract_first_valid_json(content)
+            rewritten = result.get("query", current_query).strip()
+
+            return rewritten
 
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.warning("Failed to rewrite query with history: %s", exc)
+            logger.info("Rewrite debug content: %s", debugc)
 
         return current_query
