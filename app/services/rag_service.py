@@ -62,7 +62,6 @@ class RAGService:
 
         logger.info("Initializing RAGService")
         self.config = config or DefaultRAGConfig
-        self.llm_config = settings.llm
         self.db_config = settings.database
         self.embeddings = get_embedding_model(self.config)
         
@@ -72,20 +71,9 @@ class RAGService:
         # Initialize vector store connections (no local file loading)
         self._init_vector_stores()
 
-        self.generation_module = GenerationIntegrationModule(
-            model_name=self.llm_config.model_name,
-            temperature=self.llm_config.temperature,
-            max_tokens=self.llm_config.max_tokens,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url
-        )
+        self.generation_module = GenerationIntegrationModule(llm_type="fast")
 
-        self.metadata_filter_extractor = MetadataFilterExtractor(
-            model_name=self.llm_config.model_name,
-            max_tokens=self.llm_config.max_tokens,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url
-        )
+        self.metadata_filter_extractor = MetadataFilterExtractor(llm_type="fast")
 
         if self.config.reranker.enabled:
             if self.config.reranker.type == "siliconflow":

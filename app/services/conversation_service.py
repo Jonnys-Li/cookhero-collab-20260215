@@ -200,18 +200,17 @@ class ConversationService:
 
     def __init__(self):
         """Initialize the conversation service with modular components."""
-        self.llm_config = settings.llm
         self.context_manager = ContextManager(
             system_prompt=SYSTEM_PROMPT,
         )
         self.context_compressor = ContextCompressor(
-            llm_config=self.llm_config,
+            llm_type="normal",
             compression_threshold=self.COMPRESSION_THRESHOLD,
             recent_messages_limit=self.RECENT_MESSAGES_LIMIT,
         )
-        self.llm_orchestrator = LLMOrchestrator(llm_config=self.llm_config)
-        self.intent_detector = IntentDetector(llm_config=self.llm_config)
-        self.query_rewriter = QueryRewriter(llm_config=self.llm_config)
+        self.llm_orchestrator = LLMOrchestrator(llm_type="normal")
+        self.intent_detector = IntentDetector(llm_type="fast")
+        self.query_rewriter = QueryRewriter(llm_type="fast")
 
     # =========================================================================
     # Main Chat Entry Point
