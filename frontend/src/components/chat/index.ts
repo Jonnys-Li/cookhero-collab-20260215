@@ -3,7 +3,7 @@
  */
 
 export { ChatInput } from './ChatInput';
-export type { ChatInputProps } from './ChatInput';
+export type { ChatInputProps, ExtraOptions } from './ChatInput';
 
 export { ChatWindow } from './ChatWindow';
 export type { ChatWindowProps } from './ChatWindow';
