@@ -447,35 +447,42 @@ class RAGService:
             logger.info("  %s", summary)
 
     def _extract_sources(self, documents: List[Document]) -> List[Dict]:
-        """Extract source information from documents for frontend display."""
+        """
+        Extract source information from documents for frontend display.
+        
+        Returns unified format: {"type": "rag", "info": str, "url": optional str}
+        The 'info' field combines dish_name/title for display.
+        """
         sources = []
         seen = set()
-        
+
         for doc in documents:
             metadata = doc.metadata or {}
-            title = metadata.get("dish_name") or metadata.get("title") or metadata.get("source_title")
-            info = title or metadata.get("category") or metadata.get("source", "CookHero 知识库")
+            # Build info from title or category
+            title = (
+                metadata.get("dish_name")
+                or metadata.get("title")
+                or metadata.get("source_title")
+            )
+            info = title or metadata.get("category") or "CookHero 知识库"
+
+            # Build unified source dict
             source_info: Dict[str, str] = {
-                "type": metadata.get("source_type", "knowledge_base"),
+                "type": "rag",  # Always "rag" for knowledge base sources
                 "info": info,
             }
-            if title:
-                source_info["title"] = title
+
+            # Add optional URL if available
             if metadata.get("url"):
                 source_info["url"] = str(metadata["url"])
-            if metadata.get("category"):
-                source_info["category"] = metadata.get("category", "")
-            
+
+            # Deduplicate by (type, info)
             key = (source_info["type"], source_info["info"])
             if key not in seen:
                 seen.add(key)
                 sources.append(source_info)
-        
-        return sources
 
-    def get_metadata_options(self, user_id: str | None = None) -> Dict[str, List[str]]:
-        """Get metadata options from cache (no DB access)."""
-        return document_repository.get_metadata_options(user_id)
+        return sources
 
 
 # Instantiate the singleton service

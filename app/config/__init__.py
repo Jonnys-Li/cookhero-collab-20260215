@@ -42,6 +42,7 @@ from app.config.rag_config import (
     DataSourceConfig,
     HowToCookConfig,
 )
+from app.config.web_search_config import WebSearchConfig
 
 __all__ = [
     # Main settings
@@ -65,4 +66,6 @@ __all__ = [
     "CacheConfig",
     "DataSourceConfig",
     "HowToCookConfig",
+    # Web Search configuration
+    "WebSearchConfig",
 ]

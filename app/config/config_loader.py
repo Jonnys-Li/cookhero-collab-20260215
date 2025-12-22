@@ -24,6 +24,7 @@ from app.config.database_config import (
 )
 from app.config.llm_config import LLMProviderConfig
 from app.config.rag_config import RAGConfig
+from app.config.web_search_config import WebSearchConfig
 
 
 # Load .env file into environment variables at module import
@@ -153,3 +154,21 @@ def load_rag_config(llm_config: LLMProviderConfig | None = None) -> RAGConfig:
     }
 
     return RAGConfig.model_validate(rag_data)
+
+
+def load_web_search_config() -> WebSearchConfig:
+    """
+    Load web search configuration from YAML + environment variables.
+    
+    Environment variables:
+    - WEB_SEARCH_API_KEY: API key for web search provider
+    """
+    config_data = _load_config_data()
+    ws_data = dict(config_data.get("web_search", {}) or {})
+    
+    # Load API key from environment
+    api_key = os.getenv("WEB_SEARCH_API_KEY")
+    if api_key:
+        ws_data["api_key"] = api_key
+    
+    return WebSearchConfig.model_validate(ws_data)

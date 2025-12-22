@@ -16,7 +16,13 @@ from pydantic import BaseModel
 from app.config.database_config import DatabaseConfig
 from app.config.llm_config import LLMProviderConfig
 from app.config.rag_config import RAGConfig
-from app.config.config_loader import load_database_config, load_llm_config, load_rag_config
+from app.config.web_search_config import WebSearchConfig
+from app.config.config_loader import (
+    load_database_config,
+    load_llm_config,
+    load_rag_config,
+    load_web_search_config,
+)
 
 
 class Settings(BaseModel):
@@ -27,7 +33,7 @@ class Settings(BaseModel):
     1. Global configuration (API prefix, project name, etc.)
     2. Global LLM provider configuration
     3. Database configurations (PostgreSQL, Redis, Milvus)
-    4. Module-specific configurations (RAG, etc.)
+    4. Module-specific configurations (RAG, Web Search, etc.)
     """
     # ==========================================================================
     # Global Configuration
@@ -55,6 +61,9 @@ class Settings(BaseModel):
 
     # RAG configuration loaded from config.yml
     rag: RAGConfig = load_rag_config(llm)
+    
+    # Web Search configuration loaded from config.yml
+    web_search: WebSearchConfig = load_web_search_config()
     
     class Config:
         arbitrary_types_allowed = True
