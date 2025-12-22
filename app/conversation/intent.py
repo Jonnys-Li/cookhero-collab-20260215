@@ -11,6 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config import settings, LLMType
 from app.llm import ChatOpenAIProvider
 from app.llm.provider import DynamicChatInvoker
+from app.utils.structured_json import extract_first_valid_json
 
 logger = logging.getLogger(__name__)
 
@@ -130,19 +131,6 @@ class IntentDetector:
         _base_llm = self._provider.create_base_llm(llm_type, temperature=0.0)
         self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
-        self.JSON_BLOCK_RE = re.compile(
-            r"\{[\s\S]*?\}",
-            re.MULTILINE
-        )
-        
-    def extract_first_valid_json(self, content: str) -> dict:
-        for m in self.JSON_BLOCK_RE.findall(content):
-            try:
-                return json.loads(m)
-            except json.JSONDecodeError:
-                continue
-        raise ValueError("未找到任何可解析的 JSON")
-
     async def detect(
         self,
         query: str,
@@ -166,7 +154,7 @@ class IntentDetector:
             content = response.content.strip()
             debugc = content
 
-            result = self.extract_first_valid_json(content)
+            result = extract_first_valid_json(content)
             need_rag = result.get("need_rag", True)
             intent_str = result.get("intent", "general_chat")
             reason = result.get("reason", "")

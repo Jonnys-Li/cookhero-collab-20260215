@@ -17,6 +17,7 @@ from langchain_core.output_parsers import StrOutputParser
 from app.config import settings, LLMType
 from app.llm import ChatOpenAIProvider
 from app.llm.provider import DynamicChatInvoker
+from app.utils.structured_json import extract_first_valid_json
 
 logger = logging.getLogger(__name__)
 
@@ -119,19 +120,6 @@ class MetadataFilterExtractor:
 
         self.reference_material = self._load_reference_material()
 
-        self.JSON_BLOCK_RE = re.compile(
-            r"\{[\s\S]*?\}",
-            re.MULTILINE
-        )
-
-    def extract_first_valid_json(self, content: str) -> dict:
-        for m in self.JSON_BLOCK_RE.findall(content):
-            try:
-                return json.loads(m)
-            except json.JSONDecodeError:
-                continue
-        raise ValueError("未找到任何可解析的 JSON")
-
     async def build_filter_expression(self, query: str, metadata_catalog: Dict[str, Dict[str, List[str]]]) -> str | None:
         if not metadata_catalog:
             return None
@@ -149,7 +137,7 @@ class MetadataFilterExtractor:
             content = response.content.strip()
             debugc = content
 
-            result = self.extract_first_valid_json(content)
+            result = extract_first_valid_json(content)
             raw = result.get("expr", "")
 
             expression = self._clean_expression(raw)
