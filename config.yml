@@ -66,7 +66,7 @@ reranker:
   # api_key: loaded from .env (RERANKER_API_KEY)
   temperature: 0.0
   max_tokens: 8192
-  score_threshold: 0.1
+  score_threshold: 0.2
 
 # ----------------------------------------------------------------------------
 # Cache Configuration
@@ -89,6 +89,16 @@ cache:
   vector_collection: "cookhero_retrieval_cache"
   vector_collection: "cookhero_retrieval_cache"
   # vector_user/vector_password: loaded from .env
+
+# ----------------------------------------------------------------------------
+# Web Search (Tavily)
+# ----------------------------------------------------------------------------
+web_search:
+  # Enable/disable web search feature
+  enabled: true
+  # api_key: loaded from .env (WEB_SEARCH_API_KEY)
+  # Maximum number of search results to return
+  max_results: 5
 
 # ----------------------------------------------------------------------------
 # Database (PostgreSQL)
