@@ -42,6 +42,8 @@ export interface ConversationHistoryResponse {
     sources?: Source[];
     intent?: IntentInfo;
     thinking?: string[];
+    thinking_duration_ms?: number;
+    answer_duration_ms?: number;
   }>;
 }
 

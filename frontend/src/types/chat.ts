@@ -11,6 +11,11 @@ export interface Message {
   intent?: IntentInfo | string;
   isStreaming?: boolean;
   thinking?: string[];
+  // Timing information for response tracking
+  thinkingStartTime?: number; // Unix timestamp in ms when thinking started
+  thinkingEndTime?: number;   // Unix timestamp in ms when thinking ended
+  answerStartTime?: number;   // Unix timestamp in ms when answer generation started
+  answerEndTime?: number;     // Unix timestamp in ms when answer generation ended
 }
 
 /**
