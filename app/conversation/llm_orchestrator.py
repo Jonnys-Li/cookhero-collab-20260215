@@ -1,28 +1,28 @@
 from typing import AsyncGenerator, List
 
 from langchain_core.messages import BaseMessage
-from langchain_openai import ChatOpenAI
 
-from app.config import LLMProviderConfig, settings
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider
+from app.llm.provider import DynamicChatInvoker
 
 
 class LLMOrchestrator:
     """Handles LLM invocation and streaming responses."""
 
-    def __init__(self, llm_config: LLMProviderConfig | None = None):
-        self.llm_config = llm_config or settings.llm
-        self.llm = ChatOpenAI(
-            model=self.llm_config.model_name,
-            temperature=self.llm_config.temperature,
-            max_completion_tokens=self.llm_config.max_tokens,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url,
-            streaming=True,
-        )
+    def __init__(
+        self,
+        llm_type: LLMType | str = LLMType.NORMAL,
+        provider: ChatOpenAIProvider | None = None,
+        ):
+            self._llm_type = llm_type
+            self._provider = provider or ChatOpenAIProvider(settings.llm)
+            _base_llm = self._provider.create_base_llm(llm_type, streaming=True)
+            self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
     async def stream(
         self, messages: List[BaseMessage]
     ) -> AsyncGenerator[str, None]:
-        async for chunk in self.llm.astream(messages):
+        async for chunk in self._llm.astream(messages):
             if chunk.content:
                 yield str(chunk.content)

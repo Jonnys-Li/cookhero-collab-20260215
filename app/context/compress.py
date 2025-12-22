@@ -19,9 +19,9 @@ import logging
 from typing import TYPE_CHECKING, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
-from app.config import LLMProviderConfig
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider, DynamicChatInvoker
 
 from app.conversation.repository import ConversationRepository
 
@@ -81,34 +81,31 @@ class ContextCompressor:
 
     def __init__(
         self,
-        llm_config: LLMProviderConfig,
+        llm_type: LLMType | str = LLMType.NORMAL,
         compression_threshold: int = 6,
         recent_messages_limit: int = 10,
         max_messages_per_compression: int = 200,
-        history_text_max_len: int = 8096
+        history_text_max_len: int = 8096,
+        provider: ChatOpenAIProvider | None = None,
     ):
         """
         Initialize ContextCompressor.
         
         Args:
-            llm_config: LLM configuration for summary generation
+            llm_type: Which LLM tier to use (fast/normal)
             compression_threshold: Number of messages to compress each time
             recent_messages_limit: Number of recent uncompressed messages to keep
             max_messages_per_compression: Max messages to compress in one call
         """
-        self.llm_config = llm_config
+        self._llm_type = llm_type
         self.compression_threshold = compression_threshold
         self.recent_messages_limit = recent_messages_limit
         self.max_messages_per_compression = max_messages_per_compression
         self.history_text_max_len = history_text_max_len
-        
-        self._llm = ChatOpenAI(
-            model=llm_config.model_name,
-            api_key=llm_config.api_key,  # type: ignore
-            base_url=llm_config.base_url,
-            max_completion_tokens=llm_config.max_tokens,
-            temperature=0.3,  # Lower temperature for more consistent summaries
-        )
+
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        base_llm = self._provider.create_base_llm(llm_type, temperature=0.3)
+        self._llm = DynamicChatInvoker(self._provider, llm_type, base_llm)
 
     async def maybe_compress(
         self,

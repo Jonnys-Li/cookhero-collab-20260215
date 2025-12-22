@@ -18,10 +18,11 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
 from tavily import TavilyClient
 
-from app.config import LLMProviderConfig, settings
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider
+from app.llm.provider import DynamicChatInvoker
 
 logger = logging.getLogger(__name__)
 
@@ -152,22 +153,22 @@ class WebSearchTool:
 
     def __init__(
         self,
-        llm_config: Optional[LLMProviderConfig] = None,
+        llm_type: LLMType | str = LLMType.FAST,
         api_key: Optional[str] = None,
         max_results: Optional[int] = None,
+        provider: ChatOpenAIProvider | None = None,
     ):
         """
         Initialize the Web Search Tool.
 
         Args:
-            llm_config: LLM configuration for decision making
+            llm_type: Which LLM tier to use (fast/normal)
             api_key: Tavily API key
             max_results: Maximum search results to return
         """
         # Load from settings with overrides
         web_search_config = settings.web_search
 
-        self.llm_config = llm_config or settings.llm
         self.api_key = (
             api_key
             or web_search_config.api_key
@@ -180,14 +181,10 @@ class WebSearchTool:
         self._tavily_client: Optional[TavilyClient] = None
 
         # Initialize LLM for decision making
-        self.llm = ChatOpenAI(
-            model=self.llm_config.model_name,
-            temperature=0.3,
-            max_completion_tokens=131072,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url,
-        )
-        self.decision_chain = WEB_SEARCH_DECISION_PROMPT | self.llm | StrOutputParser()
+        self._llm_type = llm_type
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        _base_llm = self._provider.create_base_llm(llm_type, temperature=0.3)
+        self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
         # JSON extraction regex
         self.JSON_BLOCK_RE = re.compile(
@@ -250,13 +247,13 @@ class WebSearchTool:
             if document_summary:
                 dishes = document_summary.get("dish_name", [])
                 document_summary_str = "已知菜品名称: " + ", ".join(dishes) + "\n"
-            raw_output = await self.decision_chain.ainvoke(
-                {
-                    "query": query,
-                    "history": history_text,
-                    "document_summary": document_summary_str,
-                }
+            template = WEB_SEARCH_DECISION_PROMPT.format_prompt(
+                query=query,
+                history=history_text,
+                document_summary=document_summary_str,
             )
+            response = await self._llm.ainvoke(template.messages)
+            raw_output = response.content.strip()
 
             parsed = self._extract_first_valid_json(raw_output)
 

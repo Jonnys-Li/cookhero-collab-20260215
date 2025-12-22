@@ -5,11 +5,12 @@ from enum import Enum
 import re
 from typing import Optional
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
-from app.config import LLMProviderConfig, settings
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider
+from app.llm.provider import DynamicChatInvoker
 
 logger = logging.getLogger(__name__)
 
@@ -120,20 +121,14 @@ class IntentDetector:
 
     def __init__(
         self,
-        llm_config: LLMProviderConfig | None = None,
-        max_tokens: int = 256,
+        llm_type: LLMType | str = LLMType.FAST,
+        provider: ChatOpenAIProvider | None = None,
     ):
         """Initialize the intent detector with global or overridden LLM config."""
-        self.llm_config = llm_config or settings.llm
-        self.llm = ChatOpenAI(
-            model=self.llm_config.model_name,
-            temperature=0.0,  # Deterministic for classification
-            max_completion_tokens=max_tokens,
-            api_key=self.llm_config.api_key,  # type: ignore
-            base_url=self.llm_config.base_url,
-        )
-
-        self.chain = INTENT_DETECTION_PROMPT | self.llm | StrOutputParser()
+        self._llm_type = llm_type
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        _base_llm = self._provider.create_base_llm(llm_type, temperature=0.0)
+        self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
         self.JSON_BLOCK_RE = re.compile(
             r"\{[\s\S]*?\}",
@@ -163,8 +158,12 @@ class IntentDetector:
         debugc = ""
 
         try:
-            response = await self.chain.ainvoke({"query": query, "history": history_str})
-            content = response.strip()
+            template = INTENT_DETECTION_PROMPT.format_prompt(
+                query=query,
+                history=history_str,
+            )
+            response = await self._llm.ainvoke(template.messages)
+            content = response.content.strip()
             debugc = content
 
             result = self.extract_first_valid_json(content)

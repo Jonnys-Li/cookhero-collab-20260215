@@ -11,9 +11,12 @@ from pathlib import Path
 from typing import Dict, List
 from urllib import response
 
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider
+from app.llm.provider import DynamicChatInvoker
 
 logger = logging.getLogger(__name__)
 
@@ -104,16 +107,15 @@ REFERENCE_FILES = ("operators.md",)
 
 
 class MetadataFilterExtractor:
-    def __init__(self, model_name: str, max_tokens: int, api_key: str, base_url: str | None = None):
-        self.llm = ChatOpenAI(
-            model=model_name,
-            temperature=0,
-            max_tokens=max_tokens,  # type: ignore
-            api_key=api_key,
-            base_url=base_url or None,
-        )
-
-        self.chain = FILTER_EXPRESSION_PROMPT | self.llm | StrOutputParser()
+    def __init__(
+        self,
+        llm_type: LLMType | str = LLMType.FAST,
+        provider: ChatOpenAIProvider | None = None,
+    ):
+        self._llm_type = llm_type
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        _base_llm = self._provider.create_base_llm(llm_type, temperature=0.0)
+        self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
         self.reference_material = self._load_reference_material()
 
@@ -138,10 +140,13 @@ class MetadataFilterExtractor:
 
         metadata_schema = self._summarize_metadata(metadata_catalog)
         try:
-            content = (
-                await self.chain.ainvoke({"query": query, "metadata_schema": metadata_schema, "reference_material": self.reference_material})
-            ).strip()
-
+            template = FILTER_EXPRESSION_PROMPT.format_prompt(
+                query=query,
+                reference_material=self.reference_material,
+                metadata_schema=metadata_schema,
+            )
+            response = await self._llm.ainvoke(template.messages)
+            content = response.content.strip()
             debugc = content
 
             result = self.extract_first_valid_json(content)

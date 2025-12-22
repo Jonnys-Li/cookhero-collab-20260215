@@ -6,8 +6,11 @@ from typing import List
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+
+from app.config import settings, LLMType
+from app.llm import ChatOpenAIProvider
+from app.llm.provider import DynamicChatInvoker
 
 
 logger = logging.getLogger(__name__)
@@ -66,37 +69,26 @@ class GenerationIntegrationModule:
     response generation tasks.
     """
 
-    def __init__(self, model_name: str, temperature: float, max_tokens: int, api_key: str, base_url: str | None = None):
+    def __init__(
+        self,
+        llm_type: LLMType | str = LLMType.FAST,
+        provider: ChatOpenAIProvider | None = None,
+    ):
         """
         Initializes the generation module.
         """
-        if not api_key or api_key == "None":
-            raise ValueError("LLM API key must be provided.")
-            
-        self.model_name = model_name
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.api_key = api_key
-        self.base_url = base_url
-        self.rewrite_llm = self._init_rewrite_llm()
-
-    def _init_rewrite_llm(self) -> ChatOpenAI:
-        """Initializes a deterministic LLM for query rewriting."""
-        logger.info(f"Initializing rewrite LLM (temperature=0): {self.model_name}")
-        return ChatOpenAI(
-            model=self.model_name,
-            temperature=0.0,
-            max_tokens=self.max_tokens,  # type: ignore
-            api_key=self.api_key,
-            base_url=self.base_url or None
-        )
+        self._llm_type = llm_type
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        _base_llm = self._provider.create_base_llm(llm_type, temperature=0.0)
+        self._llm = DynamicChatInvoker(self._provider, llm_type, _base_llm)
 
     async def rewrite_query(self, query: str) -> str:
         """
         Uses the LLM to rewrite a vague query into a more specific one for better retrieval.
         """
-        chain = REWRITE_PROMPT | self.rewrite_llm | StrOutputParser()
-        rewritten_query = (await chain.ainvoke({"query": query})).strip()
+        template = REWRITE_PROMPT.format_prompt(query=query)
+        response = await self._llm.ainvoke(template.messages)
+        rewritten_query = response.content.strip()
         
         if rewritten_query != query:
             logger.info(f"Query rewritten: '{query}' -> '{rewritten_query}'")
