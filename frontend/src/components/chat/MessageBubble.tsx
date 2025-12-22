@@ -3,11 +3,13 @@
  * Displays individual chat messages with styling based on role
  */
 
-import { Search, MessageCircle, Globe, BookOpen, ExternalLink } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Search, MessageCircle, Globe, BookOpen, ExternalLink, Clock, Loader2 } from 'lucide-react';
 import type { Message, Source } from '../../types';
 import { INTENT_LABELS } from '../../constants';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ThinkingBlock } from './ThinkingBlock';
+import { CopyButton } from '../common';
 
 export interface MessageBubbleProps {
   message: Message;
@@ -99,6 +101,43 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   const showThinkingBlock = !isUser && (hasThinkingSteps || isThinkingPhase);
   const rawIntent = extractIntent(message.intent);
 
+  // Calculate durations
+  const thinkingDuration = message.thinkingStartTime && message.thinkingEndTime
+    ? message.thinkingEndTime - message.thinkingStartTime
+    : undefined;
+  const answerDuration = message.answerStartTime && message.answerEndTime
+    ? message.answerEndTime - message.answerStartTime
+    : undefined;
+  const totalDuration = message.thinkingStartTime && message.answerEndTime
+    ? message.answerEndTime - message.thinkingStartTime
+    : (message.answerStartTime && message.answerEndTime 
+        ? message.answerEndTime - message.answerStartTime 
+        : undefined);
+
+  // Real-time elapsed time tracking for streaming
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const startTime = message.thinkingStartTime || message.answerStartTime;
+  
+  useEffect(() => {
+    if (!message.isStreaming || !startTime) {
+      setElapsedTime(0);
+      return;
+    }
+    
+    // Update elapsed time every 100ms
+    const interval = setInterval(() => {
+      setElapsedTime(Date.now() - startTime);
+    }, 100);
+    
+    return () => clearInterval(interval);
+  }, [message.isStreaming, startTime]);
+
+  // Format duration for display
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
+
   return (
     <div className={`flex mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -128,7 +167,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         {/* Thinking Block (Assistant only) */}
         {showThinkingBlock && (
           <div className="w-full mb-2">
-            <ThinkingBlock steps={thinkingSteps} isThinking={isThinkingPhase} />
+            <ThinkingBlock 
+              steps={thinkingSteps} 
+              isThinking={isThinkingPhase} 
+              thinkingDuration={thinkingDuration}
+            />
           </div>
         )}
 
@@ -185,16 +228,49 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Timestamp */}
+        {/* Timestamp and Duration Stats */}
         <div
-          className={`text-xs mt-2 ${
-            isUser ? 'text-blue-200' : 'text-gray-400 dark:text-gray-500'
+          className={`text-xs mt-2 flex items-center gap-2 flex-wrap ${
+            isUser ? 'text-gray-500 dark:text-gray-400' : 'text-gray-600 dark:text-gray-400'
           }`}
         >
-          {message.timestamp.toLocaleTimeString('zh-CN', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
+            {/* Copy button at the end of timestamp row */}
+          {hasText && isUser && (
+            <CopyButton content={message.content.trim()} size="sm" />
+          )}
+          <span>
+            {message.timestamp.toLocaleTimeString('zh-CN', {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+          
+          {/* Real-time elapsed time during streaming */}
+          {!isUser && message.isStreaming && elapsedTime > 0 && (
+            <span className="inline-flex items-center gap-1 text-blue-500 dark:text-blue-400">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {formatDuration(elapsedTime)}
+            </span>
+          )}
+          
+          {/* Duration breakdown after completion */}
+          {!isUser && !message.isStreaming && (thinkingDuration !== undefined || answerDuration !== undefined) && (
+            <span className="inline-flex items-center gap-1">
+              <Clock className="w-3 h-3" />
+              {thinkingDuration !== undefined && answerDuration !== undefined ? (
+                <span>
+                  思考 {formatDuration(thinkingDuration)} · 生成 {formatDuration(answerDuration)}
+                </span>
+              ) : totalDuration !== undefined ? (
+                <span>耗时 {formatDuration(totalDuration)}</span>
+              ) : null}
+            </span>
+          )}
+          
+          {/* Copy button at the end of timestamp row */}
+          {hasText && !isUser && (
+            <CopyButton content={message.content.trim()} size="sm" />
+          )}
         </div>
       </div>
     </div>

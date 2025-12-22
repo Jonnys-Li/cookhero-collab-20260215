@@ -4,14 +4,15 @@
  */
 
 import { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react';
 
 export interface ThinkingBlockProps {
   steps: string[];
   isThinking: boolean;
+  thinkingDuration?: number; // Duration in milliseconds
 }
 
-export function ThinkingBlock({ steps, isThinking }: ThinkingBlockProps) {
+export function ThinkingBlock({ steps, isThinking, thinkingDuration }: ThinkingBlockProps) {
   const [isOpen, setIsOpen] = useState(true);
   const hasSteps = steps.length > 0;
   const shouldRender = hasSteps || isThinking;
@@ -27,6 +28,12 @@ export function ThinkingBlock({ steps, isThinking }: ThinkingBlockProps) {
 
   if (!shouldRender) return null;
 
+  // Format duration for display
+  const formatDuration = (ms: number) => {
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
+
   return (
     <div className="my-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800/50">
       <button
@@ -39,9 +46,14 @@ export function ThinkingBlock({ steps, isThinking }: ThinkingBlockProps) {
           {isThinking ? (
             <Loader2 className="w-4 h-4 animate-spin text-blue-500" />
           ) : (
-            <div className="w-4 h-4" aria-hidden="true" />
+            <CheckCircle2 className="w-4 h-4 text-green-500" />
           )}
           <span className="font-medium">Thinking Process</span>
+          {!isThinking && thinkingDuration !== undefined && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              ({formatDuration(thinkingDuration)})
+            </span>
+          )}
         </div>
         {isOpen ? (
           <ChevronDown className="w-4 h-4" />
