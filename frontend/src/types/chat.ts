@@ -13,12 +13,17 @@ export interface Message {
   thinking?: string[];
 }
 
+/**
+ * Unified source structure for both RAG and Web search results.
+ * 
+ * @property type - "rag" for knowledge base, "web" for web search
+ * @property info - Display text describing the source
+ * @property url - Optional URL (primarily for web sources, clickable link)
+ */
 export interface Source {
-  type: string;
+  type: 'rag' | 'web' | string;
   info: string;
-  title?: string;
   url?: string;
-  category?: string;
 }
 
 export interface IntentInfo {

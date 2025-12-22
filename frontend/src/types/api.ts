@@ -4,10 +4,19 @@
 
 import type { IntentInfo, Source } from './chat';
 
+/** Extra options that can be enabled per request */
+export interface ExtraOptions {
+  web_search?: boolean;
+  // Future extensibility
+  // deep_reasoning?: boolean;
+  // multimodal?: boolean;
+}
+
 export interface ConversationRequest {
   message: string;
   conversation_id?: string;
   stream?: boolean;
+  extra_options?: ExtraOptions;
 }
 
 export interface SSEEvent {
