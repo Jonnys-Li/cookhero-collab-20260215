@@ -84,7 +84,7 @@ reranker:
   # api_key: loaded from .env (RERANKER_API_KEY)
   temperature: 0.0
   max_tokens: 8192
-  score_threshold: 0.2
+  score_threshold: 0.4
 
 # ----------------------------------------------------------------------------
 # Cache Configuration
@@ -116,7 +116,7 @@ web_search:
   enabled: true
   # api_key: loaded from .env (WEB_SEARCH_API_KEY)
   # Maximum number of search results to return
-  max_results: 5
+  max_results: 6
 
 # ----------------------------------------------------------------------------
 # Database (PostgreSQL)
