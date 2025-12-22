@@ -15,6 +15,7 @@ import type {
   Source,
   ConversationSummary,
   ConversationHistoryResponse,
+  ExtraOptions,
 } from '../types';
 import {
   deleteConversation,
@@ -228,7 +229,7 @@ export function useConversation(token?: string) {
     []
   );
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, extraOptions?: ExtraOptions) => {
     if (!content.trim() || isLoading) return;
     if (!token) {
       setError('Please log in to start chatting.');
@@ -335,6 +336,7 @@ export function useConversation(token?: string) {
       for await (const event of streamConversation({
         message: content,
         conversation_id: conversationId,
+        extra_options: extraOptions,
       }, token, abortController.signal)) {
         // Check if aborted
         if (abortController.signal.aborted) {
@@ -418,6 +420,10 @@ export function useConversation(token?: string) {
               streamingConvId = newId;
               refreshConversationsRef.current?.(true);
             }
+
+            // Clear cache when streaming is done
+            streamingCacheRef.current.delete(streamingConvId);
+            clearStreamingCache(streamingConvId);
             
             // Mark streaming as complete
             updateStreamingState(
@@ -429,9 +435,6 @@ export function useConversation(token?: string) {
               false
             );
             
-            // Clear cache when streaming is done
-            streamingCacheRef.current.delete(streamingConvId);
-            clearStreamingCache(streamingConvId);
             break;
         }
 

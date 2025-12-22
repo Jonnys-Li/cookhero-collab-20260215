@@ -3,8 +3,8 @@
  * Displays individual chat messages with styling based on role
  */
 
-import { Search, MessageCircle } from 'lucide-react';
-import type { Message } from '../../types';
+import { Search, MessageCircle, Globe, BookOpen, ExternalLink } from 'lucide-react';
+import type { Message, Source } from '../../types';
 import { INTENT_LABELS } from '../../constants';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ThinkingBlock } from './ThinkingBlock';
@@ -23,6 +23,71 @@ function extractIntent(intent: Message['intent']): string | undefined {
     return (intent as { intent: string }).intent;
   }
   return undefined;
+}
+
+/**
+ * Get source display configuration based on type
+ */
+function getSourceStyle(type: string): {
+  icon: typeof BookOpen;
+  dotColor: string;
+  label: string;
+} {
+  if (type === 'web') {
+    return {
+      icon: Globe,
+      dotColor: 'bg-blue-400',
+      label: '🌐',
+    };
+  }
+  // Default to 'rag' / knowledge base
+  return {
+    icon: BookOpen,
+    dotColor: 'bg-green-400',
+    label: '📚',
+  };
+}
+
+/**
+ * Render a single source item with type-based styling
+ */
+function SourceItem({ source, index }: { source: Source; index: number }) {
+  const style = getSourceStyle(source.type);
+  const isWeb = source.type === 'web';
+
+  const content = (
+    <span className="flex items-center gap-1">
+      <span>{source.info}</span>
+      {isWeb && source.url && (
+        <ExternalLink className="w-3 h-3 opacity-60" />
+      )}
+    </span>
+  );
+
+  return (
+    <li
+      key={index}
+      className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-2"
+    >
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${style.dotColor} shrink-0`}
+        aria-hidden="true"
+      />
+      {isWeb && source.url ? (
+        <a
+          href={source.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-blue-500 hover:underline transition-colors"
+          title={source.url}
+        >
+          {content}
+        </a>
+      ) : (
+        content
+      )}
+    </li>
+  );
 }
 
 export function MessageBubble({ message }: MessageBubbleProps) {
@@ -80,26 +145,43 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Sources (Assistant only) */}
+        {/* Sources (Assistant only) - with type-based styling */}
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="mt-3 w-full">
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-medium">
-              📚 参考来源：
-            </p>
-            <ul className="space-y-1">
-              {message.sources.map((source, idx) => (
-                <li
-                  key={idx}
-                  className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-2"
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full bg-orange-400 shrink-0"
-                    aria-hidden="true"
-                  />
-                  <span>{source.info}</span>
-                </li>
-              ))}
-            </ul>
+            {/* Group sources by type */}
+            {(() => {
+              const ragSources = message.sources.filter(s => s.type === 'rag');
+              const webSources = message.sources.filter(s => s.type === 'web');
+              
+              return (
+                <>
+                  {ragSources.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-medium">
+                        📚 知识库来源：
+                      </p>
+                      <ul className="space-y-1">
+                        {ragSources.map((source, idx) => (
+                          <SourceItem key={`rag-${idx}`} source={source} index={idx} />
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {webSources.length > 0 && (
+                    <div>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-1.5 font-medium">
+                        🌐 网络来源：
+                      </p>
+                      <ul className="space-y-1">
+                        {webSources.map((source, idx) => (
+                          <SourceItem key={`web-${idx}`} source={source} index={idx} />
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 

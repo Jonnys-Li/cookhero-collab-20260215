@@ -51,7 +51,23 @@ export async function* streamConversation(
 
       const { done, value } = await reader.read();
       
-      if (done) break;
+      if (done) {
+        // Process any remaining data in buffer before exiting
+        if (buffer.trim()) {
+          const remainingLines = buffer.split('\n');
+          for (const line of remainingLines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                yield data as SSEEvent;
+              } catch (e) {
+                console.warn('Failed to parse final SSE event:', line);
+              }
+            }
+          }
+        }
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       
