@@ -280,32 +280,31 @@ class ConversationService:
                 for event in events:
                     yield event
 
-        # Phase 4: RAG Retrieval (if needed)
-        full_response = ""
-
+        # Phase 4: RAG Retrieval (if needed) - Only prepare data, don't generate response
         if intent_result.need_rag:
-            async for event in self._process_rag_flow(
+            async for event in self._prepare_rag_context(
                 ctx=ctx,
                 web_search_decision=web_search_decision,
             ):
-                if event.startswith("data: ") and '"type": "text"' in event:
-                    # Extract content for full_response
-                    try:
-                        data = json.loads(event[6:].strip())
-                        if data.get("type") == "text":
-                            full_response += data.get("content", "")
-                    except json.JSONDecodeError:
-                        pass
                 yield event
         else:
-            # Direct LLM response without RAG
+            # No RAG needed, just emit thinking
             yield self._emit_thinking(ctx, "💬 无需检索知识库，直接回答...")
 
-            async for chunk in self._generate_response(ctx):
-                full_response += chunk
-                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+        # Phase 5: Unified output - Sources and Response Generation
+        # Always emit sources (may be empty list if no sources collected)
+        sources_data = [s.to_dict() for s in ctx.sources]
+        yield f"data: {json.dumps({'type': 'sources', 'data': sources_data})}\n\n"
 
-        # Phase 5: Save response and complete
+        # Generate response with all collected context
+        yield self._emit_thinking(ctx, "🤖 开始生成回答...")
+
+        full_response = ""
+        async for chunk in self._generate_response(ctx):
+            full_response += chunk
+            yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+
+        # Phase 6: Save response and complete
         await self._save_response(ctx, full_response, intent_result)
         yield f"data: {json.dumps({'type': 'done', 'conversation_id': ctx.conv_id})}\n\n"
 
@@ -465,18 +464,22 @@ class ConversationService:
         return events
 
     # =========================================================================
-    # Phase 4: RAG Flow
+    # Phase 4: RAG Context Preparation
     # =========================================================================
 
-    async def _process_rag_flow(
+    async def _prepare_rag_context(
         self,
         ctx: ChatContext,
         web_search_decision: Optional[WebSearchDecision],
     ) -> AsyncGenerator[str, None]:
         """
-        Process the RAG retrieval and generation flow.
+        Prepare RAG context by rewriting query and retrieving documents.
 
-        Yields SSE events for the entire RAG process.
+        This method only prepares data (sources, rag_context, rewritten_query).
+        It does NOT emit sources or generate the final response.
+
+        Yields:
+            SSE thinking events only.
         """
         yield self._emit_thinking(ctx, "⏳ 正在结合对话历史重写查询语句...")
 
@@ -497,7 +500,7 @@ class ConversationService:
                 user_id=ctx.user_id,
             )
 
-            # Process retrieval results
+            # Process retrieval results (updates ctx.sources and ctx.rag_context)
             async for event in self._process_retrieval_results(
                 ctx=ctx,
                 retrieval_result=retrieval_result,
@@ -505,20 +508,10 @@ class ConversationService:
             ):
                 yield event
 
-            # Emit sources
-            sources_data = [s.to_dict() for s in ctx.sources]
-            yield f"data: {json.dumps({'type': 'sources', 'data': sources_data})}\n\n"
-
-            # Build context and generate response
-            async for event in self._generate_response(ctx):
-                yield event
-
         except Exception as e:
             logger.error(f"RAG error: {e}", exc_info=True)
             yield self._emit_thinking(ctx, f"❌ 检索遇到问题: {str(e)[:50]}，改为直接回答。")
 
-            async for chunk in self._generate_response(ctx):
-                yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
 
     async def _process_retrieval_results(
         self,
@@ -575,7 +568,12 @@ class ConversationService:
         self,
         ctx: ChatContext,
     ) -> AsyncGenerator[str, None]:
-        """Generate LLM response with context."""
+        """
+        Generate LLM response with context.
+
+        Yields:
+            Raw text chunks (not SSE formatted). Caller is responsible for formatting.
+        """
         # Build combined context prompt
         context_prompt = self._build_combined_context_prompt(
             rag_context=ctx.rag_context,
@@ -591,10 +589,8 @@ class ConversationService:
             extra_system_prompt=context_prompt,
         )
 
-        yield self._emit_thinking(ctx, "🤖 开始生成回答...")
-
         async for chunk in self.llm_orchestrator.stream(messages_for_llm):
-            yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
+            yield chunk
 
     # =========================================================================
     # Phase 5: Save Response
