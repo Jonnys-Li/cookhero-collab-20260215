@@ -216,15 +216,37 @@ export function useConversation(token?: string) {
 
   const mapHistoryToMessages = useCallback(
     (history: ConversationHistoryResponse['messages']): Message[] => {
-      return history.map((msg, idx) => ({
-        id: `${msg.timestamp}-${idx}`,
-        role: msg.role,
-        content: msg.content,
-        timestamp: new Date(msg.timestamp),
-        sources: msg.sources,
-        intent: msg.intent,
-        thinking: msg.thinking,
-      }));
+      return history.map((msg, idx) => {
+        const baseMessage: Message = {
+          id: `${msg.timestamp}-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.timestamp),
+          sources: msg.sources,
+          intent: msg.intent,
+          thinking: msg.thinking,
+        };
+        
+        // Restore timing information from persisted data
+        // We store durations, so we need to reconstruct start/end times for display
+        if (msg.thinking_duration_ms !== undefined && msg.thinking_duration_ms !== null) {
+          // Use timestamp as a reference point to calculate approximate times
+          const msgTime = new Date(msg.timestamp).getTime();
+          const totalDuration = (msg.thinking_duration_ms || 0) + (msg.answer_duration_ms || 0);
+          
+          // Reconstruct timing based on durations
+          baseMessage.thinkingStartTime = msgTime - totalDuration;
+          baseMessage.thinkingEndTime = baseMessage.thinkingStartTime + msg.thinking_duration_ms;
+        }
+        
+        if (msg.answer_duration_ms !== undefined && msg.answer_duration_ms !== null) {
+          const msgTime = new Date(msg.timestamp).getTime();
+          baseMessage.answerEndTime = msgTime;
+          baseMessage.answerStartTime = msgTime - msg.answer_duration_ms;
+        }
+        
+        return baseMessage;
+      });
     },
     []
   );
@@ -332,6 +354,11 @@ export function useConversation(token?: string) {
       let currentIntent: IntentInfo | undefined;
       let currentSources: Source[] = [];
       let currentThinking: string[] = [];
+      
+      // Timing tracking
+      let thinkingStartTime: number | undefined;
+      let thinkingEndTime: number | undefined;
+      let answerStartTime: number | undefined;
 
       for await (const event of streamConversation({
         message: content,
@@ -360,11 +387,15 @@ export function useConversation(token?: string) {
             {
               const thought = event.content || (typeof event.data === 'string' ? event.data : '');
               if (thought) {
+                // Record thinking start time on first thinking event
+                if (!thinkingStartTime) {
+                  thinkingStartTime = Date.now();
+                }
                 currentThinking = [...currentThinking, thought];
                 updateStreamingState(
                   msgs => msgs.map(msg =>
                     msg.id === assistantMessageId
-                      ? { ...msg, thinking: currentThinking }
+                      ? { ...msg, thinking: currentThinking, thinkingStartTime }
                       : msg
                   ),
                   true
@@ -374,11 +405,24 @@ export function useConversation(token?: string) {
             break;
 
           case 'text':
+            // Record thinking end time and answer start time on first text event
+            if (!answerStartTime) {
+              answerStartTime = Date.now();
+              if (thinkingStartTime && !thinkingEndTime) {
+                thinkingEndTime = answerStartTime;
+              }
+            }
             currentContent += event.content || '';
             updateStreamingState(
               msgs => msgs.map(msg =>
                 msg.id === assistantMessageId
-                  ? { ...msg, content: currentContent }
+                  ? { 
+                      ...msg, 
+                      content: currentContent,
+                      thinkingStartTime,
+                      thinkingEndTime,
+                      answerStartTime,
+                    }
                   : msg
               ),
               true
@@ -398,43 +442,63 @@ export function useConversation(token?: string) {
             break;
 
           case 'done':
-            if (event.conversation_id) {
-              const newId = event.conversation_id;
-              // Move cache entry from temp to real id
-              if (isTempConversation && streamingConvId !== newId) {
-                const cached = streamingCacheRef.current.get(streamingConvId);
-                if (cached) {
-                  streamingCacheRef.current.delete(streamingConvId);
-                  streamingCacheRef.current.set(newId, { ...cached, conversationId: newId, tempId: streamingConvId });
+            {
+              // Record answer end time
+              const answerEndTime = Date.now();
+              
+              if (event.conversation_id) {
+                const newId = event.conversation_id;
+                // Move cache entry from temp to real id
+                if (isTempConversation && streamingConvId !== newId) {
+                  const cached = streamingCacheRef.current.get(streamingConvId);
+                  if (cached) {
+                    streamingCacheRef.current.delete(streamingConvId);
+                    streamingCacheRef.current.set(newId, { ...cached, conversationId: newId, tempId: streamingConvId });
+                  }
+                  // Replace provisional conversation list entry
+                  setConversationsRef.current(prev =>
+                    prev.map(c => (c.id === streamingConvId ? { ...c, id: newId } : c))
+                  );
+                  
+                  // Update current conversation ID if still viewing this conversation
+                  if (currentConversationIdRef.current === streamingConvId) {
+                    setConversationIdRef.current(newId);
+                    // Also update the ref directly to ensure sync check works
+                    currentConversationIdRef.current = newId;
+                  }
                 }
-                // Replace provisional conversation list entry
-                setConversationsRef.current(prev =>
-                  prev.map(c => (c.id === streamingConvId ? { ...c, id: newId } : c))
-                );
-                
-                // Update current conversation ID if still viewing this conversation
-                if (currentConversationIdRef.current === streamingConvId) {
-                  setConversationIdRef.current(newId);
-                }
+                streamingConvId = newId;
+                refreshConversationsRef.current?.(true);
               }
-              streamingConvId = newId;
-              refreshConversationsRef.current?.(true);
-            }
+              
+              // IMPORTANT: Update UI state BEFORE clearing cache
+              // Get final messages with timing data
+              const cached = streamingCacheRef.current.get(streamingConvId);
+              const finalMessages = cached 
+                ? cached.messages.map(msg =>
+                    msg.id === assistantMessageId
+                      ? { 
+                          ...msg, 
+                          isStreaming: false,
+                          thinkingStartTime,
+                          thinkingEndTime,
+                          answerStartTime,
+                          answerEndTime,
+                        }
+                      : msg
+                  )
+                : [];
+              
+              // Update UI directly if this conversation is currently displayed
+              if (currentConversationIdRef.current === streamingConvId && finalMessages.length > 0) {
+                setMessagesRef.current(finalMessages);
+                setIsStreamingRef.current(false);
+              }
 
-            // Clear cache when streaming is done
-            streamingCacheRef.current.delete(streamingConvId);
-            clearStreamingCache(streamingConvId);
-            
-            // Mark streaming as complete
-            updateStreamingState(
-              msgs => msgs.map(msg =>
-                msg.id === assistantMessageId
-                  ? { ...msg, isStreaming: false }
-                  : msg
-              ),
-              false
-            );
-            
+              // Now clear cache after UI is updated
+              streamingCacheRef.current.delete(streamingConvId);
+              clearStreamingCache(streamingConvId);
+            }
             break;
         }
 
@@ -442,10 +506,18 @@ export function useConversation(token?: string) {
       }
 
       // Mark streaming as complete even if loop finished without 'done' event
+      const finalEndTime = Date.now();
       updateStreamingState(
         msgs => msgs.map(msg =>
           msg.id === assistantMessageId
-            ? { ...msg, isStreaming: false }
+            ? { 
+                ...msg, 
+                isStreaming: false,
+                thinkingStartTime,
+                thinkingEndTime: thinkingEndTime || (answerStartTime ? answerStartTime : undefined),
+                answerStartTime,
+                answerEndTime: finalEndTime,
+              }
             : msg
         ),
         false
