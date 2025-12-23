@@ -28,6 +28,18 @@
 
 CookHero 面向厨房新手、健身爱好者、健康饮食倡导者、过敏体质用户等多种人群，致力于让烹饪变得简单、科学、有趣。
 
+<div align="center">
+
+<video width="640" height="360" controls>
+
+<source src="./docs/example.mp4" type="video/mp4">
+
+您的浏览器不支持 video 标签。
+
+</video>
+
+</div>
+
 ---
 
 ## ✨ 核心功能
