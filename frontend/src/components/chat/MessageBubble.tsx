@@ -141,8 +141,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
   return (
     <div className={`flex mb-6 ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`flex flex-col max-w-[85%] ${
-          isUser ? 'items-end self-end' : 'items-start self-start'
+        className={`flex flex-col w-full ${
+          isUser ? 'items-end' : 'items-start'
         }`}
       >
         {/* Intent Indicator (Assistant only) */}

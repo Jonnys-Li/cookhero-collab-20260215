@@ -88,7 +88,7 @@ export function ChatWindow({ messages, isLoading, onSuggestionClick }: ChatWindo
                         )}
                 </div>
             )}
-            <div ref={messagesEndRef} className="h-4" />
+            {!isEmpty && <div ref={messagesEndRef} className="h-4" />}
         </div>
     );
 }
@@ -102,7 +102,7 @@ function EmptyState({
     onSuggestionClick?: (text: string) => void;
 }) {
     return (
-        <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500">
+        <div className="flex flex-col items-center justify-center h-full w-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500 overflow-x-hidden px-4 box-border">
             <section className="relative flex-1 flex flex-col items-center justify-center overflow-hidden">
                 <div className="relative group w-full px-4">
                     <div className="w-100 h-48 max-w-5xl mx-auto flex items-center justify-center">
@@ -116,7 +116,7 @@ function EmptyState({
             </section>
 
             {/* Feature Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl mb-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 w-full max-w-3xl mb-6 sm:mb-8">
                 <FeatureCard
                     icon={<BookOpen className="w-5 h-5" />}
                     title="Recipe Search"
@@ -135,7 +135,7 @@ function EmptyState({
             </div>
 
             {/* Suggestion Chips */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl">
                 <SuggestionChip
                     text="红烧肉怎么做？"
                     emoji="🥩"
