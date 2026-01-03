@@ -5,6 +5,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
+from numpy import imag
+
 from app.api.v1.endpoints import user
 from app.config import settings
 from app.database.document_repository import document_repository
@@ -23,6 +25,8 @@ from app.tools.web_search import (
     WebSearchResult,
     web_search_tool,
 )
+from app.vision import VisionAnalysisResult, vision_agent
+from app.vision.provider import ImageInput
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,11 @@ class ChatContext:
     web_search_context: str = ""
     rag_context: str = ""
     rewritten_query: str = ""
+    
+    # Vision/Multimodal context
+    images: Optional[List[Dict[str, str]]] = None  # List of {"data": base64, "mime_type": ...}
+    vision_result: Optional[VisionAnalysisResult] = None
+    vision_context: str = ""  # Context built from vision analysis
     
     # Timing metrics (milliseconds)
     thinking_start_time: Optional[float] = None
@@ -235,11 +244,13 @@ class ConversationService:
         user_id: Optional[str] = None,
         stream: bool = True,
         extra_options: Optional[Dict[str, Any]] = None,
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Process a chat message and generate a response.
 
         Yields SSE-formatted events:
+        - {"type": "vision", "data": {...}} - Vision analysis result (if images provided)
         - {"type": "intent", "data": {...}} - Detected intent
         - {"type": "thinking", "content": "..."} - Thinking step
         - {"type": "text", "content": "..."} - Text chunk
@@ -252,6 +263,7 @@ class ConversationService:
             user_id: Optional user ID for personalization and memory
             stream: Whether to stream the response
             extra_options: Optional features like {"web_search": true}
+            images: Optional list of images for multimodal understanding
         """
         # Start timing thinking phase
         tmp = time.time()
@@ -262,8 +274,25 @@ class ConversationService:
             conversation_id=conversation_id,
             user_id=user_id,
             extra_options=extra_options,
+            images=images,
         )
         ctx.thinking_start_time = tmp
+
+        # Phase 1.5: Vision Analysis (if images provided)
+        if ctx.images:
+            async for event in self._process_vision(ctx):
+                yield event
+            
+            # If vision result indicates non-food content, return direct response
+            if ctx.vision_result and not ctx.vision_result.is_food_related:
+                # Save user message before returning (include vision context)
+                await self._save_user_message(ctx)
+                async for event in self._handle_non_food_image(ctx):
+                    yield event
+                return
+
+        # Save user message (with vision context if available)
+        await self._save_user_message(ctx)
 
         # Phase 2: Intent Detection
         intent_result = await self._detect_intent(ctx)
@@ -276,11 +305,12 @@ class ConversationService:
         yield self._emit_thinking(ctx, f"💭 判断依据: {intent_result.reason}")
 
         logger.info(
-            "chat route need_rag=%s intent=%s reason=%s history_len=%d",
+            "chat route need_rag=%s intent=%s reason=%s history_len=%d images=%d",
             intent_result.need_rag,
             intent_result.intent.value,
             intent_result.reason[:120],
             len(ctx.history),
+            len(ctx.images) if ctx.images else 0,
         )
 
         # Phase 3: Web Search (if enabled and proactive)
@@ -346,8 +376,14 @@ class ConversationService:
         conversation_id: Optional[str],
         user_id: Optional[str],
         extra_options: Optional[Dict[str, Any]],
+        images: Optional[List[Dict[str, str]]] = None,
     ) -> ChatContext:
-        """Initialize chat context with conversation data."""
+        """Initialize chat context with conversation data.
+        
+        Note: User message is NOT saved here. It will be saved after vision
+        analysis completes (if images are provided) so that the vision context
+        can be included in the message content.
+        """
         options = ExtraOptions.from_dict(extra_options)
 
         # Get or create conversation
@@ -356,14 +392,10 @@ class ConversationService:
         )
         conv_id = str(conversation.id)
 
-        # Add user message
-        await conversation_repository.add_message(
-            conversation_id=conv_id,
-            role="user",
-            content=message,
-        )
+        # NOTE: User message will be saved later after vision analysis
+        # to include vision context in the message content
 
-        # Load history
+        # Load history (before adding new message)
         history = await conversation_repository.get_history(conv_id, limit=100) or []
         compressed_summary, compressed_count = (
             await conversation_repository.get_compressed_summary(conv_id)
@@ -406,6 +438,42 @@ class ConversationService:
             compressed_count=compressed_count,
             user_profile=user_profile,
             user_instruction=user_instruction,
+            images=images,
+        )
+
+    async def _save_user_message(self, ctx: ChatContext) -> None:
+        """
+        Save user message to database with vision context if available.
+        
+        This method is called after vision analysis completes so that
+        the vision context can be included in the message content.
+        This ensures that follow-up messages can access the image analysis
+        results from conversation history.
+        """
+        # Build message content with vision context
+        content = ctx.message
+        
+        if ctx.vision_context:
+            # Append vision context to the user message so it's part of history
+            content = f"{ctx.message}\n\n[图片分析]\n{ctx.vision_context}"
+        
+        # Save to database
+        await conversation_repository.add_message(
+            conversation_id=ctx.conv_id,
+            role="user",
+            content=content,
+        )
+        
+        # Update history with the new message (for current request context)
+        new_message = {"role": "user", "content": content}
+        ctx.history.append(new_message)
+        ctx.history_dicts.append(new_message)
+        
+        # Rebuild history text to include the new message
+        ctx.history_text = self.context_manager.build_history_text(
+            history=ctx.history_dicts,
+            compressed_count=ctx.compressed_count,
+            compressed_summary=ctx.compressed_summary,
         )
 
     # =========================================================================
@@ -414,7 +482,114 @@ class ConversationService:
 
     async def _detect_intent(self, ctx: ChatContext) -> IntentDetectionResult:
         """Detect user intent from message and history."""
-        return await self.intent_detector.detect(ctx.history_text)
+        # If we have vision context, include it in intent detection
+        history_text = ctx.history_text
+        if ctx.vision_context:
+            history_text = f"{ctx.vision_context}\n\n{history_text}"
+        return await self.intent_detector.detect(history_text)
+
+    # =========================================================================
+    # Phase 1.5: Vision Processing
+    # =========================================================================
+
+    async def _process_vision(self, ctx: ChatContext) -> AsyncGenerator[str, None]:
+        """
+        Process images using vision model.
+        
+        Yields SSE events for vision analysis progress.
+        """
+        if not ctx.images:
+            return
+        
+        yield self._emit_thinking(ctx, f"📷 检测到 {len(ctx.images)} 张图片，正在分析...")
+        
+        try:
+            # Convert image data to ImageInput objects
+            image_inputs = []
+            for img_data in ctx.images:
+                image_inputs.append(
+                    ImageInput.from_base64(
+                        data=img_data["data"],
+                        mime_type=img_data.get("mime_type", "image/jpeg")
+                    )
+                )
+            
+            # Analyze images with vision agent
+            vision_result = await vision_agent.analyze(
+                images=image_inputs,
+                user_query=ctx.message,
+                history_context=ctx.history_text[:2000] if ctx.history_text else "",
+            )
+            
+            # Store result in context
+            ctx.vision_result = vision_result
+            
+            # Emit vision result event
+            yield f"data: {json.dumps({'type': 'vision', 'data': vision_result.to_dict()})}\n\n"
+            
+            # Log and emit thinking
+            yield self._emit_thinking(
+                ctx, 
+                f"📷 图片分析完成: {'与食物相关' if vision_result.is_food_related else '与食物无关'}"
+            )
+            yield self._emit_thinking(ctx, f"📷 识别内容: {vision_result.description[:100]}")
+            
+            if vision_result.is_food_related:
+                # Build context for RAG pipeline
+                ctx.vision_context = vision_agent.build_context_for_rag(
+                    vision_result, ctx.message
+                )
+                yield self._emit_thinking(ctx, f"📷 意图: {vision_result.intent.value}")
+            
+            logger.info(
+                "Vision analysis: food_related=%s, intent=%s, confidence=%.2f",
+                vision_result.is_food_related,
+                vision_result.intent.value,
+                vision_result.confidence,
+            )
+            
+        except Exception as e:
+            logger.error(f"Vision processing error: {e}", exc_info=True)
+            yield self._emit_thinking(ctx, f"📷 图片分析出错: {str(e)[:50]}")
+            # Continue without vision context on error
+
+    async def _handle_non_food_image(self, ctx: ChatContext) -> AsyncGenerator[str, None]:
+        """
+        Handle non-food related image with direct response.
+        
+        This short-circuits the normal conversation flow for non-cooking content.
+        """
+        if not ctx.vision_result or not ctx.vision_result.direct_response:
+            return
+        
+        yield self._emit_thinking(ctx, "💬 图片与烹饪无关，直接回复...")
+        
+        # End thinking phase
+        ctx.thinking_end_time = time.time()
+        ctx.answer_start_time = time.time()
+        
+        # Use direct response from vision analysis
+        response = ctx.vision_result.direct_response
+        yield f"data: {json.dumps({'type': 'text', 'content': response})}\n\n"
+        
+        ctx.answer_end_time = time.time()
+        
+        # Emit empty sources (no RAG used)
+        yield f"data: {json.dumps({'type': 'sources', 'data': []})}\n\n"
+        
+        # Save response with vision intent
+        await conversation_repository.add_message(
+            conversation_id=ctx.conv_id,
+            role="assistant",
+            content=response,
+            sources=None,
+            intent=ctx.vision_result.intent.value,
+            thinking=ctx.thinking_steps,
+            thinking_duration_ms=int((ctx.thinking_end_time - ctx.thinking_start_time) * 1000) if ctx.thinking_start_time and ctx.thinking_end_time else None,
+            answer_duration_ms=int((ctx.answer_end_time - ctx.answer_start_time) * 1000) if ctx.answer_start_time and ctx.answer_end_time else None,
+        )
+        
+        yield f"data: {json.dumps({'type': 'done', 'conversation_id': ctx.conv_id})}\n\n"
 
     # =========================================================================
     # Phase 3: Web Search Processing
@@ -613,6 +788,7 @@ class ConversationService:
             rag_context=ctx.rag_context,
             web_context=ctx.web_search_context,
             rewritten_query=ctx.rewritten_query,
+            vision_context=ctx.vision_context,
         )
 
         # Build LLM messages
@@ -676,12 +852,22 @@ class ConversationService:
         rag_context: str,
         web_context: str,
         rewritten_query: str,
+        vision_context: str = "",
     ) -> str:
         """
-        Build context prompt combining both RAG and web search results.
-        Clearly distinguishes between local knowledge and web search results.
+        Build context prompt combining vision, RAG, and web search results.
+        Clearly distinguishes between different context sources.
         """
         parts = []
+        
+        # Add vision context first (if available)
+        if vision_context.strip():
+            parts.append(
+                "【图片分析结果】\n"
+                "用户上传了图片，以下是图片分析结果：\n"
+                f"{vision_context.strip()}\n"
+            )
+        
         parts.append(f"【重写后的检索语句】\n{rewritten_query}\n")
 
         # Add RAG context (local knowledge)
@@ -700,11 +886,12 @@ class ConversationService:
                 f"{web_context.strip()}\n"
             )
 
-        if not rag_context.strip() and not web_context.strip():
+        if not rag_context.strip() and not web_context.strip() and not vision_context.strip():
             parts.append("（未找到相关参考内容，请结合通用烹饪知识回答）\n")
 
         parts.append(
             "\n请综合以上信息回答用户问题。"
+            "如果用户上传了图片，请结合图片分析结果理解用户意图。"
             "如果本地知识库与互联网信息有冲突，优先采用本地知识库内容。"
             "如果信息不足，请坦诚说明并给出合理的建议。"
         )
