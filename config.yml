@@ -159,3 +159,7 @@ data_source:
     headers_to_split_on:
       - ["#", "header_1"]
       - ["##", "header_2"]
+
+# github issues
+blank_issues_enabled: true
+contact_links: []
