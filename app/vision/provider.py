@@ -1,0 +1,215 @@
+"""
+Vision Model Provider
+Provides OpenAI-compatible vision model access for multimodal understanding.
+"""
+
+import base64
+import logging
+from dataclasses import dataclass
+from typing import Any, List, Optional, Union
+
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_openai import ChatOpenAI
+
+from app.config import settings
+from app.config.vision_config import VisionModelConfig
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ImageInput:
+    """
+    Represents an image input for vision processing.
+    
+    Supports two modes:
+    - URL mode: image_url is a direct URL to the image
+    - Base64 mode: image_data is base64-encoded image bytes with mime_type
+    """
+    image_url: Optional[str] = None
+    image_data: Optional[str] = None  # Base64 encoded
+    mime_type: str = "image/jpeg"
+    
+    def to_message_content(self) -> dict:
+        """Convert to LangChain message content format."""
+        if self.image_url:
+            return {
+                "type": "image_url",
+                "image_url": {"url": self.image_url}
+            }
+        elif self.image_data:
+            # Use data URL format for base64 images
+            data_url = f"data:{self.mime_type};base64,{self.image_data}"
+            return {
+                "type": "image_url",
+                "image_url": {"url": data_url}
+            }
+        else:
+            raise ValueError("Either image_url or image_data must be provided")
+    
+    @classmethod
+    def from_url(cls, url: str) -> "ImageInput":
+        """Create from URL."""
+        return cls(image_url=url)
+    
+    @classmethod
+    def from_base64(cls, data: str, mime_type: str = "image/jpeg") -> "ImageInput":
+        """Create from base64 encoded data."""
+        return cls(image_data=data, mime_type=mime_type)
+    
+    @classmethod
+    def from_bytes(cls, data: bytes, mime_type: str = "image/jpeg") -> "ImageInput":
+        """Create from raw bytes."""
+        encoded = base64.b64encode(data).decode("utf-8")
+        return cls(image_data=encoded, mime_type=mime_type)
+
+
+class VisionProvider:
+    """
+    Provider for vision/multimodal model access.
+    Uses OpenAI-compatible API for vision understanding.
+    """
+    
+    def __init__(self, config: Optional[VisionModelConfig] = None):
+        """
+        Initialize vision provider.
+        
+        Args:
+            config: Vision model configuration. Uses settings.vision.model if not provided.
+        """
+        self._config = config or settings.vision.model
+        self._llm: Optional[ChatOpenAI] = None
+    
+    @property
+    def config(self) -> VisionModelConfig:
+        """Get configuration."""
+        return self._config
+    
+    @property
+    def is_enabled(self) -> bool:
+        """Check if vision is enabled."""
+        return self._config.enabled and bool(self._config.api_key)
+    
+    def _get_llm(self) -> ChatOpenAI:
+        """Get or create the vision LLM instance."""
+        if self._llm is None:
+            if not self._config.api_key:
+                raise ValueError("Vision API key is not configured. Set VISION_API_KEY or LLM_API_KEY in .env")
+            
+            self._llm = ChatOpenAI(
+                model=self._config.model_name,
+                api_key=self._config.api_key,  # type: ignore
+                base_url=self._config.base_url,
+                temperature=self._config.temperature,
+                max_completion_tokens=self._config.max_tokens,
+                timeout=self._config.request_timeout,
+            )
+        return self._llm
+    
+    def build_multimodal_message(
+        self,
+        text: str,
+        images: List[ImageInput],
+    ) -> HumanMessage:
+        """
+        Build a multimodal message with text and images.
+        
+        Args:
+            text: Text prompt/question
+            images: List of image inputs
+            
+        Returns:
+            HumanMessage with multimodal content
+        """
+        content: List[Union[str, dict]] = []
+        
+        # Add text content first
+        if text:
+            content.append({"type": "text", "text": text})
+        
+        # Add image contents
+        for image in images:
+            content.append(image.to_message_content())
+        
+        return HumanMessage(content=content)  # type: ignore
+    
+    async def analyze(
+        self,
+        text: str,
+        images: List[ImageInput],
+        system_prompt: Optional[str] = None,
+    ) -> str:
+        """
+        Analyze images with text prompt.
+        
+        Args:
+            text: Text prompt/question about the images
+            images: List of images to analyze
+            system_prompt: Optional system prompt for context
+            
+        Returns:
+            Model's response as string
+        """
+        if not self.is_enabled:
+            raise RuntimeError("Vision module is not enabled or API key is missing")
+        
+        if not images:
+            raise ValueError("At least one image is required")
+        
+        llm = self._get_llm()
+        
+        # Build messages
+        messages: List[BaseMessage] = []
+        
+        # Add system message if provided
+        if system_prompt:
+            from langchain_core.messages import SystemMessage
+            messages.append(SystemMessage(content=system_prompt))
+        
+        # Build multimodal human message
+        human_msg = self.build_multimodal_message(text, images)
+        messages.append(human_msg)
+        
+        logger.info(
+            f"Vision analysis: text='{text[:50]}...', images={len(images)}, "
+            f"model={self._config.model_name}"
+        )
+        
+        try:
+            # Hint the model to return structured JSON when supported
+            response = await llm.ainvoke(
+                messages,
+                response_format={"type": "json_object"},  # Best effort; ignored if unsupported
+            )
+            result = str(response.content)
+            logger.debug(f"Vision response: {result[:200]}...")
+            return result
+        except Exception as e:
+            logger.error(f"Vision analysis failed: {e}", exc_info=True)
+            raise
+    
+    def validate_image(self, mime_type: str, size_bytes: int) -> tuple[bool, Optional[str]]:
+        """
+        Validate image format and size.
+        
+        Args:
+            mime_type: MIME type of the image
+            size_bytes: Size of the image in bytes
+            
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        # Check format
+        if mime_type not in self._config.supported_formats:
+            return False, f"Unsupported image format: {mime_type}. Supported: {self._config.supported_formats}"
+        
+        # Check size
+        max_size_bytes = self._config.max_image_size_mb * 1024 * 1024
+        if size_bytes > max_size_bytes:
+            return False, f"Image too large: {size_bytes / 1024 / 1024:.2f}MB. Maximum: {self._config.max_image_size_mb}MB"
+        
+        return True, None
+
+
+# Global instance
+vision_provider = VisionProvider()

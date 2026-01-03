@@ -5,16 +5,22 @@ Conversation API endpoints for multi-turn chat with RAG integration.
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services.conversation_service import conversation_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class ImageData(BaseModel):
+    """Image data for multimodal requests."""
+    data: str  # Base64 encoded image data
+    mime_type: str = "image/jpeg"  # MIME type of the image
 
 
 class ConversationRequest(BaseModel):
@@ -23,6 +29,10 @@ class ConversationRequest(BaseModel):
     conversation_id: Optional[str] = None
     stream: bool = True
     extra_options: Optional[Dict[str, Any]] = None  # e.g., {"web_search": true}
+    images: Optional[List[ImageData]] = Field(
+        default=None,
+        description="List of images (base64 encoded) for multimodal understanding"
+    )
 
 
 class ConversationHistoryResponse(BaseModel):
@@ -54,9 +64,11 @@ async def conversation(request: ConversationRequest, http_request: Request):
     - `conversation_id`: Optional ID for continuing a conversation
     - `stream`: Whether to stream the response (default: true)
     - `extra_options`: Optional features object, e.g., `{"web_search": true}`
+    - `images`: Optional list of images for multimodal understanding
     
     **Response (SSE stream when stream=true):**
     ```
+    data: {"type": "vision", "data": {"is_food_related": true, "intent": "...", "description": "..."}}
     data: {"type": "intent", "data": {"need_rag": true, "intent": "recipe_search", "reason": "..."}}
     data: {"type": "web_search", "data": {"confidence": 8, "reason": "...", "should_search": true}}
     data: {"type": "thinking", "content": "重写后的检索语句：番茄炒蛋的做法"}
@@ -65,7 +77,15 @@ async def conversation(request: ConversationRequest, http_request: Request):
     data: {"type": "done", "conversation_id": "..."}
     ```
     """
-    logger.info(f"Received conversation request: '{request.message[:50]}...'")
+    logger.info(f"Received conversation request: '{request.message[:50]}...', images={len(request.images) if request.images else 0}")
+    
+    # Convert images to service format
+    images_data = None
+    if request.images:
+        images_data = [
+            {"data": img.data, "mime_type": img.mime_type}
+            for img in request.images
+        ]
     
     async def stream_with_disconnect_detection() -> AsyncGenerator[str, None]:
         """Wrapper generator that detects client disconnection."""
@@ -76,6 +96,7 @@ async def conversation(request: ConversationRequest, http_request: Request):
                 user_id=getattr(http_request.state, "user_id", None),
                 stream=True,
                 extra_options=request.extra_options,
+                images=images_data,
             ):
                 # Check if client is still connected
                 if await http_request.is_disconnected():
@@ -113,6 +134,7 @@ async def conversation(request: ConversationRequest, http_request: Request):
                 user_id=getattr(http_request.state, "user_id", None),
                 stream=False,
                 extra_options=request.extra_options,
+                images=images_data,
             ):
                 # Parse SSE event
                 if event.startswith("data: "):
