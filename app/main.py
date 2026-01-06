@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.endpoints import conversation, auth, personal_docs, user
+from app.api.v1.endpoints import conversation, auth, personal_docs, user, evaluation
 from app.config import settings
 from app.database.session import init_db, close_db
 from app.database.document_repository import DocumentRepository
@@ -101,6 +101,7 @@ app.include_router(conversation.router, prefix=settings.API_V1_STR, tags=["Conve
 app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["Auth"])
 app.include_router(user.router, prefix=settings.API_V1_STR, tags=["User"])
 app.include_router(personal_docs.router, prefix=settings.API_V1_STR, tags=["KnowledgeBase"])
+app.include_router(evaluation.router, prefix=settings.API_V1_STR, tags=["Evaluation"])
 
 @app.get("/")
 async def root():

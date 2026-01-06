@@ -20,6 +20,7 @@ from app.conversation import (
 )
 from app.services.rag_service import rag_service_instance, RetrievalResult
 from app.services.user_service import user_service
+from app.services.evaluation_service import evaluation_service
 from app.tools.web_search import (
     WebSearchDecision,
     WebSearchResult,
@@ -814,20 +815,20 @@ class ConversationService:
         full_response: str,
         intent_result: IntentDetectionResult,
     ) -> None:
-        """Save assistant response to database."""
+        """Save assistant response to database and schedule evaluation."""
         sources_data = [s.to_dict() for s in ctx.sources] if ctx.sources else None
-        
+
         # Calculate durations in milliseconds
         thinking_duration_ms = None
         answer_duration_ms = None
-        
+
         if ctx.thinking_start_time and ctx.thinking_end_time:
             thinking_duration_ms = int((ctx.thinking_end_time - ctx.thinking_start_time) * 1000)
-        
+
         if ctx.answer_start_time and ctx.answer_end_time:
             answer_duration_ms = int((ctx.answer_end_time - ctx.answer_start_time) * 1000)
 
-        await conversation_repository.add_message(
+        message = await conversation_repository.add_message(
             conversation_id=ctx.conv_id,
             role="assistant",
             content=full_response,
@@ -837,6 +838,20 @@ class ConversationService:
             thinking_duration_ms=thinking_duration_ms,
             answer_duration_ms=answer_duration_ms,
         )
+
+        # Schedule RAG evaluation if context was used
+        if ctx.rag_context and message:
+            asyncio.create_task(
+                evaluation_service.schedule_evaluation(
+                    message_id=str(message.id),
+                    conversation_id=ctx.conv_id,
+                    query=ctx.message,
+                    context=ctx.rag_context,
+                    response=full_response,
+                    rewritten_query=ctx.rewritten_query,
+                    user_id=ctx.user_id,
+                )
+            )
 
     # =========================================================================
     # Helper Methods

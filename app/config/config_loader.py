@@ -26,6 +26,7 @@ from app.config.llm_config import LLMConfig
 from app.config.rag_config import RAGConfig
 from app.config.web_search_config import WebSearchConfig
 from app.config.vision_config import VisionConfig, VisionModelConfig
+from app.config.evaluation_config import EvaluationConfig, AlertThresholds
 
 
 # Load .env file into environment variables at module import
@@ -203,3 +204,34 @@ def load_vision_config() -> VisionConfig:
     
     vision_data["model"] = model_data
     return VisionConfig.model_validate(vision_data)
+
+
+def load_evaluation_config() -> EvaluationConfig:
+    """
+    Load RAG evaluation configuration from YAML.
+
+    No environment variables needed - evaluation uses existing LLM config.
+    """
+    config_data = _load_config_data()
+    eval_data = dict(config_data.get("evaluation", {}) or {})
+
+    # Parse alert thresholds if present
+    thresholds_data = eval_data.pop("alert_thresholds", None)
+    if thresholds_data:
+        eval_data["alert_thresholds"] = AlertThresholds(**thresholds_data)
+
+    # Build config with defaults for missing fields
+    # Note: context_precision and context_recall require 'reference' (ground truth)
+    # which is not available in real-time evaluation scenarios.
+    return EvaluationConfig(
+        enabled=eval_data.get("enabled", True),
+        async_mode=eval_data.get("async_mode", True),
+        sample_rate=eval_data.get("sample_rate", 1.0),
+        metrics=eval_data.get("metrics", [
+            "faithfulness",
+            "answer_relevancy",
+        ]),
+        llm_type=eval_data.get("llm_type", "fast"),
+        timeout_seconds=eval_data.get("timeout_seconds", 60),
+        alert_thresholds=eval_data.get("alert_thresholds", AlertThresholds()),
+    )

@@ -242,3 +242,87 @@ class KnowledgeDocumentModel(Base):
             "user_id": str(self.user_id) if self.user_id else "GLOBAL",
             "source_type": self.source_type,
         }
+
+
+# ==================== RAG Evaluation Model ====================
+
+class RAGEvaluationModel(Base):
+    """
+    ORM model for RAG evaluation results.
+    Stores RAGAS evaluation metrics for each RAG-enabled response.
+    """
+
+    __tablename__ = "rag_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Original data for evaluation
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    rewritten_query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    context: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Retrieval quality metrics
+    context_precision: Mapped[Optional[float]] = mapped_column(nullable=True)
+    context_recall: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    # Generation quality metrics
+    faithfulness: Mapped[Optional[float]] = mapped_column(nullable=True)
+    answer_relevancy: Mapped[Optional[float]] = mapped_column(nullable=True)
+
+    # Evaluation metadata
+    evaluation_status: Mapped[str] = mapped_column(
+        String(20), default="pending", nullable=False
+    )  # pending/completed/failed
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evaluation_duration_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_rag_evaluations_conv_created", "conversation_id", "created_at"),
+        Index("ix_rag_evaluations_status", "evaluation_status"),
+        Index("ix_rag_evaluations_user_created", "user_id", "created_at"),
+    )
+
+    def to_dict(self) -> dict:
+        """Serialize evaluation to dict for API responses."""
+        return {
+            "id": str(self.id),
+            "message_id": str(self.message_id),
+            "conversation_id": str(self.conversation_id),
+            "user_id": self.user_id,
+            "query": self.query,
+            "rewritten_query": self.rewritten_query,
+            "context": self.context,  # Full context for alerts
+            "response": self.response,  # Full response for alerts
+            "context_preview": self.context[:200] + "..." if len(self.context) > 200 else self.context,
+            "response_preview": self.response[:200] + "..." if len(self.response) > 200 else self.response,
+            "faithfulness": self.faithfulness,  # Direct field for alerts
+            "answer_relevancy": self.answer_relevancy,  # Direct field for alerts
+            "metrics": {
+                "context_precision": self.context_precision,
+                "context_recall": self.context_recall,
+                "faithfulness": self.faithfulness,
+                "answer_relevancy": self.answer_relevancy,
+            },
+            "evaluation_status": self.evaluation_status,
+            "error_message": self.error_message,
+            "evaluation_duration_ms": self.evaluation_duration_ms,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "evaluated_at": self.evaluated_at.isoformat() if self.evaluated_at else None,
+        }
