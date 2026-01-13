@@ -13,9 +13,7 @@ from typing import Any, Dict, List, Optional
 from app.config import settings
 from app.config.evaluation_config import EvaluationConfig
 from app.database.evaluation_repository import evaluation_repository
-from app.llm import ChatOpenAIProvider
-from app.llm.callbacks import get_usage_callbacks
-from app.llm.context import llm_context
+from app.llm import ChatOpenAIProvider, get_usage_callbacks, llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +251,7 @@ class EvaluationService:
                             else:
                                 scores[metric_name] = (
                                     float(value)
-                                    if value is not None and not math.isnan(value) # type: ignore
+                                    if value is not None and not math.isnan(value)  # type: ignore
                                     else None
                                 )  # type: ignore
                     except Exception:
