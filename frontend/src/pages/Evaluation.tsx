@@ -266,7 +266,7 @@ interface TrendChartProps {
 function TrendChart({ data, loading }: TrendChartProps) {
   if (loading) {
     return (
-      <div className="h-72 flex items-center justify-center">
+      <div className="h-full min-h-[300px] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
       </div>
     );
@@ -274,7 +274,7 @@ function TrendChart({ data, loading }: TrendChartProps) {
 
   if (!data || data.trends.length === 0) {
     return (
-      <div className="h-72 flex flex-col items-center justify-center text-gray-500">
+      <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-gray-500">
         <BarChart3 className="w-8 h-8 mb-2 opacity-50" />
         <p>暂无趋势数据</p>
       </div>
@@ -294,7 +294,7 @@ function TrendChart({ data, loading }: TrendChartProps) {
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={288}>
+    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
       <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
         <defs>
           <linearGradient id="colorFaithfulness" x1="0" y1="0" x2="0" y2="1">
@@ -636,8 +636,9 @@ export default function EvaluationPage() {
           </div>
         </div>
 
+
         {/* Top Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
           <StatCard
             title="总评估数"
             value={stats?.total_evaluations ?? 0}
@@ -691,7 +692,7 @@ export default function EvaluationPage() {
         {/* Two Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Trends Chart */}
-          <section className="lg:col-span-2 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5">
+          <section className="lg:col-span-2 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5 flex flex-col">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-orange-100 dark:bg-orange-500/10 flex items-center justify-center">
@@ -711,11 +712,13 @@ export default function EvaluationPage() {
                 onGranularityChange={setGranularity}
               />
             </div>
-            <TrendChart data={trends} loading={trendsLoading} />
+            <div className="flex-1 min-h-0">
+               <TrendChart data={trends} loading={trendsLoading} />
+            </div>
           </section>
 
           {/* Alerts List */}
-          <section className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5">
+          <section className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5 flex flex-col h-full min-h-[400px]">
             <div className="flex items-center gap-2 mb-4">
               <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-red-100 dark:bg-red-500/10 flex items-center justify-center">
                 <AlertTriangle className="w-4 h-4 md:w-5 md:h-5 text-red-500" />
@@ -728,7 +731,9 @@ export default function EvaluationPage() {
                 </p>
               </div>
             </div>
-            <AlertList data={alerts} loading={loading} />
+            <div className="flex-1 overflow-y-auto pr-1 custom-scrollbar">
+               <AlertList data={alerts} loading={loading} />
+            </div>
           </section>
         </div>
       </div>
