@@ -22,6 +22,8 @@ from tavily import TavilyClient
 
 from app.config import settings, LLMType
 from app.llm import ChatOpenAIProvider
+from app.llm.callbacks import get_usage_callbacks
+from app.llm.context import llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,7 @@ THRESHOLD_CONFIDENCE = 6  # Confidence threshold to decide if search is needed
 
 class SearchDecisionInput(BaseModel):
     """Input schema for search decision."""
+
     confidence: int = Field(
         description="Confidence score from 0-10, higher means more likely to need web search. 0-5: No web search needed, 6-10: Web search recommended",
         ge=0,
@@ -145,6 +148,8 @@ class WebSearchTool:
     Uses Tavily official Python client for web search.
     """
 
+    MODULE_NAME = "web_search"
+
     def __init__(
         self,
         llm_type: LLMType | str = LLMType.FAST,
@@ -164,9 +169,7 @@ class WebSearchTool:
         web_search_config = settings.web_search
 
         self.api_key = (
-            api_key
-            or web_search_config.api_key
-            or os.getenv("WEB_SEARCH_API_KEY", "")
+            api_key or web_search_config.api_key or os.getenv("WEB_SEARCH_API_KEY", "")
         )
         self.max_results = max_results or web_search_config.max_results
         self.enabled = web_search_config.enabled
@@ -177,20 +180,21 @@ class WebSearchTool:
         # Initialize LLM for decision making
         self._llm_type = llm_type
         self._provider = provider or ChatOpenAIProvider(settings.llm)
-        
+
         # Create decision tool
         self._decision_tool = self._create_decision_tool()
-        
-        # Create LLM and bind tools once
+
+        # Create LLM with callbacks and bind tools
+        # Use tracked invoker for usage statistics
+        self._callbacks = get_usage_callbacks()
         base_llm = self._provider.create_base_llm(llm_type, temperature=0.3)
         self._llm = base_llm.bind_tools(
-            [self._decision_tool],
-            tool_choice="make_search_decision"
+            [self._decision_tool], tool_choice="make_search_decision"
         )
 
     def _create_decision_tool(self):
         """Create the tool for search decision using @tool decorator."""
-        
+
         @tool(args_schema=SearchDecisionInput)
         def make_search_decision(
             confidence: int,
@@ -231,6 +235,8 @@ class WebSearchTool:
         query: str,
         document_summary: Dict[str, List[str]],
         history_text: str = "",
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> WebSearchDecision:
         """
         Decide whether web search is needed and generate search parameters.
@@ -239,6 +245,8 @@ class WebSearchTool:
             query: Current user query
             document_summary: Summary of documents in local knowledge base
             history_text: Formatted conversation history
+            user_id: User ID for tracking (optional)
+            conversation_id: Conversation ID for tracking (optional)
 
         Returns:
             WebSearchDecision with confidence score and search parameters
@@ -255,7 +263,11 @@ class WebSearchTool:
                 history=history_text,
                 document_summary=document_summary_str,
             )
-            response = await self._llm.ainvoke(prompt.messages)
+            # Use llm_context for usage tracking
+            with llm_context(self.MODULE_NAME, user_id, conversation_id):
+                response = await self._llm.with_config(callbacks=self._callbacks).ainvoke(
+                    prompt.messages
+                )
 
             # Parse tool calls
             if not response.tool_calls:

@@ -23,24 +23,24 @@ logger = logging.getLogger(__name__)
 
 class VisionIntent(str, Enum):
     """Intent classification for vision analysis results."""
-    
+
     # Food/cooking related - should continue to RAG/conversation flow
-    DISH_IDENTIFICATION = "dish_identification"      # User wants to identify a dish
-    RECIPE_REQUEST = "recipe_request"                # User wants recipe for shown food
+    DISH_IDENTIFICATION = "dish_identification"  # User wants to identify a dish
+    RECIPE_REQUEST = "recipe_request"  # User wants recipe for shown food
     INGREDIENT_IDENTIFICATION = "ingredient_identification"  # Identify ingredients
-    COOKING_GUIDANCE = "cooking_guidance"            # Cooking technique/process help
-    FOOD_QUESTION = "food_question"                  # General food-related question
-    
+    COOKING_GUIDANCE = "cooking_guidance"  # Cooking technique/process help
+    FOOD_QUESTION = "food_question"  # General food-related question
+
     # Not food related - should return direct response
-    GENERAL_IMAGE = "general_image"                  # Non-food image
-    UNCLEAR = "unclear"                              # Cannot determine
+    GENERAL_IMAGE = "general_image"  # Non-food image
+    UNCLEAR = "unclear"  # Cannot determine
 
 
 @dataclass
 class VisionAnalysisResult:
     """
     Result of vision analysis.
-    
+
     Attributes:
         is_food_related: Whether the image is related to food/cooking
         intent: Detected intent category
@@ -50,6 +50,7 @@ class VisionAnalysisResult:
         confidence: Confidence score (0-1)
         raw_response: Raw model response
     """
+
     is_food_related: bool
     intent: VisionIntent
     description: str
@@ -57,7 +58,7 @@ class VisionAnalysisResult:
     direct_response: Optional[str]
     confidence: float
     raw_response: str
-    
+
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
@@ -123,39 +124,43 @@ VISION_ANALYSIS_PROMPT = """你是 CookHero 的视觉理解模块，专门用于
 class VisionAgent:
     """
     Vision agent for analyzing images and determining intent.
-    
+
     This agent processes image inputs and classifies them based on
     whether they are food/cooking related, then extracts relevant information.
     """
-    
+
     def __init__(self, provider: Optional[VisionProvider] = None):
         """
         Initialize vision agent.
-        
+
         Args:
             provider: Vision provider instance. Uses global instance if not provided.
         """
         self._provider = provider or vision_provider
-    
+
     @property
     def is_available(self) -> bool:
         """Check if vision analysis is available."""
         return self._provider.is_enabled
-    
+
     async def analyze(
         self,
         images: List[ImageInput],
         user_query: str = "",
         history_context: str = "",
+        user_id: Optional[str] = None,
+        conversation_id: Optional[str] = None,
     ) -> VisionAnalysisResult:
         """
         Analyze images and determine cooking-related intent.
-        
+
         Args:
             images: List of images to analyze
             user_query: User's text prompt/question
             history_context: Optional conversation history for context
-            
+            user_id: User ID for tracking (optional)
+            conversation_id: Conversation ID for tracking (optional)
+
         Returns:
             VisionAnalysisResult with analysis details
         """
@@ -170,27 +175,29 @@ class VisionAgent:
                 confidence=0.0,
                 raw_response="",
             )
-        
+
         # Build prompt with user query
         prompt = VISION_ANALYSIS_PROMPT.format(
             user_query=user_query if user_query else "（用户没有提供文字说明）"
         )
-        
+
         # Add history context if available
         if history_context:
             prompt = f"【对话上下文】\n{history_context}\n\n{prompt}"
-        
+
         try:
             # Call vision model
             raw_response = await self._provider.analyze(
                 text=prompt,
                 images=images,
+                user_id=user_id,
+                conversation_id=conversation_id,
             )
-            
+
             # Parse response
             result = self._parse_response(raw_response, user_query)
             return result
-            
+
         except Exception as e:
             logger.error(f"Vision analysis failed: {e}", exc_info=True)
             return VisionAnalysisResult(
@@ -202,103 +209,119 @@ class VisionAgent:
                 confidence=0.0,
                 raw_response=str(e),
             )
-    
-    def _parse_response(self, raw_response: str, user_query: str) -> VisionAnalysisResult:
+
+    def _parse_response(
+        self, raw_response: str, user_query: str
+    ) -> VisionAnalysisResult:
         """Parse the model's JSON response."""
         try:
             # Extract JSON from response
             data = extract_first_valid_json(raw_response)
-            
+
             if not data:
-                logger.warning(f"Failed to parse vision response as JSON: {raw_response[:200]}")
+                logger.warning(
+                    f"Failed to parse vision response as JSON: {raw_response[:200]}"
+                )
                 # Fallback: treat as food-related if response contains food keywords
                 is_food = self._check_food_keywords(raw_response)
                 return VisionAnalysisResult(
                     is_food_related=is_food,
-                    intent=VisionIntent.FOOD_QUESTION if is_food else VisionIntent.GENERAL_IMAGE,
+                    intent=VisionIntent.FOOD_QUESTION
+                    if is_food
+                    else VisionIntent.GENERAL_IMAGE,
                     description=raw_response[:200],
                     extracted_info={},
                     direct_response=None if is_food else raw_response,
                     confidence=0.5,
                     raw_response=raw_response,
                 )
-            
+
             # Parse intent
             intent_str = data.get("intent", "unclear")
             try:
                 intent = VisionIntent(intent_str)
             except ValueError:
                 intent = VisionIntent.UNCLEAR
-            
+
             # Build result
             is_food_related = data.get("is_food_related", False)
-            
+
             return VisionAnalysisResult(
                 is_food_related=is_food_related,
                 intent=intent,
                 description=data.get("description", ""),
                 extracted_info=data.get("extracted_info", {}),
-                direct_response=data.get("direct_response") if not is_food_related else None,
+                direct_response=data.get("direct_response")
+                if not is_food_related
+                else None,
                 confidence=float(data.get("confidence", 0.5)),
                 raw_response=raw_response,
             )
-            
+
         except Exception as e:
             logger.error(f"Error parsing vision response: {e}", exc_info=True)
             # Graceful fallback: treat as generic response instead of raising
             is_food = self._check_food_keywords(raw_response)
             return VisionAnalysisResult(
                 is_food_related=is_food,
-                intent=VisionIntent.FOOD_QUESTION if is_food else VisionIntent.GENERAL_IMAGE,
+                intent=VisionIntent.FOOD_QUESTION
+                if is_food
+                else VisionIntent.GENERAL_IMAGE,
                 description=raw_response[:200],
                 extracted_info={},
                 direct_response=None if is_food else raw_response[:200],
                 confidence=0.35,
                 raw_response=raw_response,
             )
-    
+
     def _check_food_keywords(self, text: str) -> bool:
         """Check if text contains food-related keywords."""
         keywords = settings.vision.food_related_keywords
         text_lower = text.lower()
         return any(kw in text_lower for kw in keywords)
-    
-    def build_context_for_rag(self, result: VisionAnalysisResult, user_query: str) -> str:
+
+    def build_context_for_rag(
+        self, result: VisionAnalysisResult, user_query: str
+    ) -> str:
         """
         Build context string for RAG pipeline based on vision analysis.
-        
+
         This method creates a structured context that can be injected into
         the conversation flow when the image is food-related.
-        
+
         Args:
             result: Vision analysis result
             user_query: Original user query
-            
+
         Returns:
             Context string for RAG
         """
         if not result.is_food_related:
             return ""
-        
+
         parts = []
-        
+
         # Add image description
         if result.description:
             parts.append(f"【图片内容】{result.description}")
-        
+
         # Add extracted information
         info = result.extracted_info
         if info:
             if info.get("dish_name"):
                 parts.append(f"【识别菜品】{info['dish_name']}")
             if info.get("ingredients"):
-                ingredients = ", ".join(info["ingredients"]) if isinstance(info["ingredients"], list) else info["ingredients"]
+                ingredients = (
+                    ", ".join(info["ingredients"])
+                    if isinstance(info["ingredients"], list)
+                    else info["ingredients"]
+                )
                 parts.append(f"【识别食材】{ingredients}")
             if info.get("cooking_stage"):
                 parts.append(f"【烹饪阶段】{info['cooking_stage']}")
             if info.get("other"):
                 parts.append(f"【其他信息】{info['other']}")
-        
+
         # Add intent context
         intent_map = {
             VisionIntent.DISH_IDENTIFICATION: "用户想知道图中的菜品是什么",
@@ -309,7 +332,7 @@ class VisionAgent:
         }
         if result.intent in intent_map:
             parts.append(f"【用户意图】{intent_map[result.intent]}")
-        
+
         return "\n".join(parts)
 
 

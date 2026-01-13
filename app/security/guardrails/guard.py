@@ -4,12 +4,17 @@
 # 提供统一的安全检查 API，封装 NeMo Guardrails 功能
 # =============================================================================
 
+import asyncio
 import logging
 import os
+import time
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Tuple
+
+from app.llm.context import get_llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -40,30 +45,32 @@ class SecurityCheckResult:
 class CookHeroGuard:
     """
     CookHero 安全防护封装
-    
+
     基于 NeMo Guardrails 提供：
     - 输入层：Prompt Injection 检测、Jailbreak 检测、话题检测
     - 输出层：系统提示泄露检测、敏感内容过滤
-    
+
     使用方式：
     ```python
     guard = CookHeroGuard()
-    
+
     # 检查输入
     result = await guard.check_input("用户消息")
     if not result.is_safe:
         raise HTTPException(400, result.reason)
-    
+
     # 检查输出
     result = await guard.check_output("AI 响应")
     if not result.is_safe:
         return safe_response
     ```
     """
-    
+
     # 配置路径
     CONFIG_PATH = Path(__file__).parent / "config"
-    
+
+    MODULE_NAME = "safety_guardrails"
+
     # 标准安全拒答响应
     BLOCKED_RESPONSES = {
         "jailbreak": "抱歉，我无法回答这个问题。我是 CookHero，专注于烹饪相关的帮助。🍳",
@@ -88,46 +95,46 @@ class CookHeroGuard:
         """确保 Guardrails 已初始化"""
         if self._initialized:
             return self._rails is not None
-            
+
         if not self.enabled:
             self._initialized = True
             return False
-            
+
         try:
             from nemoguardrails import RailsConfig, LLMRails
-            
+
             # 检查配置目录是否存在
             if not self.CONFIG_PATH.exists():
                 logger.error(f"Guardrails config path not found: {self.CONFIG_PATH}")
                 self._initialized = True
                 return False
-            
+
             # 从应用配置获取 LLM 设置
             from app.config.config import settings
             llm_config = settings.llm.fast  # 使用 fast LLM 进行安全检查（低延迟）
-            
+
             # 设置环境变量供 NeMo Guardrails 使用
             # NeMo Guardrails 通过 LangChain 初始化，需要这些环境变量
             if llm_config.api_key:
                 os.environ["OPENAI_API_KEY"] = llm_config.api_key
             if llm_config.base_url:
                 os.environ["OPENAI_API_BASE"] = llm_config.base_url
-            
+
             # 加载配置
             config = RailsConfig.from_path(str(self.CONFIG_PATH))
-            
+
             # 动态设置模型名称为应用配置中的模型
             if hasattr(llm_config, 'pick_default_model'):
                 model_name = llm_config.pick_default_model()
                 config.models[0].model = model_name
                 logger.info(f"Guardrails model set to: {model_name}")
-            
+
             self._rails = LLMRails(config)
-            
+
             logger.info("NeMo Guardrails initialized successfully")
             self._initialized = True
             return True
-            
+
         except ImportError:
             logger.warning("nemoguardrails not installed, falling back to basic protection")
             self._initialized = True
@@ -136,6 +143,31 @@ class CookHeroGuard:
             logger.error(f"Failed to initialize Guardrails: {e}")
             self._initialized = True
             return False
+
+    async def _log_guardrails_usage(self, duration_ms: int) -> None:
+        """
+        Log guardrails LLM usage manually.
+        NeMo Guardrails doesn't expose token counts, so we log with None values.
+        """
+        try:
+            from app.database.llm_usage_repository import llm_usage_repository
+
+            # Get context if available
+            ctx = get_llm_context()
+
+            await llm_usage_repository.create_log(
+                request_id=str(uuid.uuid4()),
+                module_name=self.MODULE_NAME,
+                user_id=ctx.user_id if ctx else None,
+                conversation_id=ctx.conversation_id if ctx else None,
+                model_name="guardrails",  # NeMo uses its own model config
+                input_tokens=None,
+                output_tokens=None,
+                total_tokens=None,
+                duration_ms=duration_ms,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log guardrails usage: {e}")
     
     async def check_input(self, message: str) -> SecurityCheckResult:
         """
@@ -280,20 +312,25 @@ class CookHeroGuard:
     
     async def _guardrails_input_check(self, message: str) -> SecurityCheckResult:
         """使用 NeMo Guardrails 进行深度输入检查"""
+        start_time = time.time()
         try:
             # 使用 Guardrails 生成响应
             # 如果触发了安全规则，rails 会返回拒绝响应
             result = await self._rails.generate_async(
                 messages=[{"role": "user", "content": message}]
             )
-            
+
+            # Log usage
+            duration_ms = int((time.time() - start_time) * 1000)
+            asyncio.create_task(self._log_guardrails_usage(duration_ms))
+
             logger.debug(f"Guardrails generate_async result: {result}")
-            
+
             # 检查结果结构
             if result and isinstance(result, dict):
                 bot_message = result.get("content", "")
                 logger.debug(f"Bot message: {bot_message}")
-                
+
                 # 检查是否是标准拒绝响应
                 if self._is_rejection_response(bot_message):
                     return SecurityCheckResult(
@@ -301,11 +338,15 @@ class CookHeroGuard:
                         reason=bot_message,
                         details={"source": "guardrails"}
                     )
-            
+
             # 如果没有被拦截，认为是安全的
             return SecurityCheckResult(result=GuardResult.SAFE)
-            
+
         except Exception as e:
+            # Log usage even on error
+            duration_ms = int((time.time() - start_time) * 1000)
+            asyncio.create_task(self._log_guardrails_usage(duration_ms))
+
             logger.error(f"Guardrails input check error: {e}")
             # 如果是安全相关的异常，可能意味着输入被阻止
             if "block" in str(e).lower() or "reject" in str(e).lower() or "unsafe" in str(e).lower():
@@ -322,6 +363,7 @@ class CookHeroGuard:
     
     async def _guardrails_output_check(self, response: str) -> SecurityCheckResult:
         """使用 NeMo Guardrails 进行输出检查"""
+        start_time = time.time()
         try:
             # 使用 output rails 检查
             result = await self._rails.generate_async(
@@ -330,7 +372,11 @@ class CookHeroGuard:
                     {"role": "assistant", "content": response}
                 ]
             )
-            
+
+            # Log usage
+            duration_ms = int((time.time() - start_time) * 1000)
+            asyncio.create_task(self._log_guardrails_usage(duration_ms))
+
             # 如果输出被修改，说明触发了输出 rails
             if result and isinstance(result, dict):
                 new_content = result.get("content", "")
@@ -340,10 +386,14 @@ class CookHeroGuard:
                         reason=self.BLOCKED_RESPONSES["output_leak"],
                         details={"original": response[:100], "filtered": new_content}
                     )
-            
+
             return SecurityCheckResult(result=GuardResult.SAFE)
-            
+
         except Exception as e:
+            # Log usage even on error
+            duration_ms = int((time.time() - start_time) * 1000)
+            asyncio.create_task(self._log_guardrails_usage(duration_ms))
+
             logger.error(f"Guardrails output check error: {e}")
             return SecurityCheckResult(
                 result=GuardResult.WARNING,
@@ -376,7 +426,7 @@ class CookHeroGuard:
 # =============================================================================
 
 # 从环境变量读取是否启用
-_enabled = os.getenv("GUARDRAILS_ENABLED", "true").lower() == "true"
+_enabled = os.getenv("GUARDRAILS_ENABLED", "false").lower() == "true"
 
 # 全局 guard 实例
 guard = CookHeroGuard(enabled=_enabled)
