@@ -6,7 +6,6 @@ Captures token usage information from LLM calls and writes to database.
 
 import asyncio
 import logging
-from math import log
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -94,13 +93,6 @@ class LLMUsageCallbackHandler(BaseCallbackHandler):
         if not ctx:
             logger.debug("LLM callback: No LLM context set, skipping usage logging")
             return
-        
-        logger.info(
-            "LLM callback: Logging usage for module=%s, user_id=%s, conv_id=%s",
-            ctx.module_name,
-            ctx.user_id,
-            ctx.conversation_id,
-        )
 
         logger.debug("LLM callback: context found, module=%s", ctx.module_name)
 
@@ -217,8 +209,8 @@ class LLMUsageCallbackHandler(BaseCallbackHandler):
         # Method 3: From message.response_metadata
         if response.generations and response.generations[0]:
             gen = response.generations[0][0]
-            if hasattr(gen, "message") and hasattr(gen.message, "response_metadata"):
-                metadata = gen.message.response_metadata
+            if hasattr(gen, "message") and hasattr(gen.message, "response_metadata"): # type: ignore
+                metadata = gen.message.response_metadata # type: ignore
                 if metadata:
                     model = metadata.get("model_name") or metadata.get("model")
                     if model:

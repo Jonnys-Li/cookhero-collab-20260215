@@ -2,15 +2,59 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Protocol, Sequence, List
-from langchain_core.runnables import Runnable
-from langchain_core.outputs import ChatResult
-from typing import Any, AsyncIterator, List, Union
-from langchain_core.messages import BaseMessage
+from typing import Any, AsyncIterator, Protocol, Sequence, List, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_openai import ChatOpenAI
 
 from app.config.llm_config import LLMConfig, LLMProfileConfig, LLMType
+
+
+def create_chat_openai(
+    *,
+    model: str,
+    api_key: str,
+    base_url: Optional[str] = None,
+    temperature: float = 0.7,
+    max_tokens: Optional[int] = None,
+    streaming: bool = False,
+    timeout: Optional[int] = None,
+    **kwargs: Any,
+) -> ChatOpenAI:
+    """
+    Create a ChatOpenAI instance with the given parameters.
+
+    This is the unified factory function for creating LLM instances.
+    Use this instead of directly instantiating ChatOpenAI.
+
+    Args:
+        model: Model name
+        api_key: API key
+        base_url: Base URL for the API (optional)
+        temperature: Temperature setting
+        max_tokens: Maximum tokens for completion
+        streaming: Enable streaming mode
+        timeout: Request timeout in seconds
+        **kwargs: Additional ChatOpenAI parameters
+
+    Returns:
+        ChatOpenAI instance
+    """
+    llm_kwargs: dict[str, Any] = {
+        "model": model,
+        "api_key": api_key,
+        "temperature": temperature,
+        "streaming": streaming,
+        **kwargs,
+    }
+
+    if base_url:
+        llm_kwargs["base_url"] = base_url
+    if max_tokens is not None:
+        llm_kwargs["max_completion_tokens"] = max_tokens
+    if timeout is not None:
+        llm_kwargs["timeout"] = timeout
+
+    return ChatOpenAI(**llm_kwargs)
 
 
 class ModelSelectionStrategy(Protocol):
@@ -139,57 +183,7 @@ class DynamicChatInvoker:
                 bind_kwargs["tool_choice"] = self._tool_choice
             llm = llm.bind(**bind_kwargs)  # type: ignore
 
-        return llm # type: ignore
-
-    def bind_tools(
-        self,
-        tools: Sequence[Any],
-        *,
-        tool_choice: Any = None,
-        **kwargs: Any,
-    ) -> "DynamicChatInvoker":
-        """
-        Bind tools to the invoker. Returns a new instance with tools bound.
-
-        Args:
-            tools: Sequence of tools to bind
-            tool_choice: Optional tool choice parameter
-            **kwargs: Additional binding parameters
-
-        Returns:
-            New DynamicChatInvoker instance with tools bound
-        """
-        # Create a new instance to maintain immutability
-        new_invoker = DynamicChatInvoker(
-            self._provider,
-            self._llm_type,
-            self._base_llm,
-            callbacks=self._callbacks,  # Preserve callbacks
-        )
-        new_invoker._bound_tools = list(tools)
-        new_invoker._tool_choice = tool_choice
-        return new_invoker
-
-    def bind(self, **kwargs: Any) -> "DynamicChatInvoker":
-        """
-        Generic bind method for other parameters.
-
-        Args:
-            **kwargs: Parameters to bind to the base LLM
-
-        Returns:
-            New DynamicChatInvoker instance with parameters bound
-        """
-        new_base_llm = self._base_llm.bind(**kwargs)  # type: ignore
-        new_invoker = DynamicChatInvoker(
-            self._provider,
-            self._llm_type,
-            new_base_llm, # type: ignore
-            callbacks=self._callbacks,  # Preserve callbacks
-        )
-        new_invoker._bound_tools = self._bound_tools.copy()
-        new_invoker._tool_choice = self._tool_choice
-        return new_invoker
+        return llm  # type: ignore
 
     def _build_config(self, kwargs: dict) -> dict:
         """Build RunnableConfig with callbacks for LangChain invocation.
@@ -210,11 +204,6 @@ class DynamicChatInvoker:
             kwargs["config"] = {"callbacks": merged}
         return kwargs
 
-    def invoke(self, *args: Any, **kwargs: Any) -> Any:
-        """Invoke the LLM with dynamic model binding."""
-        kwargs = self._build_config(kwargs)
-        return self._bind().invoke(*args, **kwargs)
-
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
         """Async invoke the LLM with dynamic model binding."""
         kwargs = self._build_config(kwargs)
@@ -224,27 +213,3 @@ class DynamicChatInvoker:
         """Stream responses from the LLM with dynamic model binding."""
         kwargs = self._build_config(kwargs)
         return self._bind().astream(*args, **kwargs)
-
-    def stream(self, *args: Any, **kwargs: Any) -> Any:
-        """Sync stream responses from the LLM with dynamic model binding."""
-        kwargs = self._build_config(kwargs)
-        return self._bind().stream(*args, **kwargs)
-
-    def batch(self, *args: Any, **kwargs: Any) -> Any:
-        """Batch process multiple inputs."""
-        kwargs = self._build_config(kwargs)
-        return self._bind().batch(*args, **kwargs)
-
-    async def abatch(self, *args: Any, **kwargs: Any) -> Any:
-        """Async batch process multiple inputs."""
-        kwargs = self._build_config(kwargs)
-        return await self._bind().abatch(*args, **kwargs)
-
-    def with_structured_output(self, *args: Any, **kwargs: Any) -> Any:
-        """Enable structured output mode."""
-        return self._bind().with_structured_output(*args, **kwargs)
-
-    @property
-    def base_llm(self) -> ChatOpenAI:
-        """Access the underlying base LLM."""
-        return self._base_llm
