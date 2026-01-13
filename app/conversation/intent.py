@@ -6,12 +6,9 @@ import re
 from typing import Optional
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 
 from app.config import settings, LLMType
-from app.llm import ChatOpenAIProvider
-from app.llm.provider import DynamicChatInvoker
-from app.llm.context import llm_context
+from app.llm import ChatOpenAIProvider, llm_context
 from app.utils.structured_json import extract_first_valid_json
 
 logger = logging.getLogger(__name__)
@@ -19,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 class QueryIntent(Enum):
     """Enum representing the detected intent of a user query."""
+
     RECIPE_SEARCH = "recipe_search"
     COOKING_TIPS = "cooking_tips"
     INGREDIENT_INFO = "ingredient_info"
@@ -105,7 +103,9 @@ intent 用于语义标签，除了general_chat外均表示需要 RAG 支持（�
 }}
 """
 
-INTENT_DETECTION_PROMPT = ChatPromptTemplate.from_template(INTENT_DETECTION_PROMPT_TEMPLATE)
+INTENT_DETECTION_PROMPT = ChatPromptTemplate.from_template(
+    INTENT_DETECTION_PROMPT_TEMPLATE
+)
 
 
 class IntentDetector:

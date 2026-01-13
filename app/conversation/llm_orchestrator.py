@@ -3,25 +3,23 @@ from typing import AsyncGenerator, List, Optional
 from langchain_core.messages import BaseMessage
 
 from app.config import settings, LLMType
-from app.llm import ChatOpenAIProvider
-from app.llm.provider import DynamicChatInvoker
-from app.llm.context import llm_context
+from app.llm import ChatOpenAIProvider, llm_context
 
 
 class LLMOrchestrator:
     """Handles LLM invocation and streaming responses."""
 
-    MODULE_NAME = "streaming_response"
+    MODULE_NAME = "main_response"
 
     def __init__(
         self,
         llm_type: LLMType | str = LLMType.NORMAL,
         provider: ChatOpenAIProvider | None = None,
-        ):
-            self._llm_type = llm_type
-            self._provider = provider or ChatOpenAIProvider(settings.llm)
-            # Use tracked invoker for usage statistics
-            self._llm = self._provider.create_tracked_invoker(llm_type, streaming=True)
+    ):
+        self._llm_type = llm_type
+        self._provider = provider or ChatOpenAIProvider(settings.llm)
+        # Use tracked invoker for usage statistics
+        self._llm = self._provider.create_tracked_invoker(llm_type, streaming=True)
 
     async def stream(
         self,

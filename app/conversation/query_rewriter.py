@@ -2,14 +2,10 @@ import logging, json
 import re
 from typing import Optional
 
-from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from regex import template
 
 from app.config import settings, LLMType
-from app.llm import ChatOpenAIProvider
-from app.llm.provider import DynamicChatInvoker
-from app.llm.context import llm_context
+from app.llm import ChatOpenAIProvider, llm_context
 from app.utils.structured_json import extract_first_valid_json
 
 logger = logging.getLogger(__name__)
@@ -56,7 +52,9 @@ HISTORY_REWRITE_PROMPT_TEMPLATE = """
 }}
 """
 
-HISTORY_REWRITE_PROMPT = ChatPromptTemplate.from_template(HISTORY_REWRITE_PROMPT_TEMPLATE)
+HISTORY_REWRITE_PROMPT = ChatPromptTemplate.from_template(
+    HISTORY_REWRITE_PROMPT_TEMPLATE
+)
 
 
 class QueryRewriter:
