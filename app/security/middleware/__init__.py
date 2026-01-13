@@ -6,7 +6,7 @@ Provides HTTP middleware components:
 - Security headers
 """
 
-from app.middleware.rate_limiter import RateLimiter, RateLimitConfig
+from app.security.middleware.rate_limiter import RateLimiter, RateLimitConfig
 
 __all__ = [
     "RateLimiter",
