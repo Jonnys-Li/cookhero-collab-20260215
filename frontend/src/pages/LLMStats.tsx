@@ -41,6 +41,8 @@ import type {
   TimeSeriesResponse,
   ModuleDistributionResponse,
   ModelDistributionResponse,
+  ModuleDistribution,
+  ModelDistribution,
 } from '../types/llmStats';
 
 // Chart colors
@@ -86,20 +88,20 @@ function StatCard({ title, value, subtitle, icon, color = 'orange' }: StatCardPr
   };
 
   return (
-    <div className={`bg-gradient-to-br ${colorClasses[color]} border rounded-2xl p-4 shadow-sm`}>
+    <div className={`bg-gradient-to-br ${colorClasses[color]} border rounded-2xl p-4 shadow-sm min-w-0 flex-shrink-0`}>
       <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider mb-1">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider mb-1 truncate">
             {title}
           </p>
-          <p className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">
+          <p className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white break-all">
             {value}
           </p>
           {subtitle && (
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{subtitle}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 break-all">{subtitle}</p>
           )}
         </div>
-        <div className={`p-2 rounded-xl bg-white/50 dark:bg-gray-800/50 ${iconColorClasses[color]}`}>
+        <div className={`p-2 rounded-xl bg-white/50 dark:bg-gray-800/50 ${iconColorClasses[color]} flex-shrink-0 ml-2`}>
           {icon}
         </div>
       </div>
@@ -182,7 +184,7 @@ interface UsageChartProps {
 function UsageChart({ data, loading }: UsageChartProps) {
   if (loading) {
     return (
-      <div className="h-72 flex items-center justify-center">
+      <div className="h-full min-h-[300px] flex items-center justify-center">
         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
       </div>
     );
@@ -190,7 +192,7 @@ function UsageChart({ data, loading }: UsageChartProps) {
 
   if (!data || data.time_series.length === 0) {
     return (
-      <div className="h-72 flex flex-col items-center justify-center text-gray-500">
+      <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-gray-500">
         <BarChart3 className="w-8 h-8 mb-2 opacity-50" />
         <p>暂无使用数据</p>
       </div>
@@ -209,7 +211,7 @@ function UsageChart({ data, loading }: UsageChartProps) {
   }));
 
   return (
-    <ResponsiveContainer width="100%" height={288}>
+    <ResponsiveContainer width="100%" height="100%" minHeight={300}>
       <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
         <defs>
           <linearGradient id="colorCalls" x1="0" y1="0" x2="0" y2="1">
@@ -233,7 +235,6 @@ function UsageChart({ data, loading }: UsageChartProps) {
           tick={{ fontSize: 11 }}
           tickLine={false}
           axisLine={false}
-          label={{ value: '调用次数', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#9ca3af' }}
         />
         <YAxis
           yAxisId="right"
@@ -242,7 +243,6 @@ function UsageChart({ data, loading }: UsageChartProps) {
           tickLine={false}
           axisLine={false}
           tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
-          label={{ value: 'Tokens', angle: 90, position: 'insideRight', fontSize: 10, fill: '#9ca3af' }}
         />
         <Tooltip
           contentStyle={{
@@ -282,13 +282,14 @@ function UsageChart({ data, loading }: UsageChartProps) {
 interface DistributionChartProps {
   data: Array<{ name: string; value: number }>;
   loading: boolean;
-  type: 'module' | 'model';
+  activeIndex: number | null;
+  onActiveChange: (index: number | null) => void;
 }
 
-function DistributionChart({ data, loading, type }: DistributionChartProps) {
+function DistributionChart({ data, loading, activeIndex, onActiveChange }: DistributionChartProps) {
   if (loading) {
     return (
-      <div className="h-64 flex items-center justify-center">
+      <div className="flex-1 flex items-center justify-center min-h-[200px]">
         <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
       </div>
     );
@@ -296,15 +297,17 @@ function DistributionChart({ data, loading, type }: DistributionChartProps) {
 
   if (!data || data.length === 0) {
     return (
-      <div className="h-64 flex flex-col items-center justify-center text-gray-500">
+      <div className="flex-1 flex flex-col items-center justify-center text-gray-500 min-h-[200px]">
         <PieChartIcon className="w-8 h-8 mb-2 opacity-50" />
         <p>暂无分布数据</p>
       </div>
     );
   }
 
+  const activeItem = activeIndex !== null ? data[activeIndex] : null;
+
   return (
-    <div className="h-64 relative">
+    <div className="flex-1 relative min-h-[200px]">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Pie
@@ -313,32 +316,55 @@ function DistributionChart({ data, loading, type }: DistributionChartProps) {
             cy="50%"
             innerRadius={60}
             outerRadius={80}
-            paddingAngle={5}
+            paddingAngle={2}
+            minAngle={2}
             dataKey="value"
+            onMouseEnter={(_, index) => onActiveChange(index)}
+            onMouseLeave={() => onActiveChange(null)}
           >
-            {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            {data.map((_entry, index) => (
+              <Cell 
+                key={`cell-${index}`} 
+                fill={COLORS[index % COLORS.length]} 
+                strokeWidth={activeIndex === index ? 2 : 0}
+                stroke={activeIndex === index ? COLORS[index % COLORS.length] : undefined}
+              />
             ))}
           </Pie>
-          <Tooltip
-            formatter={(value: number | undefined) => [value?.toLocaleString() ?? '0', 'Tokens']}
-          />
         </PieChart>
       </ResponsiveContainer>
-      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none">
+      
+      <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center pointer-events-none z-10">
         <p className="text-xs text-gray-500 font-medium uppercase">Total</p>
         <p className="text-lg font-bold text-gray-900 dark:text-white">
           {(data.reduce((acc, curr) => acc + curr.value, 0) / 1000).toFixed(1)}k
         </p>
       </div>
+
+      {activeItem && (
+        <div className="absolute top-4 right-4 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-3 rounded-xl shadow-lg ring-1 ring-black/5 min-w-[150px]">
+          <p className="font-semibold text-gray-900 dark:text-white text-sm mb-1">
+            {activeItem.name}
+          </p>
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <span 
+              className="w-2 h-2 rounded-full" 
+              style={{ backgroundColor: COLORS[activeIndex! % COLORS.length] }}
+            />
+            <span>{activeItem.value.toLocaleString()} Tokens</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 /**
  * Main LLM Stats page component
  */
 export default function LLMStatsPage() {
+
   const { token } = useAuth();
 
   // State
@@ -357,7 +383,13 @@ export default function LLMStatsPage() {
    const [distTab, setDistTab] = useState<'module' | 'model'>('module');
    const [tableTab, setTableTab] = useState<'module' | 'model'>('module');
 
+  const [customStart, setCustomStart] = useState<string>('');
+  const [customEnd, setCustomEnd] = useState<string>('');
+
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
   // Load initial data
+
   const loadData = useCallback(async () => {
     if (!token) return;
 
@@ -368,8 +400,8 @@ export default function LLMStatsPage() {
       const [summaryData, tsData, modDistData, modelDistData] = await Promise.all([
         getLLMStatsSummary(token),
         getLLMStatsTimeSeries(token, days, granularity),
-        getLLMStatsDistributionByModule(token),
-        getLLMStatsDistributionByModel(token),
+        getLLMStatsDistributionByModule(token, customStart || undefined, customEnd || undefined),
+        getLLMStatsDistributionByModel(token, customStart || undefined, customEnd || undefined),
       ]);
 
       setSummary(summaryData);
@@ -382,7 +414,7 @@ export default function LLMStatsPage() {
     } finally {
       setLoading(false);
     }
-  }, [token, days, granularity]);
+  }, [token, days, granularity, customStart, customEnd]);
 
   // Load time series when filters change
   const loadTimeSeries = useCallback(async () => {
@@ -399,15 +431,37 @@ export default function LLMStatsPage() {
     }
   }, [token, days, granularity]);
 
+  // Load distribution when date range changes
+  const loadDistribution = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [modDistData, modelDistData] = await Promise.all([
+        getLLMStatsDistributionByModule(token, customStart || undefined, customEnd || undefined),
+        getLLMStatsDistributionByModel(token, customStart || undefined, customEnd || undefined),
+      ]);
+      setModuleDist(modDistData);
+      setModelDist(modelDistData);
+    } catch (err) {
+      console.error('Failed to reload distribution:', err);
+    }
+  }, [token, customStart, customEnd]);
+
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData]); // Note: loadData depends on customStart/End now, so it will reload everything when they change.
 
   useEffect(() => {
     if (!loading) {
-      loadTimeSeries();
+       loadTimeSeries();
     }
   }, [days, granularity]);
+  
+  useEffect(() => {
+    if (!loading) {
+      loadDistribution();
+    }
+  }, [customStart, customEnd]);
+
 
   // Process distribution data for charts
   const distChartData = distTab === 'module' 
@@ -464,19 +518,19 @@ export default function LLMStatsPage() {
         </div>
 
         {/* Top Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
-          <StatCard
-            title="总调用次数"
-            value={summary?.total_calls.toLocaleString() ?? 0}
-            icon={<Zap className="w-5 h-5" />}
-            color="orange"
-          />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 mb-6">
           <StatCard
             title="总 Token 消耗"
             value={(summary?.total_tokens ?? 0).toLocaleString()}
             subtitle={`平均 ${summary?.avg_tokens_per_call.toFixed(0) ?? 0} / 次`}
             icon={<Layers className="w-5 h-5" />}
             color="blue"
+          />
+          <StatCard
+            title="总调用次数"
+            value={summary?.total_calls.toLocaleString() ?? 0}
+            icon={<Zap className="w-5 h-5" />}
+            color="orange"
           />
           <StatCard
             title="平均耗时"
@@ -487,7 +541,7 @@ export default function LLMStatsPage() {
           <StatCard
             title="模型数量"
             value={modelDist?.count ?? 0}
-            subtitle={`${moduleDist?.count ?? 0} 个模块`}
+            subtitle={undefined} 
             icon={<Cpu className="w-5 h-5" />}
             color="green"
           />
@@ -496,7 +550,7 @@ export default function LLMStatsPage() {
         {/* Two Column Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           {/* Trends Chart */}
-          <section className="lg:col-span-2 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5">
+          <section className="lg:col-span-2 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5 flex flex-col">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-orange-100 dark:bg-orange-500/10 flex items-center justify-center">
@@ -516,25 +570,29 @@ export default function LLMStatsPage() {
                 onGranularityChange={setGranularity}
               />
             </div>
-            <UsageChart data={timeSeries} loading={tsLoading} />
+            <div className="flex-1 min-h-0">
+               <UsageChart data={timeSeries} loading={tsLoading} />
+            </div>
           </section>
 
           {/* Distribution Chart */}
-          <section className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5">
+          <section className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5 flex flex-col h-full min-h-[400px] min-w-[320px]">
             <div className="flex flex-col gap-4 h-full">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center">
-                    <PieChartIcon className="w-4 h-4 text-blue-500" />
-                  </div>
-                  <h2 className="font-semibold text-base md:text-lg">Token 分布</h2>
-                </div>
+                   <div className="w-8 h-8 rounded-xl bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center shrink-0">
+                     <PieChartIcon className="w-4 h-4 text-blue-500" />
+                   </div>
+                   <h2 className="font-semibold text-base md:text-lg whitespace-nowrap">Token 分布</h2>
+                 </div>
+
                 
-                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                  <button
-                    onClick={() => setDistTab('module')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                      distTab === 'module'
+                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg shrink-0">
+                   <button
+                     onClick={() => setDistTab('module')}
+                     className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                       distTab === 'module'
+
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                         : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                     }`}
@@ -543,8 +601,9 @@ export default function LLMStatsPage() {
                   </button>
                   <button
                     onClick={() => setDistTab('model')}
-                    className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                      distTab === 'model'
+                     className={`px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+                       distTab === 'model'
+
                         ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
                         : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
                     }`}
@@ -555,29 +614,73 @@ export default function LLMStatsPage() {
               </div>
 
               <div className="flex-1 flex flex-col justify-center">
-                 <DistributionChart data={distChartData} loading={loading} type={distTab} />
-                 
-                 <div className="mt-4 space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                    {distChartData.map((item, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          <div 
-                            className="w-2 h-2 rounded-full" 
-                            style={{ backgroundColor: COLORS[idx % COLORS.length] }}
-                          />
-                          <span className="text-gray-600 dark:text-gray-300 truncate max-w-[120px]" title={item.name}>
-                            {item.name}
-                          </span>
-                        </div>
-                        <span className="font-mono text-gray-500">
-                          {(item.value / 1000).toFixed(1)}k
-                        </span>
-                      </div>
-                    ))}
-                 </div>
-              </div>
+                  <DistributionChart data={distChartData} loading={loading} activeIndex={activeIndex} onActiveChange={setActiveIndex} />
+                  
+                  <div className="mt-4 space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                     {distChartData.map((item, idx) => (
+                       <div
+                         key={idx}
+                         className={`flex items-center justify-between text-xs rounded px-2 py-1 transition-colors cursor-pointer ${
+                           activeIndex === idx 
+                             ? 'bg-gray-100 dark:bg-gray-800' 
+                             : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                         }`}
+                         onMouseEnter={() => setActiveIndex(idx)}
+                         onMouseLeave={() => setActiveIndex(null)}
+                       >
+                         <div className="flex items-center gap-2">
+                           <div 
+                             className="w-2 h-2 rounded-full" 
+                             style={{ backgroundColor: COLORS[idx % COLORS.length] }}
+                           />
+                           <span className="text-gray-600 dark:text-gray-300 truncate max-w-[120px]" title={item.name}>
+                             {item.name}
+                           </span>
+                         </div>
+                         <span className="font-mono text-gray-500">
+                           {(item.value / 1000).toFixed(1)}k
+                         </span>
+                       </div>
+                     ))}
+                  </div>
+               </div>
+
             </div>
           </section>
+        </div>
+
+
+        {/* Date Range Picker */}
+        <div className="bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm p-4 md:p-5 mb-6 flex items-center justify-between gap-4 flex-wrap">
+             <div className="flex items-center gap-2">
+                 <div className="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-500/10 flex items-center justify-center">
+                    <Clock className="w-4 h-4 text-violet-500" />
+                 </div>
+                 <h2 className="font-semibold text-base md:text-lg">时间范围选择</h2>
+             </div>
+             <div className="flex items-center gap-3 flex-wrap">
+                 <input 
+                    type="datetime-local" 
+                    className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    value={customStart}
+                    onChange={(e) => setCustomStart(e.target.value)}
+                 />
+                 <span className="text-gray-500">to</span>
+                 <input 
+                    type="datetime-local" 
+                    className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-orange-500 focus:border-transparent outline-none"
+                    value={customEnd}
+                    onChange={(e) => setCustomEnd(e.target.value)}
+                 />
+                 {(customStart || customEnd) && (
+                     <button 
+                        onClick={() => { setCustomStart(''); setCustomEnd(''); }}
+                        className="text-sm text-red-500 hover:text-red-600 px-2"
+                     >
+                        清除
+                     </button>
+                 )}
+             </div>
         </div>
 
         {/* Detailed Table */}
@@ -619,14 +722,15 @@ export default function LLMStatsPage() {
                  </tr>
                </thead>
                <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                 {(tableTab === 'module' ? moduleDist?.distribution : modelDist?.distribution)?.map((item) => (
-                   <tr key={tableTab === 'module' ? item.module_name : item.model_name} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                     <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
-                       {tableTab === 'module' ? item.module_name : item.model_name}
-                     </td>
-                     <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
-                       {item.call_count.toLocaleString()}
-                     </td>
+                  {(tableTab === 'module' ? moduleDist?.distribution : modelDist?.distribution)?.map((item) => (
+                    <tr key={tableTab === 'module' ? (item as ModuleDistribution).module_name : (item as ModelDistribution).model_name} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                      <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
+                        {tableTab === 'module' ? (item as ModuleDistribution).module_name : (item as ModelDistribution).model_name}
+                      </td>
+                      <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                        {item.call_count.toLocaleString()}
+                      </td>
+
                      <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
                        {item.total_tokens.toLocaleString()}
                      </td>
