@@ -212,9 +212,9 @@ function MainLayout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Determine current view from pathname
-  const isKnowledgeView = location.pathname === '/knowledge';
-  const isEvaluationView = location.pathname === '/evaluation';
-  const isLLMStatsView = location.pathname === '/llm-stats';
+  const isKnowledgeView = location.pathname.includes('/knowledge');
+  const isEvaluationView = location.pathname.includes('/evaluation');
+  const isLLMStatsView = location.pathname.includes('/llm-stats');
 
   const handleToggleAgentMode = useCallback(() => {
       if (isAgentMode) {
@@ -245,20 +245,6 @@ function MainLayout({ children }: { children: React.ReactNode }) {
     logout();
     navigate('/login');
   }, [logout, navigate]);
-
-  const toggleMainView = useCallback(() => {
-    if (isKnowledgeView || isEvaluationView || isLLMStatsView) {
-      // Return to chat - if there's a current conversation, go to it
-      const basePath = isAgentMode ? '/agent' : '/chat';
-      if (conversationId && !conversationId.startsWith('temp-')) {
-        navigate(`${basePath}/${conversationId}`);
-      } else {
-        navigate(basePath);
-      }
-    } else {
-      navigate('/knowledge');
-    }
-  }, [isKnowledgeView, isEvaluationView, isLLMStatsView, conversationId, navigate, isAgentMode]);
 
   return (
     <div className="flex h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
@@ -302,46 +288,70 @@ function MainLayout({ children }: { children: React.ReactNode }) {
               </span>
             )}
             <button
-              onClick={() => navigate('/evaluation')}
+              onClick={() => {
+                if (isEvaluationView) {
+                  const basePath = isAgentMode ? '/agent' : '/chat';
+                  if (conversationId && !conversationId.startsWith('temp-')) {
+                    navigate(`${basePath}/${conversationId}`);
+                  } else {
+                    navigate(basePath);
+                  }
+                } else {
+                  navigate(isAgentMode ? '/agent/evaluation' : '/evaluation');
+                }
+              }}
               className={`flex items-center gap-1 px-2 sm:px-3 py-1 rounded-full border transition-colors shrink-0 ${
                 isEvaluationView
-                  ? 'border-orange-400 bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-600'
+                  ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-600'
                   : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
             >
               <BarChart3 className="w-4 h-4" />
-              <span className="hidden sm:inline">评估</span>
+              <span className="hidden sm:inline">{isEvaluationView ? '返回对话' : '评估监控'}</span>
             </button>
             <button
-              onClick={() => navigate('/llm-stats')}
+              onClick={() => {
+                if (isLLMStatsView) {
+                  const basePath = isAgentMode ? '/agent' : '/chat';
+                  if (conversationId && !conversationId.startsWith('temp-')) {
+                    navigate(`${basePath}/${conversationId}`);
+                  } else {
+                    navigate(basePath);
+                  }
+                } else {
+                  navigate(isAgentMode ? '/agent/llm-stats' : '/llm-stats');
+                }
+              }}
               className={`flex items-center gap-1 px-2 sm:px-3 py-1 rounded-full border transition-colors shrink-0 ${
                 isLLMStatsView
-                  ? 'border-orange-400 bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-600'
+                  ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-600'
                   : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
             >
               <BarChart3 className="w-4 h-4 rotate-90" />
-              <span className="hidden sm:inline">LLM Stats</span>
+              <span className="hidden sm:inline">{isLLMStatsView ? '返回对话' : '模型统计'}</span>
             </button>
             <button
-              onClick={toggleMainView}
+              onClick={() => {
+                if (isKnowledgeView) {
+                  const basePath = isAgentMode ? '/agent' : '/chat';
+                  if (conversationId && !conversationId.startsWith('temp-')) {
+                    navigate(`${basePath}/${conversationId}`);
+                  } else {
+                    navigate(basePath);
+                  }
+                } else {
+                  navigate(isAgentMode ? '/agent/knowledge' : '/knowledge');
+                }
+              }}
               className={`flex items-center gap-1 px-2 sm:px-3 py-1 rounded-full border transition-colors shrink-0 ${
                 isKnowledgeView
-                  ? 'border-orange-400 bg-orange-50 text-orange-700 dark:bg-orange-900/30 dark:text-orange-200 dark:border-orange-600'
+                  ? 'border-blue-400 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-200 dark:border-blue-600'
                   : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
               }`}
             >
-              {isKnowledgeView ? (
-                <>
-                  <MessageSquare className="w-4 h-4" />
-                  <span className="hidden sm:inline">返回对话</span>
-                </>
-              ) : (
-                <>
-                  <BookOpen className="w-4 h-4" />
-                  <span className="hidden sm:inline">知识库</span>
-                </>
-              )}
+              <BookOpen className="w-4 h-4" />
+              <span className="hidden sm:inline">{isKnowledgeView ? '返回对话' : '知识库'}</span>
             </button>
             {username && (
               <div className="flex items-center gap-1 sm:gap-2 bg-gray-100 dark:bg-gray-800 px-2 sm:px-3 py-1 rounded-full shrink-0">
@@ -425,6 +435,16 @@ function App() {
         }
       />
       <Route
+        path="/agent/knowledge"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <KnowledgePanel />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/evaluation"
         element={
           <RequireAuth>
@@ -435,7 +455,27 @@ function App() {
         }
       />
       <Route
+        path="/agent/evaluation"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <EvaluationPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/llm-stats"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <LLMStatsPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/agent/llm-stats"
         element={
           <RequireAuth>
             <MainLayout>
