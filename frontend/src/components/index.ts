@@ -9,6 +9,9 @@ export * from './common';
 // Chat components
 export * from './chat';
 
+// Agent components
+export * from './agent';
+
 // Layout components
 export * from './layout';
 

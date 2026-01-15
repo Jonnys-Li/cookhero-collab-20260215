@@ -9,6 +9,8 @@ export * from './user';
 export * from './conversation';
 export * from './knowledge';
 export * from './evaluation';
+export * from './agent';
+
 
 // Named exports for backward compatibility
 export {

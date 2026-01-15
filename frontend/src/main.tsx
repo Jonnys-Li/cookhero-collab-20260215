@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App.tsx';
-import { AuthProvider, ThemeProvider, ConversationProvider } from './contexts';
+import { AuthProvider, ThemeProvider, ConversationProvider, AgentProvider } from './contexts';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -11,7 +11,9 @@ createRoot(document.getElementById('root')!).render(
       <ThemeProvider>
         <AuthProvider>
           <ConversationProvider>
-            <App />
+            <AgentProvider>
+              <App />
+            </AgentProvider>
           </ConversationProvider>
         </AuthProvider>
       </ThemeProvider>

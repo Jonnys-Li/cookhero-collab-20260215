@@ -27,10 +27,25 @@ export interface ConversationRequest {
 }
 
 export interface SSEEvent {
-  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done';
+  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done' | 'session' | 'tool_call' | 'tool_result' | 'trace' | 'skill_load' | 'error';
   content?: string;
   data?: VisionInfo | IntentInfo | Source[] | string;
   conversation_id?: string;
+  // Agent-specific fields
+  session_id?: string;
+  title?: string;
+  // Tool call fields
+  id?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  iteration?: number;
+  // Tool result fields
+  success?: boolean;
+  result?: unknown;
+  error?: string;
+  // Timing fields
+  thinking_duration_ms?: number;
+  answer_duration_ms?: number;
 }
 
 export interface ConversationListResponse {

@@ -4,7 +4,8 @@ import type { ReactElement } from 'react';
 import { BarChart3, BookOpen, Menu, LogOut, MessageSquare } from 'lucide-react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChatWindow, ChatInput, Sidebar, KnowledgePanel } from './components';
-import { useTheme, useAuth, useConversationContext } from './contexts';
+import { AgentChatWindow, AgentChatInput } from './components/agent';
+import { useTheme, useAuth, useConversationContext, useAgentContext } from './contexts';
 import LoginPage from './pages/Login';
 import RegisterPage from './pages/Register';
 import EvaluationPage from './pages/Evaluation';
@@ -16,16 +17,41 @@ import LLMStatsPage from './pages/LLMStats';
 function ChatView() {
   const { id: urlConversationId } = useParams<{ id?: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isAgentMode = location.pathname.startsWith('/agent');
+
+  // Standard Chat Context
   const {
-    messages,
-    conversationId,
-    isLoading,
-    isStreaming,
-    error,
-    sendMessage,
-    selectConversation,
-    stopGeneration,
+    messages: chatMessages,
+    conversationId: chatConversationId,
+    isLoading: chatIsLoading,
+    isStreaming: chatIsStreaming,
+    error: chatError,
+    sendMessage: chatSendMessage,
+    selectConversation: chatSelectConversation,
+    stopGeneration: chatStopGeneration,
   } = useConversationContext();
+
+  // Agent Chat Context
+  const {
+      messages: agentMessages,
+      sessionId: agentSessionId,
+      isLoading: agentIsLoading,
+      isStreaming: agentIsStreaming,
+      error: agentError,
+      sendMessage: agentSendMessage,
+      selectSession: agentSelectSession,
+      stopGeneration: agentStopGeneration,
+  } = useAgentContext();
+
+  // Unified State based on Mode
+  const messages = isAgentMode ? agentMessages : chatMessages;
+  const currentId = isAgentMode ? agentSessionId : chatConversationId;
+  const isLoading = isAgentMode ? agentIsLoading : chatIsLoading;
+  const isStreaming = isAgentMode ? agentIsStreaming : chatIsStreaming;
+  const error = isAgentMode ? agentError : chatError;
+  const sendMessage = isAgentMode ? agentSendMessage : chatSendMessage;
+  const stopGeneration = isAgentMode ? agentStopGeneration : chatStopGeneration;
 
   const [suggestionText, setSuggestionText] = useState<string>('');
   
@@ -33,28 +59,30 @@ function ChatView() {
   const initialSyncDone = useRef(false);
 
   // Sync URL conversation ID with hook state on mount or when URL changes
-  // This handles page refresh and direct URL access
   useEffect(() => {
     // Only sync from URL to state, not the other way around
-    // MainLayout.handleSelectConversation handles navigation when user clicks
-    if (urlConversationId && urlConversationId !== conversationId) {
-      selectConversation(urlConversationId);
+    if (urlConversationId && urlConversationId !== currentId) {
+        if (isAgentMode) {
+            agentSelectSession(urlConversationId);
+        } else {
+            chatSelectConversation(urlConversationId);
+        }
     }
     initialSyncDone.current = true;
-  }, [urlConversationId]); // Only depend on URL changes, not conversationId
+  }, [urlConversationId, isAgentMode]); // Only depend on URL changes
 
   // Update URL when a NEW conversation is created (temp -> real ID)
-  // This only triggers when sending the first message creates a new conversation
   useEffect(() => {
     if (
       initialSyncDone.current &&
-      conversationId &&
-      !conversationId.startsWith('temp-') &&
+      currentId &&
+      !currentId.startsWith('temp-') &&
       !urlConversationId // Only update URL if we're on /chat (no ID in URL yet)
     ) {
-      navigate(`/chat/${conversationId}`, { replace: true });
+        const basePath = isAgentMode ? '/agent' : '/chat';
+        navigate(`${basePath}/${currentId}`, { replace: true });
     }
-  }, [conversationId, urlConversationId, navigate]);
+  }, [currentId, urlConversationId, navigate, isAgentMode]);
 
   const handleSuggestionClick = (text: string) => {
     setSuggestionText(text);
@@ -68,26 +96,55 @@ function ChatView() {
     <>
       {error && (
         <div className="absolute top-4 left-4 right-4 z-10 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm">
-          ⚠️ {error}
+          {error}
         </div>
       )}
       
-      <ChatWindow messages={messages} isLoading={isLoading} onSuggestionClick={handleSuggestionClick} />
-      
-      <div className="p-4 max-w-4xl w-full mx-auto">
-        <ChatInput
-          onSend={sendMessage}
-          onCancel={stopGeneration}
-          disabled={isLoading}
-          isStreaming={isStreaming}
-          placeholder="Ask CookHero anything about cooking..."
-          externalValue={suggestionText}
-          onExternalValueConsumed={handleSuggestionConsumed}
-        />
-        <div className="text-center text-xs text-gray-400 mt-2">
-          CookHero can make mistakes. Consider checking important information.
-        </div>
-      </div>
+      {isAgentMode ? (
+        <>
+          <AgentChatWindow 
+            messages={messages} 
+            isLoading={isLoading} 
+            onSuggestionClick={handleSuggestionClick} 
+          />
+          <div className="p-4 max-w-4xl w-full mx-auto">
+            <AgentChatInput
+              onSend={sendMessage}
+              onCancel={stopGeneration}
+              disabled={isLoading}
+              isStreaming={isStreaming}
+              placeholder="Ask Agent to calculate, analyze, or plan..."
+              externalValue={suggestionText}
+              onExternalValueConsumed={handleSuggestionConsumed}
+            />
+            <div className="text-center text-xs text-gray-400 mt-2">
+              CookHero Agent can make mistakes. Consider checking important information.
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <ChatWindow 
+            messages={messages} 
+            isLoading={isLoading} 
+            onSuggestionClick={handleSuggestionClick} 
+          />
+          <div className="p-4 max-w-4xl w-full mx-auto">
+            <ChatInput
+              onSend={sendMessage}
+              onCancel={stopGeneration}
+              disabled={isLoading}
+              isStreaming={isStreaming}
+              placeholder="Ask CookHero anything about cooking..."
+              externalValue={suggestionText}
+              onExternalValueConsumed={handleSuggestionConsumed}
+            />
+            <div className="text-center text-xs text-gray-400 mt-2">
+              CookHero can make mistakes. Consider checking important information.
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -99,17 +156,57 @@ function MainLayout({ children }: { children: React.ReactNode }) {
   const { username, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const isAgentMode = location.pathname.startsWith('/agent');
+
+  // Standard Chat Context
   const {
-    conversationId,
-    conversations,
-    totalConversations,
-    hasMoreConversations,
-    selectConversation,
-    clearMessages,
-    removeConversation,
-    renameConversation,
-    loadMoreConversations,
+    conversationId: chatConversationId,
+    conversations: chatConversations,
+    totalConversations: chatTotalConversations,
+    hasMoreConversations: chatHasMoreConversations,
+    selectConversation: chatSelectConversation,
+    clearMessages: chatClearMessages,
+    removeConversation: chatRemoveConversation,
+    renameConversation: chatRenameConversation,
+    loadMoreConversations: chatLoadMoreConversations,
   } = useConversationContext();
+
+  // Agent Chat Context
+  const {
+      sessionId: agentSessionId,
+      sessions: agentSessions,
+      totalSessions: agentTotalSessions,
+      hasMoreSessions: agentHasMoreSessions,
+      selectSession: agentSelectSession,
+      clearMessages: agentClearMessages,
+      removeSession: agentRemoveSession,
+      loadMoreSessions: agentLoadMoreSessions,
+      renameSession: agentRenameSession,
+  } = useAgentContext();
+
+  // Unified State based on Mode
+  const conversationId = isAgentMode ? agentSessionId : chatConversationId;
+  // Map Agent sessions to ConversationSummary format for Sidebar
+  const conversations = isAgentMode 
+    ? agentSessions.map(s => ({
+        id: s.id,
+        title: s.title || `Session ${s.id.slice(0, 8)}...`,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        message_count: s.message_count,
+        last_message_preview: 'Agent Session'
+    })) 
+    : chatConversations;
+
+  const totalConversations = isAgentMode ? agentTotalSessions : chatTotalConversations;
+  const hasMoreConversations = isAgentMode ? agentHasMoreSessions : chatHasMoreConversations;
+  const loadMoreConversations = isAgentMode ? agentLoadMoreSessions : chatLoadMoreConversations;
+  
+  const selectConversation = isAgentMode ? agentSelectSession : chatSelectConversation;
+  const clearMessages = isAgentMode ? agentClearMessages : chatClearMessages;
+  const removeConversation = isAgentMode ? agentRemoveSession : chatRemoveConversation;
+  // Now Agent sessions support renaming
+  const renameConversation = isAgentMode ? agentRenameSession : chatRenameConversation; 
 
   const { isDark, toggleTheme } = useTheme();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -119,21 +216,30 @@ function MainLayout({ children }: { children: React.ReactNode }) {
   const isEvaluationView = location.pathname === '/evaluation';
   const isLLMStatsView = location.pathname === '/llm-stats';
 
+  const handleToggleAgentMode = useCallback(() => {
+      if (isAgentMode) {
+          navigate('/chat');
+      } else {
+          navigate('/agent');
+      }
+  }, [isAgentMode, navigate]);
+
   const handleNewChat = useCallback(() => {
     clearMessages();
-    navigate('/chat');
+    navigate(isAgentMode ? '/agent' : '/chat');
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false);
     }
-  }, [clearMessages, navigate]);
+  }, [clearMessages, navigate, isAgentMode]);
 
   const handleSelectConversation = useCallback((id: string) => {
     selectConversation(id);
-    navigate(`/chat/${id}`);
+    const basePath = isAgentMode ? '/agent' : '/chat';
+    navigate(`${basePath}/${id}`);
     if (window.innerWidth < 768) {
       setIsSidebarOpen(false);
     }
-  }, [selectConversation, navigate]);
+  }, [selectConversation, navigate, isAgentMode]);
 
   const handleLogout = useCallback(() => {
     logout();
@@ -143,15 +249,16 @@ function MainLayout({ children }: { children: React.ReactNode }) {
   const toggleMainView = useCallback(() => {
     if (isKnowledgeView || isEvaluationView || isLLMStatsView) {
       // Return to chat - if there's a current conversation, go to it
+      const basePath = isAgentMode ? '/agent' : '/chat';
       if (conversationId && !conversationId.startsWith('temp-')) {
-        navigate(`/chat/${conversationId}`);
+        navigate(`${basePath}/${conversationId}`);
       } else {
-        navigate('/chat');
+        navigate(basePath);
       }
     } else {
       navigate('/knowledge');
     }
-  }, [isKnowledgeView, isEvaluationView, isLLMStatsView, conversationId, navigate]);
+  }, [isKnowledgeView, isEvaluationView, isLLMStatsView, conversationId, navigate, isAgentMode]);
 
   return (
     <div className="flex h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 transition-colors duration-200">
@@ -169,6 +276,8 @@ function MainLayout({ children }: { children: React.ReactNode }) {
         onRenameConversation={renameConversation}
         isDark={isDark}
         toggleTheme={toggleTheme}
+        isAgentMode={isAgentMode}
+        onToggleAgentMode={handleToggleAgentMode}
       />
 
       <div className="flex-1 flex flex-col h-full relative">
@@ -331,6 +440,26 @@ function App() {
           <RequireAuth>
             <MainLayout>
               <LLMStatsPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/agent"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <ChatView />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/agent/:id"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <ChatView />
             </MainLayout>
           </RequireAuth>
         }

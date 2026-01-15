@@ -13,6 +13,7 @@ import {
     Check,
     X,
     ChevronDown,
+    Bot, // New Icon
 } from 'lucide-react';
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ThemeToggle } from '../common/ThemeToggle';
@@ -52,6 +53,10 @@ export interface SidebarProps {
     onRenameConversation?: (id: string, newTitle: string) => Promise<boolean>;
     isDark: boolean;
     toggleTheme: () => void;
+    
+    // Agent specific
+    isAgentMode?: boolean;
+    onToggleAgentMode?: () => void;
 }
 
 export function Sidebar({
@@ -68,6 +73,8 @@ export function Sidebar({
     onRenameConversation,
     isDark,
     toggleTheme,
+    isAgentMode,
+    onToggleAgentMode
 }: SidebarProps) {
     const { username } = useAuth();
     const [profileOpen, setProfileOpen] = useState(false);
@@ -194,13 +201,18 @@ export function Sidebar({
                 aria-label="Sidebar"
             >
                 {/* Header */}
-                <SidebarHeader toggleSidebar={toggleSidebar} onNewChat={onNewChat} />
+                <SidebarHeader 
+                    toggleSidebar={toggleSidebar} 
+                    onNewChat={onNewChat}
+                    isAgentMode={isAgentMode}
+                    onToggleAgentMode={onToggleAgentMode} 
+                />
 
                 {/* Conversation List */}
                 <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1">
                     <div className="flex items-center justify-between px-2 mb-2">
                         <p className="text-xs text-gray-400 dark:text-gray-500 font-medium uppercase tracking-wider">
-                            Recent Chats
+                            {isAgentMode ? 'Recent Agent Sessions' : 'Recent Chats'}
                         </p>
                         {totalConversations > 0 && (
                             <span className="text-xs text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded-full">
@@ -281,9 +293,13 @@ export function Sidebar({
 function SidebarHeader({
     toggleSidebar,
     onNewChat,
+    isAgentMode,
+    onToggleAgentMode,
 }: {
     toggleSidebar: () => void;
     onNewChat: () => void;
+    isAgentMode?: boolean;
+    onToggleAgentMode?: () => void;
 }) {
     return (
         <div className="p-4 border-b border-gray-200 dark:border-gray-800">
@@ -297,6 +313,21 @@ function SidebarHeader({
                         />
                     </div>
                     <span className="font-bold text-gray-800 dark:text-gray-100">CookHero</span>
+                    
+                    {onToggleAgentMode && (
+                        <button
+                            onClick={onToggleAgentMode}
+                            className={`ml-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-colors ${
+                                isAgentMode 
+                                    ? 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800'
+                                    : 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                            }`}
+                            title={isAgentMode ? "Switch to standard chat" : "Switch to Agent mode"}
+                        >
+                            {isAgentMode ? <Bot className="w-3 h-3" /> : <MessageSquare className="w-3 h-3" />}
+                            {isAgentMode ? 'Agent' : 'Chat'}
+                        </button>
+                    )}
                 </div>
                 <button
                     onClick={toggleSidebar}
@@ -308,10 +339,14 @@ function SidebarHeader({
             </div>
             <button
                 onClick={onNewChat}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-white rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:shadow-md"
+                className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 text-white rounded-xl text-sm font-medium shadow-sm transition-all duration-200 hover:shadow-md ${
+                    isAgentMode 
+                        ? 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700' 
+                        : 'bg-gradient-to-r from-orange-400 to-orange-500 hover:from-orange-500 hover:to-orange-600'
+                }`}
             >
                 <Plus className="w-4 h-4" />
-                New Chat
+                {isAgentMode ? 'New Agent Session' : 'New Chat'}
             </button>
         </div>
     );

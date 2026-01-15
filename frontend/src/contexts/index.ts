@@ -10,3 +10,6 @@ export type { ThemeContextValue } from './ThemeContext';
 
 export { ConversationProvider, useConversationContext } from './ConversationContext';
 export type { ConversationContextValue } from './ConversationContext';
+
+export { AgentProvider, useAgentContext } from './AgentContext';
+export type { AgentContextValue } from './AgentContext';
