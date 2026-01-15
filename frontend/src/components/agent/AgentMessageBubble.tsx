@@ -147,9 +147,9 @@ export function AgentMessageBubble({ message }: AgentMessageBubbleProps) {
         {/* Message Text (hide while only thinking) */}
         {!isThinkingPhase && (
           <div
-            className={`text-sm leading-relaxed ${
+            className={`text-sm leading-relaxed break-words ${
               isUser
-                ? 'bg-gradient-to-br from-purple-500 to-purple-600 text-white px-4 py-1 rounded-2xl shadow-sm'
+                ? 'bg-gradient-to-br from-blue-500 to-blue-500 text-white px-4 py-1 rounded-2xl shadow-sm'
                 : 'prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100 px-0 py-0'
             }`}
           >

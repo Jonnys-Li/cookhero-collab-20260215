@@ -76,7 +76,7 @@ export function AgentChatInput({
   return (
     <div className="relative">
       {/* Input area */}
-      <div className="relative flex items-end gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-purple-500/20 focus-within:border-purple-500 transition-all">
+      <div className="relative flex items-end gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-purple-500/20 transition-all">
         <textarea
           ref={textareaRef}
           value={input}
@@ -86,7 +86,7 @@ export function AgentChatInput({
           onCompositionEnd={() => setIsComposing(false)}
           placeholder={placeholder}
           rows={1}
-          className="flex-1 max-h-[200px] py-1.5 px-2 bg-transparent border-none focus:ring-0 resize-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed scrollbar-hide"
+          className="flex-1 max-h-[200px] py-1.5 px-2 bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed scrollbar-hide"
         />
         {isStreaming ? (
           <button

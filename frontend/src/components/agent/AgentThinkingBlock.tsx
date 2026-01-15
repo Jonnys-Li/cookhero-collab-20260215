@@ -65,10 +65,10 @@ export function AgentThinkingBlock({ trace, isThinking, thinkingDuration }: Agen
   const iterations = trace.length > 0 ? Math.max(...trace.map(t => t.iteration)) + 1 : 0;
 
   return (
-    <div className="my-2 border border-purple-200 dark:border-purple-800 rounded-lg overflow-hidden bg-purple-50 dark:bg-purple-900/20">
+    <div className="my-2 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden bg-gray-50 dark:bg-gray-800/50">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className="w-full flex items-center justify-between p-2 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/30 transition-colors"
+          className="w-full flex items-center justify-between p-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
           aria-expanded={isOpen}
           aria-controls="agent-trace-steps"
         >
@@ -76,16 +76,16 @@ export function AgentThinkingBlock({ trace, isThinking, thinkingDuration }: Agen
             {isThinking ? (
               <Loader2 className="w-4 h-4 animate-spin text-purple-500" />
             ) : (
-              <Cpu className="w-4 h-4 text-purple-500" />
+              <Cpu className="w-4 h-4 text-green-500" />
             )}
-            <span className="font-medium">思考过程</span>
+            <span className="font-medium">Thinking Process</span>
           {!isThinking && iterations > 0 && (
-            <span className="text-xs text-purple-400 dark:text-purple-500">
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               ({iterations} iteration{iterations > 1 ? 's' : ''})
             </span>
           )}
           {!isThinking && thinkingDuration !== undefined && (
-            <span className="text-xs text-purple-400 dark:text-purple-500 flex items-center gap-1">
+            <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {formatDuration(thinkingDuration)}
             </span>
@@ -101,7 +101,7 @@ export function AgentThinkingBlock({ trace, isThinking, thinkingDuration }: Agen
         {isOpen && (
           <div
             id="agent-trace-steps"
-            className="p-3 text-sm space-y-3 border-t border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-900/50"
+            className="p-3 text-sm space-y-3 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900"
           >
             {hasDisplayableSteps ? (
               displayableSteps.map((step, index) => (
@@ -136,7 +136,7 @@ function TraceStepItem({ step }: { step: TraceStep }) {
     if (hasError) {
       return {
         icon: <AlertCircle className="w-4 h-4 text-red-500" />,
-        bgColor: 'bg-red-50 dark:bg-red-900/20',
+        bgColor: 'bg-red-50 dark:bg-red-900/30',
         borderColor: 'border-red-200 dark:border-red-800',
         label: 'Error',
       };
@@ -144,7 +144,7 @@ function TraceStepItem({ step }: { step: TraceStep }) {
     if (step.action === 'tool_call') {
       return {
         icon: <Play className="w-4 h-4 text-amber-500" />,
-        bgColor: 'bg-amber-50 dark:bg-amber-900/20',
+        bgColor: 'bg-amber-50 dark:bg-amber-900/30',
         borderColor: 'border-amber-200 dark:border-amber-800',
         label: 'Tool Call',
       };
@@ -152,7 +152,7 @@ function TraceStepItem({ step }: { step: TraceStep }) {
     if (step.action === 'tool_result') {
       return {
         icon: <ArrowRight className="w-4 h-4 text-blue-500" />,
-        bgColor: 'bg-blue-50 dark:bg-blue-900/20',
+        bgColor: 'bg-blue-50 dark:bg-blue-900/30',
         borderColor: 'border-blue-200 dark:border-blue-800',
         label: 'Result',
       };
@@ -160,14 +160,14 @@ function TraceStepItem({ step }: { step: TraceStep }) {
     if (step.action === 'final_answer') {
       return {
         icon: <CheckCircle2 className="w-4 h-4 text-green-500" />,
-        bgColor: 'bg-green-50 dark:bg-green-900/20',
+        bgColor: 'bg-green-50 dark:bg-green-900/30',
         borderColor: 'border-green-200 dark:border-green-800',
         label: 'Complete',
       };
     }
     return {
       icon: <Cpu className="w-4 h-4 text-purple-500" />,
-      bgColor: 'bg-purple-50 dark:bg-purple-900/20',
+      bgColor: 'bg-purple-50 dark:bg-purple-900/30',
       borderColor: 'border-purple-200 dark:border-purple-800',
       label: step.action.replace(/_/g, ' '),
     };

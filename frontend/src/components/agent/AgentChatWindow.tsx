@@ -122,15 +122,19 @@ function EmptyState({
     return (
         <div className="flex flex-col items-center justify-center h-full w-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500 overflow-x-hidden px-4 box-border">
             <section className="relative flex-1 flex flex-col items-center justify-center overflow-hidden">
-                <div className="w-24 h-24 bg-purple-100 dark:bg-purple-900/30 rounded-2xl flex items-center justify-center mb-6 text-purple-600 dark:text-purple-400">
-                    <Bot className="w-12 h-12" />
+                <div className="flex items-center gap-4">
+                    <div className="w-20 h-20 bg-purple-100 dark:bg-purple-900/30 rounded-2xl flex items-center justify-center text-purple-600 dark:text-purple-400 shrink-0">
+                        <Bot className="w-10 h-10" />
+                    </div>
+                    <div>
+                        <h2 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-indigo-600 dark:from-purple-400 dark:to-indigo-400">
+                            Your Personal Agent
+                        </h2>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mt-1">
+                            Calculate, analyze, and plan with intelligent tools
+                        </p>
+                    </div>
                 </div>
-                <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-                    CookHero Agent
-                </h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md text-center mb-8">
-                    I can help you with complex tasks using tools like calculator, python code execution, and web search.
-                </p>
             </section>
 
             {/* Agent Feature Cards */}
@@ -155,7 +159,7 @@ function EmptyState({
             {/* Suggestion Chips */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 w-full max-w-2xl">
                 <SuggestionChip
-                    text="Calculate calories for 200g chicken breast"
+                    text="Calculate calories of 20g chicken"
                     emoji="🐔"
                     onClick={onSuggestionClick}
                 />
