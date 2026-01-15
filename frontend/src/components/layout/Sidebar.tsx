@@ -232,6 +232,7 @@ export function Sidebar({
                                     key={conv.id}
                                     conversation={conv}
                                     isActive={currentConversationId === conv.id}
+                                    isAgentMode={isAgentMode}
                                     isEditing={editingId === conv.id}
                                     editingTitle={editingTitle}
                                     menuOpen={menuOpenId === conv.id}
@@ -320,12 +321,12 @@ function SidebarHeader({
                             className={`ml-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border transition-colors ${
                                 isAgentMode 
                                     ? 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800'
-                                    : 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'
+                                    : 'bg-orange-100 text-orange-600 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-800 hover:bg-orange-200 dark:hover:bg-orange-800'
                             }`}
                             title={isAgentMode ? "Switch to standard chat" : "Switch to Agent mode"}
                         >
                             {isAgentMode ? <Bot className="w-3 h-3" /> : <MessageSquare className="w-3 h-3" />}
-                            {isAgentMode ? 'Agent' : 'Chat'}
+                            {isAgentMode ? 'Agent Mode' : '\u00A0Chat Mode'}
                         </button>
                     )}
                 </div>
@@ -346,7 +347,7 @@ function SidebarHeader({
                 }`}
             >
                 <Plus className="w-4 h-4" />
-                {isAgentMode ? 'New Agent Session' : 'New Chat'}
+                {isAgentMode ? 'New Agent Session' : 'New Chat Session'}
             </button>
         </div>
     );
@@ -397,6 +398,7 @@ function SidebarFooter({
 function ConversationItem({
     conversation,
     isActive,
+    isAgentMode,
     isEditing,
     editingTitle,
     menuOpen,
@@ -415,6 +417,7 @@ function ConversationItem({
 }: {
     conversation: ConversationSummary;
     isActive: boolean;
+    isAgentMode?: boolean;
     isEditing: boolean;
     editingTitle: string;
     menuOpen: boolean;
@@ -437,8 +440,8 @@ function ConversationItem({
 
     if (isEditing) {
         return (
-            <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white dark:bg-gray-800 border border-orange-400 dark:border-orange-500">
-                <MessageSquare className="w-4 h-4 shrink-0 text-orange-500" />
+            <div className={`flex items-center gap-2 px-3 py-2.5 rounded-xl bg-white dark:bg-gray-800 border ${isAgentMode ? 'border-purple-400 dark:border-purple-500' : 'border-orange-400 dark:border-orange-500'}`}>
+                <MessageSquare className={`w-4 h-4 shrink-0 ${isAgentMode ? 'text-purple-500' : 'text-orange-500'}`} />
                 <input
                     ref={editInputRef}
                     type="text"
@@ -483,7 +486,7 @@ function ConversationItem({
         `}
             >
                 <MessageSquare
-                    className={`w-4 h-4 shrink-0 ${isActive ? 'text-orange-500' : ''}`}
+                    className={`w-4 h-4 shrink-0 ${isActive ? (isAgentMode ? 'text-purple-500' : 'text-orange-500') : ''}`}
                 />
                 <span className="truncate flex-1">{displayTitle}</span>
 
