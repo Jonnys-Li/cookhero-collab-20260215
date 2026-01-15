@@ -244,7 +244,7 @@ export function ChatInput({
       )}
       
       {/* Input area */}
-      <div className="relative flex items-end gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+      <div className="relative flex items-end gap-2 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-orange-500/20 transition-all">
         {/* Image upload button */}
         <button
           onClick={handleImageClick}
@@ -280,7 +280,7 @@ export function ChatInput({
           onCompositionEnd={() => setIsComposing(false)}
           placeholder={images.length > 0 ? 'Describe your image or ask a question...' : placeholder}
           rows={1}
-          className="flex-1 max-h-[200px] py-1.5 px-2 bg-transparent border-none focus:ring-0 resize-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed scrollbar-hide"
+          className="flex-1 max-h-[200px] py-1.5 px-2 bg-transparent border-none focus:ring-0 focus:outline-none resize-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 text-sm leading-relaxed scrollbar-hide"
         />
         {isStreaming ? (
           <button
