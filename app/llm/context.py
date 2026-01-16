@@ -1,31 +1,31 @@
-# app/llm/context.py
 """
-LLM call context management using contextvars.
-Provides a way to pass tracking information (module_name, user_id, conversation_id)
-through the call stack without modifying function signatures.
+LLM 调用上下文管理
+
+使用 contextvars 在调用栈中传递跟踪信息（module_name, user_id, conversation_id），
+无需修改函数签名。
 """
 
+import uuid
+import logging
 from contextvars import ContextVar
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional
-import uuid
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class LLMCallContext:
-    """Context information for an LLM call."""
+    """LLM 调用上下文信息"""
 
-    request_id: str  # Unique identifier for this LLM request
-    module_name: str  # Name of the module making the call
-    user_id: Optional[str] = None  # User ID (if available)
-    conversation_id: Optional[str] = None  # Conversation ID (if available)
+    request_id: str  # 唯一请求 ID
+    module_name: str  # 调用模块名称
+    user_id: Optional[str] = None  # 用户 ID
+    conversation_id: Optional[str] = None  # 对话 ID
 
 
-# Context variable for the current LLM call
+# 上下文变量
 _llm_context: ContextVar[Optional[LLMCallContext]] = ContextVar(
     "llm_context", default=None
 )
@@ -37,15 +37,15 @@ def set_llm_context(
     conversation_id: Optional[str] = None,
 ) -> LLMCallContext:
     """
-    Set the context for the current LLM call.
+    设置当前 LLM 调用上下文
 
     Args:
-        module_name: Name of the module making the LLM call
-        user_id: User ID (if available)
-        conversation_id: Conversation ID (if available)
+        module_name: 调用模块名称
+        user_id: 用户 ID（可选）
+        conversation_id: 对话 ID（可选）
 
     Returns:
-        The created LLMCallContext instance
+        创建的上下文实例
     """
     ctx = LLMCallContext(
         request_id=str(uuid.uuid4()),
@@ -54,37 +54,16 @@ def set_llm_context(
         conversation_id=conversation_id,
     )
     _llm_context.set(ctx)
-    logger.debug(
-        "LLM context SET: module=%s, user_id=%s, conv_id=%s",
-        module_name,
-        user_id,
-        conversation_id[:8] if conversation_id else None,
-    )
     return ctx
 
 
 def get_llm_context() -> Optional[LLMCallContext]:
-    """
-    Get the current LLM call context.
-
-    Returns:
-        The current LLMCallContext or None if not set
-    """
-    ctx = _llm_context.get()
-    if ctx:
-        logger.debug(
-            "LLM context GET: module=%s, user_id=%s, conv_id=%s",
-            ctx.module_name,
-            ctx.user_id,
-            ctx.conversation_id[:8] if ctx.conversation_id else None,
-        )
-    else:
-        logger.debug("LLM context GET: no context set")
-    return ctx
+    """获取当前 LLM 调用上下文"""
+    return _llm_context.get()
 
 
 def clear_llm_context() -> None:
-    """Clear the current LLM call context."""
+    """清除当前 LLM 调用上下文"""
     _llm_context.set(None)
 
 
@@ -95,20 +74,21 @@ def llm_context(
     conversation_id: Optional[str] = None,
 ):
     """
-    Context manager for LLM call context.
-    Automatically sets and clears the context.
+    LLM 调用上下文管理器
 
-    Usage:
+    自动设置和清除上下文。
+
+    使用方式:
         with llm_context("intent_detector", user_id="user123"):
             response = await llm.ainvoke(messages)
 
     Args:
-        module_name: Name of the module making the LLM call
-        user_id: User ID (if available)
-        conversation_id: Conversation ID (if available)
+        module_name: 调用模块名称
+        user_id: 用户 ID（可选）
+        conversation_id: 对话 ID（可选）
 
     Yields:
-        The created LLMCallContext instance
+        创建的上下文实例
     """
     ctx = set_llm_context(module_name, user_id, conversation_id)
     try:
