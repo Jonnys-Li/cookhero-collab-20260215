@@ -176,7 +176,7 @@ class RAGService:
         filter_catalog = document_repository.get_metadata_for_filter(user_id)
         metadata_expression = (
             await self.metadata_filter_extractor.build_filter_expression(
-                query, filter_catalog
+                query, filter_catalog, user_id, conversation_id
             )
         )
 
