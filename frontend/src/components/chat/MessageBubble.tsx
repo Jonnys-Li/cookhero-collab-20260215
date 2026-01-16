@@ -13,6 +13,7 @@ import { CopyButton } from '../common';
 
 export interface MessageBubbleProps {
   message: Message;
+  hasError?: boolean;
 }
 
 /**
@@ -92,7 +93,7 @@ function SourceItem({ source, index }: { source: Source; index: number }) {
   );
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, hasError = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const hasText = !!(message.content && message.content.trim().length > 0);
   const thinkingSteps = message.thinking ?? [];
@@ -171,6 +172,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               steps={thinkingSteps} 
               isThinking={isThinkingPhase} 
               thinkingDuration={thinkingDuration}
+              hasError={hasError}
             />
           </div>
         )}

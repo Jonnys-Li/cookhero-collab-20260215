@@ -12,9 +12,10 @@ export interface AgentChatWindowProps {
     messages: Message[];
     isLoading: boolean;
     onSuggestionClick?: (text: string) => void;
+    error?: string | null;
 }
 
-export function AgentChatWindow({ messages, isLoading, onSuggestionClick }: AgentChatWindowProps) {
+export function AgentChatWindow({ messages, isLoading, onSuggestionClick, error }: AgentChatWindowProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [isNearBottom, setIsNearBottom] = useState(true);
@@ -95,7 +96,7 @@ export function AgentChatWindow({ messages, isLoading, onSuggestionClick }: Agen
             ) : (
                 <div className="max-w-3xl mx-auto w-full">
                     {messages.map((message) => (
-                        <AgentMessageBubble key={message.id} message={message} />
+                        <AgentMessageBubble key={message.id} message={message} hasError={!!error} />
                     ))}
 
                     {/* Loading indicator */}

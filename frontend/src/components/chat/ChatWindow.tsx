@@ -12,9 +12,10 @@ export interface ChatWindowProps {
     messages: Message[];
     isLoading: boolean;
     onSuggestionClick?: (text: string) => void;
+    error?: string | null;
 }
 
-export function ChatWindow({ messages, isLoading, onSuggestionClick }: ChatWindowProps) {
+export function ChatWindow({ messages, isLoading, onSuggestionClick, error }: ChatWindowProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLDivElement>(null);
     const [isNearBottom, setIsNearBottom] = useState(true);
@@ -77,7 +78,7 @@ export function ChatWindow({ messages, isLoading, onSuggestionClick }: ChatWindo
             ) : (
                 <div className="max-w-3xl mx-auto w-full">
                     {messages.map((message) => (
-                        <MessageBubble key={message.id} message={message} />
+                        <MessageBubble key={message.id} message={message} hasError={!!error} />
                     ))}
 
                     {/* Loading indicator */}

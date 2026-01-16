@@ -12,6 +12,7 @@ import { CopyButton } from '../common';
 
 export interface AgentMessageBubbleProps {
   message: Message;
+  hasError?: boolean;
 }
 
 /**
@@ -69,7 +70,7 @@ function parseTrace(trace: any[] | undefined): TraceStep[] {
   });
 }
 
-export function AgentMessageBubble({ message }: AgentMessageBubbleProps) {
+export function AgentMessageBubble({ message, hasError = false }: AgentMessageBubbleProps) {
   const isUser = message.role === 'user';
   const hasText = !!(message.content && message.content.trim().length > 0);
   
@@ -140,6 +141,7 @@ export function AgentMessageBubble({ message }: AgentMessageBubbleProps) {
               trace={traceData} 
               isThinking={isThinkingPhase} 
               thinkingDuration={thinkingDuration}
+              hasError={hasError}
             />
           </div>
         )}

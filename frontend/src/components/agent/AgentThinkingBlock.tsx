@@ -22,9 +22,10 @@ export interface AgentThinkingBlockProps {
   trace: TraceStep[];
   isThinking: boolean;
   thinkingDuration?: number; // Duration in milliseconds
+  hasError?: boolean; // Whether an error occurred during thinking
 }
 
-export function AgentThinkingBlock({ trace, isThinking, thinkingDuration }: AgentThinkingBlockProps) {
+export function AgentThinkingBlock({ trace, isThinking, thinkingDuration, hasError = false }: AgentThinkingBlockProps) {
   const [isOpen, setIsOpen] = useState(true);
   const hasSteps = trace.length > 0;
 
@@ -84,7 +85,7 @@ export function AgentThinkingBlock({ trace, isThinking, thinkingDuration }: Agen
               ({iterations} iteration{iterations > 1 ? 's' : ''})
             </span>
           )}
-          {!isThinking && thinkingDuration !== undefined && (
+          {!isThinking && thinkingDuration !== undefined && !hasError && (
             <span className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
               <Clock className="w-3 h-3" />
               {formatDuration(thinkingDuration)}

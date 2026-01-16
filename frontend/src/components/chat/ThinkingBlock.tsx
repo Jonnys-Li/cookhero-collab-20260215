@@ -10,9 +10,10 @@ export interface ThinkingBlockProps {
   steps: string[];
   isThinking: boolean;
   thinkingDuration?: number; // Duration in milliseconds
+  hasError?: boolean; // Whether an error occurred during thinking
 }
 
-export function ThinkingBlock({ steps, isThinking, thinkingDuration }: ThinkingBlockProps) {
+export function ThinkingBlock({ steps, isThinking, thinkingDuration, hasError = false }: ThinkingBlockProps) {
   const [isOpen, setIsOpen] = useState(true);
   const hasSteps = steps.length > 0;
   const shouldRender = hasSteps || isThinking;
@@ -49,7 +50,7 @@ export function ThinkingBlock({ steps, isThinking, thinkingDuration }: ThinkingB
             <CheckCircle2 className="w-4 h-4 text-green-500" />
           )}
           <span className="font-medium">Thinking Process</span>
-          {!isThinking && thinkingDuration !== undefined && (
+          {!isThinking && thinkingDuration !== undefined && !hasError && (
             <span className="text-xs text-gray-400 dark:text-gray-500">
               ({formatDuration(thinkingDuration)})
             </span>
