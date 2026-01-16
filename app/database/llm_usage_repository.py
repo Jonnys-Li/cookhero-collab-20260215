@@ -32,6 +32,7 @@ class LLMUsageRepository:
         user_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
         model_name: Optional[str] = None,
+        tool_name: Optional[str] = None,
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
         total_tokens: Optional[int] = None,
@@ -46,6 +47,7 @@ class LLMUsageRepository:
             user_id: User ID (if available)
             conversation_id: Conversation ID (if available)
             model_name: Name of the LLM model used
+            tool_name: Name of the tool used (if applicable)
             input_tokens: Number of input tokens
             output_tokens: Number of output tokens
             total_tokens: Total tokens used
@@ -62,6 +64,7 @@ class LLMUsageRepository:
                 user_id=user_id,
                 conversation_id=uuid.UUID(conversation_id) if conversation_id else None,
                 model_name=model_name,
+                tool_name=tool_name,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 total_tokens=total_tokens,
@@ -71,9 +74,10 @@ class LLMUsageRepository:
             await session.commit()
 
             logger.debug(
-                "Created LLM usage log: module=%s, model=%s, tokens=%s",
+                "Created LLM usage log: module=%s, model=%s, tool=%s, tokens=%s",
                 module_name,
                 model_name,
+                tool_name,
                 total_tokens,
             )
             return log
@@ -376,6 +380,161 @@ class LLMUsageRepository:
 
             return list(rows) # type: ignore
 
+    async def get_distinct_tools(self) -> List[str]:
+        """
+        Get list of distinct tool names that have been used.
+
+        Returns:
+            List of unique tool names
+        """
+        async with get_session_context() as session:
+            stmt = (
+                select(LLMUsageLogModel.tool_name)
+                .distinct()
+                .where(LLMUsageLogModel.tool_name.isnot(None))
+                .order_by(LLMUsageLogModel.tool_name)
+            )
+
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+
+            return list(rows) # type: ignore
+
+    async def get_distribution_by_tool(
+        self,
+        user_id: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        model_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get usage distribution grouped by tool.
+
+        Args:
+            user_id: Filter by user ID
+            start_date: Filter by start date
+            end_date: Filter by end date
+            model_name: Filter by model name
+            module_name: Filter by module name
+
+        Returns:
+            List of tool statistics
+        """
+        async with get_session_context() as session:
+            conditions = self._build_conditions(
+                user_id=user_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            if model_name:
+                conditions.append(LLMUsageLogModel.model_name == model_name)
+            if module_name:
+                conditions.append(LLMUsageLogModel.module_name == module_name)
+
+            stmt = select(
+                LLMUsageLogModel.tool_name,
+                func.count(LLMUsageLogModel.id).label("call_count"),
+                func.sum(LLMUsageLogModel.input_tokens).label("input_tokens"),
+                func.sum(LLMUsageLogModel.output_tokens).label("output_tokens"),
+                func.sum(LLMUsageLogModel.total_tokens).label("total_tokens"),
+                func.avg(LLMUsageLogModel.total_tokens).label("avg_tokens"),
+                func.avg(LLMUsageLogModel.duration_ms).label("avg_duration_ms"),
+            )
+
+            if conditions:
+                stmt = stmt.where(and_(*conditions))
+
+            stmt = stmt.group_by(LLMUsageLogModel.tool_name).order_by(
+                func.sum(LLMUsageLogModel.total_tokens).desc()
+            )
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            return [
+                {
+                    "tool_name": row.tool_name or "no_tool",
+                    "call_count": row.call_count,
+                    "input_tokens": row.input_tokens or 0,
+                    "output_tokens": row.output_tokens or 0,
+                    "total_tokens": row.total_tokens or 0,
+                    "avg_tokens": float(row.avg_tokens) if row.avg_tokens else 0,
+                    "avg_duration_ms": float(row.avg_duration_ms) if row.avg_duration_ms else 0,
+                }
+                for row in rows
+            ]
+
+    async def get_tool_time_series(
+        self,
+        days: int = 7,
+        granularity: str = "hour",
+        user_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        module_name: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get time series data for tool usage.
+
+        Args:
+            days: Number of days to look back
+            granularity: Time grouping ("hour" or "day")
+            user_id: Filter by user ID
+            model_name: Filter by model name
+            module_name: Filter by module name
+
+        Returns:
+            List of time series data points
+        """
+        async with get_session_context() as session:
+            start_date = datetime.utcnow() - timedelta(days=days)
+
+            conditions = [LLMUsageLogModel.created_at >= start_date]
+            if user_id:
+                conditions.append(LLMUsageLogModel.user_id == user_id)
+            if model_name:
+                conditions.append(LLMUsageLogModel.model_name == model_name)
+            if module_name:
+                conditions.append(LLMUsageLogModel.module_name == module_name)
+
+            # Time grouping
+            if granularity == "day":
+                date_trunc = func.date_trunc("day", LLMUsageLogModel.created_at)
+            else:
+                date_trunc = func.date_trunc("hour", LLMUsageLogModel.created_at)
+
+            stmt = (
+                select(
+                    date_trunc.label("period"),
+                    LLMUsageLogModel.tool_name,
+                    func.count(LLMUsageLogModel.id).label("call_count"),
+                    func.sum(LLMUsageLogModel.input_tokens).label("input_tokens"),
+                    func.sum(LLMUsageLogModel.output_tokens).label("output_tokens"),
+                    func.sum(LLMUsageLogModel.total_tokens).label("total_tokens"),
+                    func.avg(LLMUsageLogModel.duration_ms).label("avg_duration_ms"),
+                )
+                .where(and_(*conditions))
+                .group_by(date_trunc, LLMUsageLogModel.tool_name)
+                .order_by(date_trunc, LLMUsageLogModel.tool_name)
+            )
+
+            result = await session.execute(stmt)
+            rows = result.all()
+
+            return [
+                {
+                    "period": row.period.isoformat() if row.period else None,
+                    "tool_name": row.tool_name or "no_tool",
+                    "call_count": row.call_count,
+                    "input_tokens": row.input_tokens or 0,
+                    "output_tokens": row.output_tokens or 0,
+                    "total_tokens": row.total_tokens or 0,
+                    "avg_duration_ms": float(row.avg_duration_ms) if row.avg_duration_ms else 0,
+                }
+                for row in rows
+            ]
+
     # ==================== Helper Methods ====================
 
     def _log_to_dict(self, log: LLMUsageLogModel) -> Dict[str, Any]:
@@ -387,6 +546,7 @@ class LLMUsageRepository:
             "user_id": log.user_id,
             "conversation_id": str(log.conversation_id) if log.conversation_id else None,
             "model_name": log.model_name,
+            "tool_name": log.tool_name,
             "input_tokens": log.input_tokens,
             "output_tokens": log.output_tokens,
             "total_tokens": log.total_tokens,

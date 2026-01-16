@@ -354,6 +354,8 @@ class LLMUsageLogModel(Base):
     )
     # Model information
     model_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    # Tool information (if this LLM call involved tool usage)
+    tool_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     # Token usage statistics
     input_tokens: Mapped[Optional[int]] = mapped_column(nullable=True)
     output_tokens: Mapped[Optional[int]] = mapped_column(nullable=True)
@@ -376,6 +378,8 @@ class LLMUsageLogModel(Base):
         Index("ix_llm_usage_conversation", "conversation_id"),
         # Model + time query
         Index("ix_llm_usage_model_created", "model_name", "created_at"),
+        # Tool + time query
+        Index("ix_llm_usage_tool_created", "tool_name", "created_at"),
     )
 
     def to_dict(self) -> dict:
@@ -387,6 +391,7 @@ class LLMUsageLogModel(Base):
             "user_id": self.user_id,
             "conversation_id": str(self.conversation_id) if self.conversation_id else None,
             "model_name": self.model_name,
+            "tool_name": self.tool_name,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
