@@ -12,6 +12,8 @@ import type {
   ConversationLLMStatsResponse,
   ModulesListResponse,
   ModelsListResponse,
+  ToolDistributionResponse,
+  ToolsListResponse,
 } from '../../types/llmStats';
 
 /**
@@ -173,6 +175,79 @@ export async function getLLMStatsModels(token: string): Promise<ModelsListRespon
 
   if (!response.ok) {
     throw new Error(`Failed to fetch LLM models: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get list of available tools
+ */
+export async function getLLMStatsTools(token: string): Promise<ToolsListResponse> {
+  const response = await fetch(`${API_BASE}/llm-stats/tools`, {
+    headers: createAuthHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch LLM tools: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get LLM usage distribution by tool
+ */
+export async function getLLMStatsDistributionByTool(
+  token: string,
+  startDate?: string,
+  endDate?: string,
+  modelName?: string,
+  moduleName?: string
+): Promise<ToolDistributionResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  if (modelName) params.append('model_name', modelName);
+  if (moduleName) params.append('module_name', moduleName);
+
+  const queryString = params.toString();
+  const url = `${API_BASE}/llm-stats/distribution/by-tool${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetch(url, {
+    headers: createAuthHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch LLM stats tool distribution: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get tool usage time series data
+ */
+export async function getLLMStatsToolTimeSeries(
+  token: string,
+  days: number = 7,
+  granularity: 'day' | 'hour' = 'day',
+  modelName?: string,
+  moduleName?: string
+): Promise<TimeSeriesResponse> {
+  const params = new URLSearchParams({
+    days: days.toString(),
+    granularity,
+  });
+  if (modelName) params.append('model_name', modelName);
+  if (moduleName) params.append('module_name', moduleName);
+
+  const response = await fetch(`${API_BASE}/llm-stats/time-series/tools?${params}`, {
+    headers: createAuthHeaders(token),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch LLM tool time series: ${response.status}`);
   }
 
   return response.json();

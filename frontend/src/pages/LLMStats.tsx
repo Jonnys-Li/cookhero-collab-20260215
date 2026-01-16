@@ -35,6 +35,11 @@ import {
   getLLMStatsTimeSeries,
   getLLMStatsDistributionByModule,
   getLLMStatsDistributionByModel,
+  getLLMStatsDistributionByTool,
+  getLLMStatsToolTimeSeries,
+  getLLMStatsModules,
+  getLLMStatsModels,
+  getLLMStatsTools,
 } from '../services/api/llmStats';
 import type {
   LLMStatsSummary,
@@ -43,6 +48,9 @@ import type {
   ModelDistributionResponse,
   ModuleDistribution,
   ModelDistribution,
+  ToolDistribution,
+  ToolDistributionResponse,
+  ToolTimeSeriesDataPoint,
 } from '../types/llmStats';
 
 // Chart colors
@@ -372,9 +380,16 @@ export default function LLMStatsPage() {
   const [timeSeries, setTimeSeries] = useState<TimeSeriesResponse | null>(null);
   const [moduleDist, setModuleDist] = useState<ModuleDistributionResponse | null>(null);
   const [modelDist, setModelDist] = useState<ModelDistributionResponse | null>(null);
-  
+  const [toolDist, setToolDist] = useState<ToolDistributionResponse | null>(null);
+  const [toolTimeSeries, setToolTimeSeries] = useState<TimeSeriesResponse | null>(null);
+
+  const [availableModules, setAvailableModules] = useState<string[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [availableTools, setAvailableTools] = useState<string[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [tsLoading, setTsLoading] = useState(false);
+  const [toolLoading, setToolLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
    // Filters
@@ -385,6 +400,10 @@ export default function LLMStatsPage() {
 
   const [customStart, setCustomStart] = useState<string>('');
   const [customEnd, setCustomEnd] = useState<string>('');
+
+  // Tool filter states
+  const [selectedModelForTool, setSelectedModelForTool] = useState<string>('');
+  const [selectedModuleForTool, setSelectedModuleForTool] = useState<string>('');
 
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
@@ -397,17 +416,23 @@ export default function LLMStatsPage() {
     setError(null);
 
     try {
-      const [summaryData, tsData, modDistData, modelDistData] = await Promise.all([
+      const [summaryData, tsData, modDistData, modelDistData, modulesData, modelsData, toolsData] = await Promise.all([
         getLLMStatsSummary(token),
         getLLMStatsTimeSeries(token, days, granularity),
         getLLMStatsDistributionByModule(token, customStart || undefined, customEnd || undefined),
         getLLMStatsDistributionByModel(token, customStart || undefined, customEnd || undefined),
+        getLLMStatsModules(token),
+        getLLMStatsModels(token),
+        getLLMStatsTools(token),
       ]);
 
       setSummary(summaryData);
       setTimeSeries(tsData);
       setModuleDist(modDistData);
       setModelDist(modelDistData);
+      setAvailableModules(modulesData.modules);
+      setAvailableModels(modelsData.models);
+      setAvailableTools(toolsData.tools);
     } catch (err) {
       console.error('Failed to load LLM stats:', err);
       setError(err instanceof Error ? err.message : '加载数据失败');
@@ -446,6 +471,37 @@ export default function LLMStatsPage() {
     }
   }, [token, customStart, customEnd]);
 
+  // Load tool statistics
+  const loadToolStats = useCallback(async () => {
+    if (!token) return;
+
+    setToolLoading(true);
+    try {
+      const [toolDistData, toolTsData] = await Promise.all([
+        getLLMStatsDistributionByTool(
+          token,
+          customStart || undefined,
+          customEnd || undefined,
+          selectedModelForTool || undefined,
+          selectedModuleForTool || undefined
+        ),
+        getLLMStatsToolTimeSeries(
+          token,
+          days,
+          granularity,
+          selectedModelForTool || undefined,
+          selectedModuleForTool || undefined
+        ),
+      ]);
+      setToolDist(toolDistData);
+      setToolTimeSeries(toolTsData);
+    } catch (err) {
+      console.error('Failed to load tool stats:', err);
+    } finally {
+      setToolLoading(false);
+    }
+  }, [token, days, granularity, customStart, customEnd, selectedModelForTool, selectedModuleForTool]);
+
   useEffect(() => {
     loadData();
   }, [loadData]); // Note: loadData depends on customStart/End now, so it will reload everything when they change.
@@ -461,6 +517,10 @@ export default function LLMStatsPage() {
       loadDistribution();
     }
   }, [customStart, customEnd]);
+
+  useEffect(() => {
+    loadToolStats();
+  }, [loadToolStats]);
 
 
   // Process distribution data for charts
@@ -753,6 +813,131 @@ export default function LLMStatsPage() {
                </tbody>
              </table>
            </div>
+        </div>
+
+        {/* Tool Statistics Section */}
+        <div className="mt-6 bg-white dark:bg-gray-900/60 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-800">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-violet-100 dark:bg-violet-500/10 flex items-center justify-center">
+                  <Cpu className="w-4 h-4 text-violet-500" />
+                </div>
+                <h3 className="font-semibold text-gray-900 dark:text-white">工具调用统计</h3>
+              </div>
+              <button
+                onClick={loadToolStats}
+                className="p-2 rounded-lg text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 dark:hover:text-gray-300 transition-colors"
+                title="刷新工具数据"
+              >
+                <RefreshCcw className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Tool Filters */}
+          <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-b border-gray-200 dark:border-gray-800">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                  模型筛选:
+                </label>
+                <select
+                  value={selectedModelForTool}
+                  onChange={(e) => setSelectedModelForTool(e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none"
+                >
+                  <option value="">全部模型</option>
+                  {availableModels.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                  模块筛选:
+                </label>
+                <select
+                  value={selectedModuleForTool}
+                  onChange={(e) => setSelectedModuleForTool(e.target.value)}
+                  className="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none"
+                >
+                  <option value="">全部模块</option>
+                  {availableModules.map((module) => (
+                    <option key={module} value={module}>
+                      {module}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <PeriodSelector
+                days={days}
+                granularity={granularity}
+                onDaysChange={setDays}
+                onGranularityChange={setGranularity}
+              />
+            </div>
+          </div>
+
+          {/* Tool Distribution Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400">
+                <tr>
+                  <th className="px-6 py-3 font-medium">工具名称</th>
+                  <th className="px-6 py-3 font-medium text-right">调用次数</th>
+                  <th className="px-6 py-3 font-medium text-right">输入 Token</th>
+                  <th className="px-6 py-3 font-medium text-right">输出 Token</th>
+                  <th className="px-6 py-3 font-medium text-right">总 Token</th>
+                  <th className="px-6 py-3 font-medium text-right">平均 Token</th>
+                  <th className="px-6 py-3 font-medium text-right">平均耗时</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                {toolDist?.distribution.map((tool: ToolDistribution) => (
+                  <tr key={tool.tool_name} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
+                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
+                      {tool.tool_name}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {tool.call_count.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {tool.input_tokens.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {tool.output_tokens.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {tool.total_tokens.toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {Math.round(tool.avg_tokens).toLocaleString()}
+                    </td>
+                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                      {Math.round(tool.avg_duration_ms)}ms
+                    </td>
+                  </tr>
+                ))}
+                {(!toolDist || toolDist.distribution.length === 0) && !toolLoading && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      暂无工具调用数据
+                    </td>
+                  </tr>
+                )}
+                {toolLoading && (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
+                      <Loader2 className="w-6 h-6 animate-spin mx-auto text-violet-500" />
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>

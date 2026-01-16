@@ -122,3 +122,39 @@ export interface ModelsListResponse {
   models: string[];
   count: number;
 }
+
+/**
+ * Tool distribution data
+ */
+export interface ToolDistribution {
+  tool_name: string;
+  call_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  avg_tokens: number;
+  avg_duration_ms: number;
+}
+
+/**
+ * Response from tool distribution endpoint
+ */
+export interface ToolDistributionResponse {
+  distribution: ToolDistribution[];
+  count: number;
+}
+
+/**
+ * Response from tools list endpoint
+ */
+export interface ToolsListResponse {
+  tools: string[];
+  count: number;
+}
+
+/**
+ * Time series data point for tool usage
+ */
+export interface ToolTimeSeriesDataPoint extends TimeSeriesDataPoint {
+  tool_name: string;
+}
