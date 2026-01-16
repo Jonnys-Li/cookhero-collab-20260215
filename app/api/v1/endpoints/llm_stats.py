@@ -246,3 +246,105 @@ async def get_available_models():
         "models": models,
         "count": len(models),
     }
+
+
+@router.get("/tools")
+async def get_available_tools():
+    """
+    Get list of available tool names that have been used.
+
+    Returns a list of unique tool names from the usage logs.
+    """
+    tools = await llm_usage_repository.get_distinct_tools()
+
+    return {
+        "tools": tools,
+        "count": len(tools),
+    }
+
+
+@router.get("/distribution/by-tool")
+async def get_distribution_by_tool(
+    request: Request,
+    start_date: Optional[str] = Query(None, description="Start date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="End date (ISO format)"),
+    model_name: Optional[str] = Query(None, description="Filter by model name"),
+    module_name: Optional[str] = Query(None, description="Filter by module name"),
+):
+    """
+    Get LLM usage distribution by tool.
+
+    Returns breakdown of API calls and token usage per tool.
+
+    Query Parameters:
+        start_date: Filter by start date
+        end_date: Filter by end date
+        model_name: Filter by specific model
+        module_name: Filter by specific module
+    """
+    user_id = getattr(request.state, "user_id", None)
+
+    # Parse dates
+    start_dt = None
+    end_dt = None
+    if start_date:
+        try:
+            start_dt = datetime.fromisoformat(start_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid start_date format")
+    if end_date:
+        try:
+            end_dt = datetime.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid end_date format")
+
+    distribution = await llm_usage_repository.get_distribution_by_tool(
+        user_id=user_id,
+        start_date=start_dt,
+        end_date=end_dt,
+        model_name=model_name,
+        module_name=module_name,
+    )
+
+    return {
+        "distribution": distribution,
+        "count": len(distribution),
+    }
+
+
+@router.get("/time-series/tools")
+async def get_tool_time_series(
+    request: Request,
+    days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
+    granularity: str = Query("day", regex="^(day|hour)$", description="Grouping granularity"),
+    model_name: Optional[str] = Query(None, description="Filter by model name"),
+    module_name: Optional[str] = Query(None, description="Filter by module name"),
+):
+    """
+    Get tool usage trends over time.
+
+    Returns time-series data for tool usage metrics,
+    grouped by day or hour.
+
+    Query Parameters:
+        days: Number of days to look back (1-90)
+        granularity: Grouping granularity ("day" or "hour")
+        model_name: Filter by specific model
+        module_name: Filter by specific module
+    """
+    user_id = getattr(request.state, "user_id", None)
+
+    time_series = await llm_usage_repository.get_tool_time_series(
+        days=days,
+        granularity=granularity,
+        user_id=user_id,
+        model_name=model_name,
+        module_name=module_name,
+    )
+
+    return {
+        "period_days": days,
+        "granularity": granularity,
+        "data_points": len(time_series),
+        "time_series": time_series,
+    }
