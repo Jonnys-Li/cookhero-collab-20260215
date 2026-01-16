@@ -559,25 +559,35 @@ export function useConversation(token?: string) {
         // Clear cache since user stopped it explicitly
         streamingCacheRef.current.delete(streamingConvId);
         clearStreamingCache(streamingConvId);
-      } else {
-        console.error('Failed to send message:', err);
-        
-        // Only show error if this conversation is currently displayed
-        if (currentConversationIdRef.current === streamingConvId) {
-          setError(err instanceof Error ? err.message : 'Failed to send message');
-          // Remove the failed assistant message
-          setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
-        }
-        
-        // Clear cache on real error
-        streamingCacheRef.current.delete(streamingConvId);
-        clearStreamingCache(streamingConvId);
-        
-        // Also remove temp conversation from list
-        if (isTempConversation) {
-          setConversationsRef.current(prev => prev.filter(c => c.id !== streamingConvId));
-        }
-      }
+       } else {
+         console.error('Failed to send message:', err);
+         
+         // Stop streaming on error
+         updateStreamingState(
+           msgs => msgs.map(msg =>
+             msg.id === assistantMessageId
+               ? { ...msg, isStreaming: false }
+               : msg
+           ),
+           false
+         );
+         
+         // Only show error if this conversation is currently displayed
+         if (currentConversationIdRef.current === streamingConvId) {
+           setError(err instanceof Error ? err.message : 'Failed to send message');
+           // Remove the failed assistant message
+           setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+         }
+         
+         // Clear cache on real error
+         streamingCacheRef.current.delete(streamingConvId);
+         clearStreamingCache(streamingConvId);
+         
+         // Also remove temp conversation from list
+         if (isTempConversation) {
+           setConversationsRef.current(prev => prev.filter(c => c.id !== streamingConvId));
+         }
+       }
     } finally {
       // Only update loading state if this conversation is still displayed
       if (currentConversationIdRef.current === streamingConvId) {

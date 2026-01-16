@@ -422,10 +422,19 @@ export function useAgent(token?: string) {
             );
             break;
 
-          case 'error':
-            console.error('Agent error:', event.error);
-            setError(event.error || 'An error occurred');
-            break;
+           case 'error':
+             console.error('Agent error:', event.error);
+             setError(event.error || 'An error occurred');
+             // Stop streaming on error
+             updateStreamingState(
+               msgs => msgs.map(msg =>
+                 msg.id === assistantMessageId
+                   ? { ...msg, isStreaming: false }
+                   : msg
+               ),
+               false
+             );
+             break;
 
           case 'done':
             {
@@ -500,6 +509,27 @@ export function useAgent(token?: string) {
         if (currentSessionIdRef.current === streamingSessionId) {
           setError(err instanceof Error ? err.message : 'Failed to send message');
           setMessages(prev => prev.filter(msg => msg.id !== assistantMessageId));
+        }
+        // Stop streaming on error
+        const cached = streamingCacheRef.current.get(streamingSessionId);
+        if (cached) {
+          const updatedMessages = cached.messages.map(msg =>
+            msg.id === assistantMessageId
+              ? { ...msg, isStreaming: false }
+              : msg
+          );
+          streamingCacheRef.current.set(streamingSessionId, {
+            ...cached,
+            messages: updatedMessages,
+            isStreaming: false,
+          });
+          saveStreamingCache(streamingCacheRef.current);
+          
+          // Update UI if this session is currently displayed
+          if (currentSessionIdRef.current === streamingSessionId) {
+            setMessagesRef.current(updatedMessages);
+            setIsStreamingRef.current(false);
+          }
         }
         streamingCacheRef.current.delete(streamingSessionId);
         if (isTempSession) {
