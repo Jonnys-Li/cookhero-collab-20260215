@@ -14,9 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.agent.service import agent_service
-from app.security.prompt_guard import prompt_guard, ThreatLevel
-from app.security.guardrails import guard as nemo_guard, GuardResult
-from app.security.audit import audit_logger
+from app.security.dependencies import check_message_security
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -109,53 +107,12 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     ```
     """
     # ==========================================================================
-    # Security Layer 1: Basic Pattern-based Check (Fast, No LLM)
+    # Security Check: Use unified security check function
     # ==========================================================================
-    scan_result = prompt_guard.scan(request.message)
-    if scan_result.threat_level == ThreatLevel.BLOCKED:
-        # Log security event
-        audit_logger.prompt_injection_blocked(
-            user_id=getattr(http_request.state, "user_id", None),
-            request=http_request,
-            patterns=scan_result.matched_patterns,
-            input_preview=request.message[:100],
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=scan_result.reason or "检测到潜在的恶意输入，请修改您的问题",
-        )
-
-    # ==========================================================================
-    # Security Layer 2: NeMo Guardrails Deep Check (LLM-based, if enabled)
-    # ==========================================================================
-    try:
-        guard_result = await nemo_guard.check_input(request.message)
-        if guard_result.should_block:
-            # Log security event
-            audit_logger.prompt_injection_blocked(
-                user_id=getattr(http_request.state, "user_id", None),
-                request=http_request,
-                patterns=[
-                    "guardrails:"
-                    + (guard_result.details or {}).get("threat_type", "unknown")
-                ],
-                input_preview=request.message[:100],
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=guard_result.reason or "检测到潜在的恶意输入，请修改您的问题",
-            )
-        elif guard_result.result == GuardResult.WARNING:
-            # Log warning but allow through
-            logger.warning(f"Guardrails warning: {guard_result.reason}")
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        # Don't block on guardrails errors, just log
-        logger.error(f"Guardrails check error (non-blocking): {e}")
+    secured_message = await check_message_security(request.message, http_request)
 
     logger.info(
-        f"Agent chat request: '{request.message[:50]}...', agent={request.agent_name}"
+        f"Agent chat request: '{secured_message[:50]}...', agent={request.agent_name}"
     )
 
     # Get user information from request state
@@ -169,7 +126,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
             async for chunk in agent_service.chat(
                 session_id=request.session_id,
                 user_id=user_id,
-                message=request.message,
+                message=secured_message,
                 agent_name=request.agent_name,
                 streaming=request.stream,
             ):
@@ -205,7 +162,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
             async for event in agent_service.chat(
                 session_id=request.session_id,
                 user_id=user_id,
-                message=request.message,
+                message=secured_message,
                 agent_name=request.agent_name,
                 streaming=False,
             ):

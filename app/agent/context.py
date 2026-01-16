@@ -89,9 +89,6 @@ class AgentContextBuilder:
         # 4. 获取可用 Tool schemas
         available_tools = AgentRegistry.get_tool_schemas(config.tools)
 
-        # 5. 获取可用 Skill 元数据
-        available_skills = AgentRegistry.get_skill_metas(config.skills)
-
         return AgentContext(
             system_prompt=config.system_prompt,
             user_id=session.user_id,
@@ -101,7 +98,6 @@ class AgentContextBuilder:
             history_summary=compressed_summary,
             recent_messages=recent_messages,
             available_tools=available_tools,
-            available_skills=available_skills,
             current_message=current_message,
         )
 
@@ -125,16 +121,6 @@ class AgentContextBuilder:
 
         if context.user_instruction:
             system_content += f"\n\n## 用户指令\n{context.user_instruction}"
-
-        # 添加可用 Skill 信息
-        if context.available_skills:
-            skill_info = "\n\n## 可用技能\n"
-            for skill in context.available_skills:
-                skill_info += f"- **{skill['name']}**: {skill['description']}\n"
-            skill_info += (
-                "\n如果需要使用某个技能的详细知识，请告诉用户你正在加载该技能。"
-            )
-            system_content += skill_info
 
         messages.append({"role": "system", "content": system_content})
 
@@ -165,8 +151,8 @@ class AgentContextCompressor:
 
     def __init__(
         self,
-        compression_threshold: int = 6,
-        recent_messages_limit: int = 10,
+        compression_threshold: int = 10,
+        recent_messages_limit: int = 20,
     ):
         """
         初始化压缩器。

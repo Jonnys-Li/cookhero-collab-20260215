@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Optional, Type
 
 from app.agent.types import AgentConfig
 from app.agent.tools.base import BaseTool, ToolExecutor
-from app.agent.skills.base import BaseSkill
 
 if TYPE_CHECKING:
     from app.agent.base import BaseAgent
@@ -29,9 +28,6 @@ class AgentRegistry:
 
     # Tool 注册表：name -> tool_instance
     _tools: dict[str, BaseTool] = {}
-
-    # Skill 注册表：name -> skill_instance
-    _skills: dict[str, BaseSkill] = {}
 
     # ==================== Agent Operations ====================
 
@@ -166,92 +162,6 @@ class AgentRegistry:
     def has_tool(cls, name: str) -> bool:
         """检查 Tool 是否已注册。"""
         return name in cls._tools
-
-    # ==================== Skill Operations ====================
-
-    @classmethod
-    def register_skill(cls, skill: BaseSkill) -> None:
-        """
-        注册 Skill。
-
-        Args:
-            skill: Skill 实例
-        """
-        cls._skills[skill.name] = skill
-        logger.info(f"Registered skill: {skill.name}")
-
-    @classmethod
-    def get_skill(cls, name: str) -> Optional[BaseSkill]:
-        """
-        获取 Skill 实例。
-
-        Args:
-            name: Skill 名称
-
-        Returns:
-            Skill 实例，如果不存在返回 None
-        """
-        return cls._skills.get(name)
-
-    @classmethod
-    def get_skill_metas(cls, names: Optional[list[str]] = None) -> list[dict]:
-        """
-        获取 Skill 元数据。
-
-        Args:
-            names: Skill 名称列表，None 表示全部
-
-        Returns:
-            元数据列表
-        """
-        if names is None:
-            return [s.to_dict() for s in cls._skills.values()]
-        return [cls._skills[n].to_dict() for n in names if n in cls._skills]
-
-    @classmethod
-    def get_skill_prompt(cls, name: str) -> Optional[str]:
-        """
-        获取 Skill 的完整 prompt（触发懒加载）。
-
-        Args:
-            name: Skill 名称
-
-        Returns:
-            Skill prompt，如果不存在返回 None
-        """
-        skill = cls._skills.get(name)
-        if skill:
-            return skill.get_prompt()
-        return None
-
-    @classmethod
-    def list_skills(cls) -> list[str]:
-        """列出所有已注册的 Skill 名称。"""
-        return list(cls._skills.keys())
-
-    @classmethod
-    def has_skill(cls, name: str) -> bool:
-        """检查 Skill 是否已注册。"""
-        return name in cls._skills
-
-    # ==================== Utility ====================
-
-    @classmethod
-    def clear_all(cls) -> None:
-        """清空所有注册（主要用于测试）。"""
-        cls._agents.clear()
-        cls._tools.clear()
-        cls._skills.clear()
-        logger.info("Cleared all registrations")
-
-    @classmethod
-    def get_stats(cls) -> dict:
-        """获取注册统计。"""
-        return {
-            "agents": len(cls._agents),
-            "tools": len(cls._tools),
-            "skills": len(cls._skills),
-        }
 
 
 # 装饰器：注册 Agent

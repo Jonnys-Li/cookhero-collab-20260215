@@ -276,10 +276,7 @@ class AgentService:
                     trace_step = chunk.data
                     trace_steps.append(asdict(trace_step))
                     yield self._format_event("trace", asdict(trace_step))
-
-                elif chunk.type == AgentChunkType.SKILL_LOAD:
-                    yield self._format_event("skill_load", chunk.data)
-
+                
                 elif chunk.type == AgentChunkType.ERROR:
                     yield self._format_event("error", chunk.data)
 
