@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from app.config import settings
 from app.config.evaluation_config import EvaluationConfig
 from app.database.evaluation_repository import evaluation_repository
-from app.llm import ChatOpenAIProvider, get_usage_callbacks, llm_context
+from app.llm import LLMProvider, get_usage_callbacks, llm_context
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +110,8 @@ class EvaluationService:
             from ragas.embeddings import LangchainEmbeddingsWrapper
 
             # Get LLM configuration
-            provider = ChatOpenAIProvider(settings.llm)
-            base_llm = provider.create_base_llm(self.config.llm_type, temperature=0.0)
+            provider = LLMProvider(settings.llm)
+            base_llm = provider.create_llm(self.config.llm_type, temperature=0.0)
 
             # Wrap with FilteredChatOpenAI to filter out unsupported params (e.g., 'n')
             # Pass callbacks for usage tracking
