@@ -5,7 +5,15 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.endpoints import conversation, auth, personal_docs, user, evaluation, llm_stats
+from app.api.v1.endpoints import (
+    conversation,
+    auth,
+    personal_docs,
+    user,
+    evaluation,
+    llm_stats,
+    agent,
+)
 from app.config import settings
 from app.database.session import init_db, close_db
 from app.database.document_repository import DocumentRepository
@@ -16,8 +24,9 @@ from app.security.sanitizer import setup_secure_logging
 from app.security.audit import audit_logger
 import logging
 
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 # Setup secure logging with sensitive data filtering
@@ -32,12 +41,21 @@ async def lifespan(app: FastAPI):
     # Security check: Validate JWT secret key
     if not settings.JWT_SECRET_KEY:
         logger.error("SECURITY ERROR: JWT_SECRET_KEY environment variable is not set!")
-        logger.error("Please set JWT_SECRET_KEY in your .env file or environment variables.")
+        logger.error(
+            "Please set JWT_SECRET_KEY in your .env file or environment variables."
+        )
         raise RuntimeError("JWT_SECRET_KEY must be configured for security")
 
     logger.info("Initializing database...")
     await init_db()
     logger.info("Database initialized.")
+
+    # Initialize Agent module (registers default agent, tools, skills)
+    logger.info("Initializing Agent module...")
+    from app.agent import setup_agent_module
+
+    setup_agent_module()
+    logger.info("Agent module initialized.")
 
     # Initialize metadata cache (load all global + user metadata at startup)
     logger.info("Initializing metadata cache...")
@@ -46,7 +64,10 @@ async def lifespan(app: FastAPI):
 
     # Clear Redis cache on startup and initialize rate limiter
     logger.info("Clearing Redis cache...")
-    if rag_service_instance.cache_manager and rag_service_instance.cache_manager.redis_client:
+    if (
+        rag_service_instance.cache_manager
+        and rag_service_instance.cache_manager.redis_client
+    ):
         await rag_service_instance.cache_manager.redis_client.flushdb()
         # Initialize rate limiter with Redis client
         rate_limiter.set_redis(rag_service_instance.cache_manager.redis_client)
@@ -55,7 +76,7 @@ async def lifespan(app: FastAPI):
         auth_service.set_redis(rag_service_instance.cache_manager.redis_client)
         logger.info("Auth service initialized with Redis for login tracking.")
     logger.info("Redis cache cleared.")
-    
+
     yield
     # Shutdown
     logger.info("Closing database connections...")
@@ -73,7 +94,11 @@ app = FastAPI(
 # CORS middleware for frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:8000", "http://localhost:8080"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://localhost:8080",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -100,7 +125,9 @@ async def security_headers_middleware(request: Request, call_next):
 
     # Add rate limit headers if available
     if hasattr(request.state, "rate_limit_remaining"):
-        response.headers["X-RateLimit-Remaining"] = str(request.state.rate_limit_remaining)
+        response.headers["X-RateLimit-Remaining"] = str(
+            request.state.rate_limit_remaining
+        )
         response.headers["X-RateLimit-Limit"] = str(request.state.rate_limit_limit)
 
     return response
@@ -144,7 +171,9 @@ async def auth_gateway(request: Request, call_next):
     token = auth_header.split(" ", 1)[1].strip()
     identity = auth_service.decode_token(token)
     if not identity or not identity.get("username"):
-        return JSONResponse(status_code=401, content={"detail": "登录已失效，请重新登录"})
+        return JSONResponse(
+            status_code=401, content={"detail": "登录已失效，请重新登录"}
+        )
 
     # Attach user info to request state for downstream use (e.g., filtering by user)
     request.state.username = identity.get("username")
@@ -153,12 +182,20 @@ async def auth_gateway(request: Request, call_next):
     return await call_next(request)
 
 # Include the API routers
-app.include_router(conversation.router, prefix=settings.API_V1_STR, tags=["Conversation"])
+app.include_router(
+    conversation.router, prefix=settings.API_V1_STR, tags=["Conversation"]
+)
 app.include_router(auth.router, prefix=settings.API_V1_STR, tags=["Auth"])
 app.include_router(user.router, prefix=settings.API_V1_STR, tags=["User"])
-app.include_router(personal_docs.router, prefix=settings.API_V1_STR, tags=["KnowledgeBase"])
+app.include_router(
+    personal_docs.router, prefix=settings.API_V1_STR, tags=["KnowledgeBase"]
+)
 app.include_router(evaluation.router, prefix=settings.API_V1_STR, tags=["Evaluation"])
-app.include_router(llm_stats.router, prefix=settings.API_V1_STR, tags=["LLM Statistics"])
+app.include_router(
+    llm_stats.router, prefix=settings.API_V1_STR, tags=["LLM Statistics"]
+)
+app.include_router(agent.router, prefix=settings.API_V1_STR, tags=["Agent"])
+
 
 @app.get("/")
 async def root():
