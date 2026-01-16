@@ -15,9 +15,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.services.conversation_service import conversation_service
-from app.security.prompt_guard import prompt_guard, ThreatLevel
-from app.security.guardrails import guard as nemo_guard, GuardResult
-from app.security.audit import audit_logger
+from app.security.dependencies import check_message_security
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -122,49 +120,11 @@ async def conversation(request: ConversationRequest, http_request: Request):
     ```
     """
     # ==========================================================================
-    # Security Layer 1: Basic Pattern-based Check (Fast, No LLM)
+    # Security Check: Use unified security check function
     # ==========================================================================
-    scan_result = prompt_guard.scan(request.message)
-    if scan_result.threat_level == ThreatLevel.BLOCKED:
-        # Log security event
-        audit_logger.prompt_injection_blocked(
-            user_id=getattr(http_request.state, "user_id", None),
-            request=http_request,
-            patterns=scan_result.matched_patterns,
-            input_preview=request.message[:100],
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=scan_result.reason or "检测到潜在的恶意输入，请修改您的问题",
-        )
+    secured_message = await check_message_security(request.message, http_request)
 
-    # ==========================================================================
-    # Security Layer 2: NeMo Guardrails Deep Check (LLM-based, if enabled)
-    # ==========================================================================
-    try:
-        guard_result = await nemo_guard.check_input(request.message)
-        if guard_result.should_block:
-            # Log security event
-            audit_logger.prompt_injection_blocked(
-                user_id=getattr(http_request.state, "user_id", None),
-                request=http_request,
-                patterns=["guardrails:" + (guard_result.details or {}).get("threat_type", "unknown")],
-                input_preview=request.message[:100],
-            )
-            raise HTTPException(
-                status_code=400,
-                detail=guard_result.reason or "检测到潜在的恶意输入，请修改您的问题",
-            )
-        elif guard_result.result == GuardResult.WARNING:
-            # Log warning but allow through
-            logger.warning(f"Guardrails warning: {guard_result.reason}")
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        # Don't block on guardrails errors, just log
-        logger.error(f"Guardrails check error (non-blocking): {e}")
-
-    logger.info(f"Received conversation request: '{request.message[:50]}...', images={len(request.images) if request.images else 0}")
+    logger.info(f"Received conversation request: '{secured_message[:50]}...', images={len(request.images) if request.images else 0}")
     
     # Convert images to service format
     images_data = None
@@ -178,7 +138,7 @@ async def conversation(request: ConversationRequest, http_request: Request):
         """Wrapper generator that detects client disconnection."""
         try:
             async for chunk in conversation_service.chat(
-                message=request.message,
+                message=secured_message,
                 conversation_id=request.conversation_id,
                 user_id=getattr(http_request.state, "user_id", None),
                 stream=True,
@@ -216,7 +176,7 @@ async def conversation(request: ConversationRequest, http_request: Request):
             intent_data = None
             
             async for event in conversation_service.chat(
-                message=request.message,
+                message=secured_message,
                 conversation_id=request.conversation_id,
                 user_id=getattr(http_request.state, "user_id", None),
                 stream=False,
