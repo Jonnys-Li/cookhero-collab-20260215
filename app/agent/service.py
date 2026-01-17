@@ -19,7 +19,7 @@ from app.agent.types import AgentChunk, AgentChunkType
 from app.agent.base import BaseAgent
 from app.agent.context import AgentContextBuilder, AgentContextCompressor
 from app.agent.database.repository import AgentRepository, agent_repository
-from app.agent.registry import AgentRegistry
+from app.agent.registry import AgentHub
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +67,26 @@ def _truncate_value(
         }
 
     if isinstance(value, list):
-        return [_truncate_value(item, threshold, exclude_keys, _current_key) for item in value]
+        return [
+            _truncate_value(item, threshold, exclude_keys, _current_key)
+            for item in value
+        ]
 
     # 其他类型（int, float, bool 等）直接返回
     return value
+
+
+def _build_fallback_agent(name: str) -> BaseAgent:
+    from app.agent.base import DefaultAgent
+    from app.agent.types import AgentConfig
+
+    return DefaultAgent(
+        AgentConfig(
+            name=name,
+            description="Default assistant",
+            system_prompt="You are a helpful assistant.",
+        )
+    )
 
 
 class AgentService:
@@ -107,6 +123,7 @@ class AgentService:
         user_profile: Optional[str] = None,
         user_instruction: Optional[str] = None,
         streaming: bool = False,
+        selected_tools: Optional[list[str]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         主入口：与 Agent 对话。
@@ -119,6 +136,7 @@ class AgentService:
             user_profile: 用户画像
             user_instruction: 用户长期指令
             streaming: 是否启用流式输出
+            selected_tools: 用户选择的工具列表（为空则使用默认工具）
 
         Yields:
             SSE 格式的事件字符串
@@ -157,24 +175,11 @@ class AgentService:
                 agent_name=agent_name,
                 user_profile=user_profile,
                 user_instruction=user_instruction,
+                selected_tools=selected_tools,
             )
 
             # 4. 获取 Agent
-            try:
-                agent = AgentRegistry.get_agent(agent_name)
-            except KeyError:
-                logger.warning(f"Agent {agent_name} not found, using default")
-                # 创建临时默认 Agent
-                from app.agent.base import DefaultAgent
-                from app.agent.types import AgentConfig
-
-                agent = DefaultAgent(
-                    AgentConfig(
-                        name="default",
-                        description="Default assistant",
-                        system_prompt="You are a helpful assistant.",
-                    )
-                )
+            agent = self._get_agent_or_fallback(agent_name)
 
             # 5. 创建 LLM invoker
             invoker = provider.create_invoker(
@@ -276,7 +281,7 @@ class AgentService:
                     trace_step = chunk.data
                     trace_steps.append(asdict(trace_step))
                     yield self._format_event("trace", asdict(trace_step))
-                
+
                 elif chunk.type == AgentChunkType.ERROR:
                     yield self._format_event("error", chunk.data)
 
@@ -355,6 +360,13 @@ class AgentService:
         except Exception as e:
             logger.exception(f"AgentService.chat failed: {e}")
             yield self._format_event("error", {"error": str(e)})
+
+    def _get_agent_or_fallback(self, agent_name: str) -> BaseAgent:
+        try:
+            return AgentHub.get_agent(agent_name)
+        except KeyError:
+            logger.warning(f"Agent {agent_name} not found, using fallback")
+            return _build_fallback_agent("default")
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         """获取 Session 信息。"""

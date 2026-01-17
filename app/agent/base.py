@@ -19,7 +19,7 @@ from app.agent.types import (
     ToolResultInfo,
     TraceStep,
 )
-from app.agent.registry import AgentRegistry
+from app.agent.registry import AgentHub
 from app.agent.context import AgentContextBuilder
 from app.llm.provider import LLMInvoker
 
@@ -77,8 +77,14 @@ class BaseAgent(ABC):
         # 获取 Tool schemas
         tool_schemas = context.available_tools
 
-        # 创建 Tool 执行器
-        tool_executor = AgentRegistry.create_tool_executor(self.tools)
+        # 从 tool_schemas 提取工具名称，创建对应的 Tool 执行器
+        # 这样 executor 的工具集和 LLM 看到的 tools 完全一致
+        selected_tool_names = (
+            [t["function"]["name"] for t in tool_schemas] if tool_schemas else []
+        )
+        tool_executor = AgentHub.create_tool_executor(
+            selected_tool_names if selected_tool_names else None
+        )
 
         # ReAct 循环
         for iteration in range(self.max_iterations):
@@ -227,7 +233,14 @@ class BaseAgent(ABC):
 
         messages = self.context_builder.build_messages(context)
         tool_schemas = context.available_tools
-        tool_executor = AgentRegistry.create_tool_executor(self.tools)
+
+        # 从 tool_schemas 提取工具名称，创建对应的 Tool 执行器
+        selected_tool_names = (
+            [t["function"]["name"] for t in tool_schemas] if tool_schemas else []
+        )
+        tool_executor = AgentHub.create_tool_executor(
+            selected_tool_names if selected_tool_names else None
+        )
 
         for iteration in range(self.max_iterations):
             try:

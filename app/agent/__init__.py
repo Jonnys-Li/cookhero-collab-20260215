@@ -17,7 +17,9 @@ from app.agent.types import (
     TraceStep,
 )
 from app.agent.base import BaseAgent, DefaultAgent
-from app.agent.registry import AgentRegistry, register_agent, register_tool
+from app.agent.registry import AgentHub
+from app.agent.tools.providers.builtin import BuiltinToolProvider
+from app.agent.tools.providers.mcp import MCPToolProvider
 from app.agent.service import AgentService, agent_service
 from app.agent.context import (
     AgentContextBuilder,
@@ -35,6 +37,11 @@ def setup_agent_module():
     注册内置 Agent、Tool 和 Skill。
     应在应用启动时调用。
     """
+    # Register tool providers once
+    if not AgentHub.list_providers():
+        AgentHub.register_provider(BuiltinToolProvider())
+        AgentHub.register_provider(MCPToolProvider())
+
     # 注册内置 Tools
     from app.agent.tools.builtin.common import register_builtin_tools
 
@@ -51,11 +58,12 @@ def _register_default_agent():
         description="通用助手 Agent，可以进行对话、使用工具完成任务。",
         system_prompt="""你是一个智能助手，可以帮助用户完成各种任务。
 请根据用户的问题，决定每一步是直接回答还是使用工具。""",
-        tools=["calculator", "datetime", "text_processor"],
+        # 不再绑定默认工具 - 完全由前端决定
+        tools=[],
         max_iterations=10,
     )
 
-    AgentRegistry.register_agent(DefaultAgent, default_config)
+    AgentHub.register_agent(DefaultAgent, default_config)
 
 
 __all__ = [
@@ -76,10 +84,6 @@ __all__ = [
     "BaseTool",
     "MCPTool",
     "ToolExecutor",
-    # Registry
-    "AgentRegistry",
-    "register_agent",
-    "register_tool",
     # Service
     "AgentService",
     "agent_service",

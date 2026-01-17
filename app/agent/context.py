@@ -10,7 +10,7 @@ from typing import Optional
 from app.agent.types import AgentContext, AgentConfig
 from app.agent.database.repository import AgentRepository
 from app.agent.database.models import AgentSessionModel
-from app.agent.registry import AgentRegistry
+from app.agent.registry import AgentHub
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,7 @@ class AgentContextBuilder:
         agent_name: str = "default",
         user_profile: Optional[str] = None,
         user_instruction: Optional[str] = None,
+        selected_tools: Optional[list[str]] = None,
     ) -> AgentContext:
         """
         构建 Agent 上下文。
@@ -56,6 +57,7 @@ class AgentContextBuilder:
             agent_name: Agent 名称（用于选择 Agent 配置）
             user_profile: 用户画像
             user_instruction: 用户长期指令
+            selected_tools: 用户选择的工具列表（为空则使用 Agent 默认工具）
 
         Returns:
             完整的 Agent 上下文
@@ -64,7 +66,7 @@ class AgentContextBuilder:
 
         # 1. 获取 Agent 配置
         try:
-            config = AgentRegistry.get_agent_config(agent_name)
+            config = AgentHub.get_agent_config(agent_name)
         except KeyError:
             logger.warning(f"Agent {agent_name} not found, using default config")
             config = AgentConfig(
@@ -87,7 +89,9 @@ class AgentContextBuilder:
         )
 
         # 4. 获取可用 Tool schemas
-        available_tools = AgentRegistry.get_tool_schemas(config.tools)
+        # Use selected_tools if provided, otherwise get all available tools
+        tools_to_use = selected_tools
+        available_tools = AgentHub.get_tool_schemas(tools_to_use)
 
         return AgentContext(
             system_prompt=config.system_prompt,

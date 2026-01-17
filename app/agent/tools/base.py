@@ -141,15 +141,22 @@ class MCPTool(BaseTool):
         """
         调用 MCP 服务。
 
-        TODO: 实现 MCP 协议调用
+        Uses MCPClient to execute the tool on the remote MCP server.
         """
-        # Placeholder for MCP implementation
-        logger.info(f"MCP Tool {self.name} called with: {kwargs}")
-        return ToolResult(
-            success=False,
-            data=None,
-            error="MCP Tool not implemented yet",
-        )
+        try:
+            from app.agent.tools.mcp.client import MCPClient
+
+            client = MCPClient(self.mcp_endpoint)
+
+            return await client.call_tool(self.mcp_tool_name, kwargs)
+
+        except Exception as e:
+            logger.exception(f"MCP Tool {self.name} execution failed: {e}")
+            return ToolResult(
+                success=False,
+                data=None,
+                error=f"MCP tool execution failed: {str(e)}",
+            )
 
 
 class ToolExecutor:
