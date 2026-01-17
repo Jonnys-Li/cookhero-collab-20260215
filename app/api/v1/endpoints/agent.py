@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.config import settings
 from app.agent.service import agent_service
+from app.agent.registry import AgentHub
 from app.security.dependencies import check_message_security
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,22 @@ router = APIRouter()
 MAX_MESSAGE_LENGTH = settings.MAX_MESSAGE_LENGTH  # 10000 characters
 
 
+class ToolInfo(BaseModel):
+    """Tool information for the tools list endpoint."""
+
+    name: str
+    description: str
+    type: str  # "builtin" | "mcp"
+    source: Optional[str] = None  # MCP server name for MCP tools
+
+
+class ToolsListResponse(BaseModel):
+    """Response model for the tools list endpoint."""
+
+    tools: List[ToolInfo]
+    mcp_servers: List[str]
+
+
 class AgentChatRequest(BaseModel):
     """Request model for agent chat endpoint."""
 
@@ -30,6 +47,7 @@ class AgentChatRequest(BaseModel):
     session_id: Optional[str] = None
     agent_name: str = Field(default="default", max_length=100)
     stream: bool = True
+    selected_tools: Optional[List[str]] = None  # User-selected tools
 
     @field_validator("message")
     @classmethod
@@ -82,6 +100,64 @@ class AgentHistoryResponse(BaseModel):
     messages: List[AgentMessageResponse]
 
 
+@router.get("/agent/tools")
+async def list_available_tools(http_request: Request) -> ToolsListResponse:
+    """
+    List all available tools and MCP servers.
+
+    Returns a list of all registered tools (both builtin and MCP) along with
+    the list of registered MCP servers.
+
+    **Response:**
+    ```json
+    {
+        "tools": [
+            {
+                "name": "calculator",
+                "description": "执行数学计算...",
+                "type": "builtin",
+                "source": null
+            },
+            {
+                "name": "mcp_amap_poi_search",
+                "description": "搜索兴趣点...",
+                "type": "mcp",
+                "source": "amap"
+            }
+        ],
+        "mcp_servers": ["amap"]
+    }
+    ```
+    """
+    # Check authentication
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    tools: List[ToolInfo] = []
+
+    # Get all registered tools with their info
+    for tool_info in AgentHub.list_tools_info():
+        tools.append(
+            ToolInfo(
+                name=tool_info["name"],
+                description=tool_info["description"],
+                type=tool_info["type"],
+                source=tool_info.get("source"),
+            )
+        )
+
+    # Get MCP servers
+    mcp_provider_any = AgentHub.get_provider("mcp")  # type: ignore[assignment]
+    mcp_servers = (
+        getattr(mcp_provider_any, "list_servers")()
+        if hasattr(mcp_provider_any, "list_servers")
+        else []
+    )
+
+    return ToolsListResponse(tools=tools, mcp_servers=mcp_servers)
+
+
 @router.post("/agent/chat")
 async def agent_chat(request: AgentChatRequest, http_request: Request):
     """
@@ -95,6 +171,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     - `session_id`: Optional ID for continuing a session
     - `agent_name`: Name of the agent to use (default: "default")
     - `stream`: Whether to stream the response (default: true)
+    - `selected_tools`: Optional list of tool names to use (default: all tools)
 
     **Response (SSE stream when stream=true):**
     ```
@@ -129,6 +206,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
                 message=secured_message,
                 agent_name=request.agent_name,
                 streaming=request.stream,
+                selected_tools=request.selected_tools,
             ):
                 # Check if client is still connected
                 if await http_request.is_disconnected():
@@ -165,6 +243,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
                 message=secured_message,
                 agent_name=request.agent_name,
                 streaming=False,
+                selected_tools=request.selected_tools,
             ):
                 # Parse SSE event
                 if event.startswith("data: "):

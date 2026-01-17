@@ -17,8 +17,9 @@ from app.config.database_config import DatabaseConfig
 from app.config.llm_config import LLMConfig
 from app.config.rag_config import RAGConfig
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig
+from app.config.vision_config import VisionConfig, ImageGenerationConfig
 from app.config.evaluation_config import EvaluationConfig
+from app.config.mcp_config import MCPConfig
 from app.config.config_loader import (
     load_database_config,
     load_llm_config,
@@ -26,6 +27,8 @@ from app.config.config_loader import (
     load_web_search_config,
     load_vision_config,
     load_evaluation_config,
+    load_mcp_config,
+    load_image_generation_config,
 )
 
 
@@ -99,7 +102,13 @@ class Settings(BaseModel):
 
     # RAG Evaluation configuration loaded from config.yml
     evaluation: EvaluationConfig = load_evaluation_config()
-    
+
+    # MCP configuration loaded from config.yml
+    mcp: MCPConfig = load_mcp_config()
+
+    # Image Generation configuration loaded from config.yml
+    image_generation: ImageGenerationConfig = load_image_generation_config()
+
     class Config:
         arbitrary_types_allowed = True
 

@@ -5,23 +5,29 @@ Provides unified access to all configuration settings.
 
 Usage:
     from app.config import settings, DefaultRAGConfig, LLMType
-    
+
     # Access global settings
     print(settings.PROJECT_NAME)
-    
+
     # Access global LLM configuration (layered: fast/normal)
     print(settings.llm.fast.model_names)
     print(settings.llm.normal.model_names)
-    
+
     # Access database configurations
     print(settings.database.postgres.host)
     print(settings.database.redis.host)
     print(settings.database.milvus.host)
-    
+
     # Access RAG configuration
     print(settings.rag.vector_store.collection_names)
     # or use the alias:
     print(DefaultRAGConfig.vector_store.collection_names)
+
+    # Access MCP configuration
+    print(settings.mcp.amap_api_key)
+
+    # Access Image Generation configuration
+    print(settings.image_generation.model)
 """
 
 from app.config.config import settings, Settings, DefaultRAGConfig
@@ -44,7 +50,8 @@ from app.config.rag_config import (
     HowToCookConfig,
 )
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig, VisionModelConfig
+from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig
+from app.config.mcp_config import MCPConfig, MCPServerConfig
 
 __all__ = [
     # Main settings
@@ -75,4 +82,8 @@ __all__ = [
     # Vision configuration
     "VisionConfig",
     "VisionModelConfig",
+    # MCP configuration
+    "MCPConfig",
+    "MCPServerConfig",
+    "ImageGenerationConfig",
 ]

@@ -25,8 +25,9 @@ from app.config.database_config import (
 from app.config.llm_config import LLMConfig
 from app.config.rag_config import RAGConfig
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig, VisionModelConfig
+from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig
 from app.config.evaluation_config import EvaluationConfig, AlertThresholds
+from app.config.mcp_config import MCPConfig, MCPServerConfig
 
 
 # Load .env file into environment variables at module import
@@ -235,3 +236,44 @@ def load_evaluation_config() -> EvaluationConfig:
         timeout_seconds=eval_data.get("timeout_seconds", 60),
         alert_thresholds=eval_data.get("alert_thresholds", AlertThresholds()),
     )
+
+
+def load_mcp_config() -> MCPConfig:
+    """
+    Load MCP configuration from YAML + environment variables.
+
+    Environment variables:
+    - AMAP_API_KEY: Amap (高德地图) API key for MCP integration
+    """
+    config_data = _load_config_data()
+    mcp_data = dict(config_data.get("mcp", {}) or {})
+
+    # Load AMAP API key from environment
+    amap_api_key = os.getenv("AMAP_API_KEY")
+    if amap_api_key:
+        mcp_data["amap_api_key"] = amap_api_key
+
+    # Parse amap server config if present
+    amap_data = mcp_data.pop("amap", None)
+    if amap_data:
+        mcp_data["amap"] = MCPServerConfig(**amap_data)
+
+    return MCPConfig.model_validate(mcp_data)
+
+
+def load_image_generation_config() -> ImageGenerationConfig:
+    """
+    Load image generation configuration from YAML + environment variables.
+
+    Environment variables:
+    - IMAGE_GENERATION_API_KEY: OpenAI API key for DALL-E image generation
+    """
+    config_data = _load_config_data()
+    ig_data = dict(config_data.get("image_generation", {}) or {})
+
+    # Load API key from environment
+    api_key = os.getenv("IMAGE_GENERATION_API_KEY")
+    if api_key:
+        ig_data["api_key"] = api_key
+
+    return ImageGenerationConfig.model_validate(ig_data)

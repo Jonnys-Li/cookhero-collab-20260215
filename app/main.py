@@ -57,25 +57,32 @@ async def lifespan(app: FastAPI):
     setup_agent_module()
     logger.info("Agent module initialized.")
 
+    # Register MCP servers (async)
+    logger.info("Registering MCP servers...")
+    try:
+        from app.agent.tools.mcp.setup import register_amap_mcp
+
+        await register_amap_mcp()
+        logger.info("MCP servers registered.")
+    except Exception as e:
+        logger.warning(f"Failed to register MCP servers: {e}")
+
     # Initialize metadata cache (load all global + user metadata at startup)
     logger.info("Initializing metadata cache...")
     await DocumentRepository.init_all_metadata_cache()
     logger.info("Metadata cache initialized.")
 
     # Clear Redis cache on startup and initialize rate limiter
-    logger.info("Clearing Redis cache...")
     if (
         rag_service_instance.cache_manager
         and rag_service_instance.cache_manager.redis_client
     ):
-        await rag_service_instance.cache_manager.redis_client.flushdb()
         # Initialize rate limiter with Redis client
         rate_limiter.set_redis(rag_service_instance.cache_manager.redis_client)
         logger.info("Rate limiter initialized with Redis.")
         # Initialize auth service with Redis client for login tracking
         auth_service.set_redis(rag_service_instance.cache_manager.redis_client)
         logger.info("Auth service initialized with Redis for login tracking.")
-    logger.info("Redis cache cleared.")
 
     yield
     # Shutdown
@@ -180,6 +187,7 @@ async def auth_gateway(request: Request, call_next):
     request.state.user_id = identity.get("user_id")
 
     return await call_next(request)
+
 
 # Include the API routers
 app.include_router(
