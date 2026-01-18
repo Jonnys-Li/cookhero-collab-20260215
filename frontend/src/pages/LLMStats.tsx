@@ -890,7 +890,7 @@ export default function LLMStatsPage() {
                   <th className="px-6 py-3 font-medium text-right">调用次数</th>
                   <th className="px-6 py-3 font-medium text-right">输入 Token</th>
                   <th className="px-6 py-3 font-medium text-right">输出 Token</th>
-                  <th className="px-6 py-3 font-medium text-right">总 Token</th>
+                  {/* <th className="px-6 py-3 font-medium text-right">总 Token</th> */}
                   <th className="px-6 py-3 font-medium text-right">平均 Token</th>
                   <th className="px-6 py-3 font-medium text-right">平均耗时</th>
                 </tr>
@@ -900,7 +900,7 @@ export default function LLMStatsPage() {
                   <tr key={tool.tool_name} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
                     <td className="px-6 py-4">
                       <div className="relative group">
-                        <div className="font-medium text-gray-900 dark:text-white max-w-[250px] truncate overflow-hidden whitespace-nowrap cursor-default">
+                        <div className="font-medium text-gray-900 dark:text-white max-w-[300px] truncate overflow-hidden whitespace-nowrap cursor-default">
                           {tool.tool_name}
                         </div>
                         {/* Tooltip */}
@@ -921,9 +921,9 @@ export default function LLMStatsPage() {
                     <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
                       {tool.output_tokens.toLocaleString()}
                     </td>
-                    <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
+                    {/* <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
                       {tool.total_tokens.toLocaleString()}
-                    </td>
+                    </td> */}
                     <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
                       {Math.round(tool.avg_tokens).toLocaleString()}
                     </td>
