@@ -120,8 +120,6 @@ class AgentService:
         user_id: str,
         message: str,
         agent_name: str = "default",
-        user_profile: Optional[str] = None,
-        user_instruction: Optional[str] = None,
         streaming: bool = False,
         selected_tools: Optional[list[str]] = None,
     ) -> AsyncGenerator[str, None]:
@@ -133,8 +131,6 @@ class AgentService:
             user_id: 用户 ID
             message: 用户消息
             agent_name: Agent 名称（用于选择 Agent，不存储在 Session 中）
-            user_profile: 用户画像
-            user_instruction: 用户长期指令
             streaming: 是否启用流式输出
             selected_tools: 用户选择的工具列表（为空则使用默认工具）
 
@@ -156,10 +152,7 @@ class AgentService:
             session = await self.repository.get_or_create_session(session_id, user_id)
             actual_session_id = str(session.id)
 
-            # 2. 保存用户消息
-            await self.repository.save_message(actual_session_id, "user", message)
-
-            # 发送 session 信息
+            # 2. 发送 session 信息
             yield self._format_event(
                 "session",
                 {
@@ -172,9 +165,8 @@ class AgentService:
             context = await self.context_builder.build(
                 session,
                 message,
+                user_id,
                 agent_name=agent_name,
-                user_profile=user_profile,
-                user_instruction=user_instruction,
                 selected_tools=selected_tools,
             )
 
@@ -320,10 +312,13 @@ class AgentService:
                         },
                     )
 
-            # 7. 保存 Assistant 消息（所有执行过程都存储在 trace 中）
+            # 8. 保存消息（所有执行过程都存储在 trace 中）
             # Calculate final timing if not already done
             if answer_end_time is None:
                 answer_end_time = time.time()
+
+            # 保存用户消息
+            await self.repository.save_message(actual_session_id, "user", message)
 
             final_thinking_ms = None
             final_answer_ms = None

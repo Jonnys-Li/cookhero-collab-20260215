@@ -11,6 +11,7 @@ from app.agent.types import AgentContext, AgentConfig
 from app.agent.database.repository import AgentRepository
 from app.agent.database.models import AgentSessionModel
 from app.agent.registry import AgentHub
+from app.services.user_service import user_service
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,8 @@ class AgentContextBuilder:
         self,
         session: AgentSessionModel,
         current_message: str,
+        user_id: str,
         agent_name: str = "default",
-        user_profile: Optional[str] = None,
-        user_instruction: Optional[str] = None,
         selected_tools: Optional[list[str]] = None,
     ) -> AgentContext:
         """
@@ -92,6 +92,15 @@ class AgentContextBuilder:
         # Use selected_tools if provided, otherwise get all available tools
         tools_to_use = selected_tools
         available_tools = AgentHub.get_tool_schemas(tools_to_use)
+
+        # 5. user_profile user_instruction
+        user_profile = None
+        user_instruction = None
+        if user_id:
+            user_data = await user_service.get_user_by_id(user_id)
+            if user_data:
+                user_profile = user_data.profile
+                user_instruction = user_data.user_instruction
 
         return AgentContext(
             system_prompt=config.system_prompt,
