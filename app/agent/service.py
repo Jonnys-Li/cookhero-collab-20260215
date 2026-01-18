@@ -12,11 +12,11 @@ from dataclasses import asdict
 from typing import Any, AsyncGenerator, Optional
 
 # 默认截断阈值（字符数）
-DEFAULT_TRUNCATE_THRESHOLD = 100
+DEFAULT_TRUNCATE_THRESHOLD = 500
 TRUNCATE_SUFFIX = "...[truncated]"
 
 from app.agent.types import AgentChunk, AgentChunkType
-from app.agent.base import BaseAgent
+from app.agent.agents import BaseAgent
 from app.agent.context import AgentContextBuilder, AgentContextCompressor
 from app.agent.database.repository import AgentRepository, agent_repository
 from app.agent.registry import AgentHub
@@ -77,7 +77,7 @@ def _truncate_value(
 
 
 def _build_fallback_agent(name: str) -> BaseAgent:
-    from app.agent.base import DefaultAgent
+    from app.agent.agents import DefaultAgent
     from app.agent.types import AgentConfig
 
     return DefaultAgent(

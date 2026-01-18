@@ -1,4 +1,8 @@
-"""Builtin tool provider."""
+# app/agent/tools/providers/local.py
+"""Local tool provider.
+
+Provides locally-defined tools (previously called "builtin" tools).
+"""
 
 from __future__ import annotations
 
@@ -10,15 +14,20 @@ from app.agent.tools.base import BaseTool
 logger = logging.getLogger(__name__)
 
 
-class BuiltinToolProvider:
-    name = "builtin"
+class LocalToolProvider:
+    """Local tool provider.
+
+    Manages locally-defined tools that are implemented in Python.
+    """
+
+    name = "local"
 
     def __init__(self):
         self._tools: dict[str, BaseTool] = {}
 
     def register_tool(self, tool: BaseTool) -> None:
         self._tools[tool.name] = tool
-        logger.info(f"Registered builtin tool: {tool.name}")
+        logger.info(f"Registered local tool: {tool.name}")
 
     def unregister_tool(self, name: str) -> bool:
         if name in self._tools:
@@ -43,13 +52,26 @@ class BuiltinToolProvider:
             return [t.to_openai_schema() for t in self._tools.values()]
         return [self._tools[n].to_openai_schema() for n in names if n in self._tools]
 
-    def list_tool_infos(self) -> list[dict]:
-        return [
+    def list_servers_with_tools(self) -> list[dict]:
+        """Return builtin tools as a single 'builtin' server.
+
+        Returns:
+            Single-element list containing the builtin server with all local tools.
+        """
+        tools = [
             {
                 "name": t.name,
                 "description": t.description,
-                "type": "builtin",
-                "source": None,
             }
             for t in self._tools.values()
         ]
+        return [
+            {
+                "name": "builtin",
+                "type": "local",
+                "tools": tools,
+            }
+        ]
+
+
+__all__ = ["LocalToolProvider"]

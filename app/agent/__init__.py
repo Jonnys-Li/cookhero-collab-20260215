@@ -16,10 +16,9 @@ from app.agent.types import (
     ToolResultInfo,
     TraceStep,
 )
-from app.agent.base import BaseAgent, DefaultAgent
+from app.agent.agents import BaseAgent, DefaultAgent
 from app.agent.registry import AgentHub
-from app.agent.tools.providers.builtin import BuiltinToolProvider
-from app.agent.tools.providers.mcp import MCPToolProvider
+from app.agent.tools.providers import LocalToolProvider, MCPToolProvider
 from app.agent.service import AgentService, agent_service
 from app.agent.context import (
     AgentContextBuilder,
@@ -32,23 +31,35 @@ from app.agent.tools.base import BaseTool, MCPTool, ToolExecutor
 
 def setup_agent_module():
     """
-    初始化 Agent 模块。
+    初始化 Agent 模块（同步部分）。
 
     注册内置 Agent、Tool 和 Skill。
     应在应用启动时调用。
     """
     # Register tool providers once
     if not AgentHub.list_providers():
-        AgentHub.register_provider(BuiltinToolProvider())
+        AgentHub.register_provider(LocalToolProvider())
         AgentHub.register_provider(MCPToolProvider())
 
     # 注册内置 Tools
-    from app.agent.tools.builtin.common import register_builtin_tools
+    from app.agent.tools.common import register_common_tools
 
-    register_builtin_tools()
+    register_common_tools()
 
     # 注册默认 Agent
     _register_default_agent()
+
+
+async def setup_mcp_servers():
+    """
+    初始化 MCP 服务器（异步部分）。
+
+    注册并加载所有配置的 MCP 服务器。
+    应在应用启动时、setup_agent_module 之后调用。
+    """
+    from app.agent.tools.mcp.setup import register_mcp_servers
+
+    await register_mcp_servers()
 
 
 def _register_default_agent():
@@ -94,4 +105,5 @@ __all__ = [
     "agent_context_compressor",
     # Setup
     "setup_agent_module",
+    "setup_mcp_servers",
 ]

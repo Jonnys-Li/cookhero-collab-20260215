@@ -10,8 +10,15 @@ from app.agent.registry import AgentHub
 logger = logging.getLogger(__name__)
 
 
-async def register_amap_mcp() -> None:
+async def register_mcp_servers() -> None:
+    """注册所有 MCP 服务器。"""
+    await _register_amap_mcp()
+
+
+async def _register_amap_mcp() -> None:
+    """注册高德地图 MCP 服务器。"""
     from app.config import settings
+    from app.agent.tools.providers.mcp import MCPToolProvider
 
     if not settings.mcp.amap.enabled:
         logger.info("Amap MCP is disabled, skipping registration")
@@ -24,16 +31,12 @@ async def register_amap_mcp() -> None:
 
     endpoint = f"https://mcp.amap.com/mcp?key={amap_key}"
 
-    mcp_provider = AgentHub.get_provider("mcp")
-    if not hasattr(mcp_provider, "register_server") or not hasattr(
-        mcp_provider, "load_server_tools"
-    ):
-        raise RuntimeError("MCP provider does not support server management")
-
-    getattr(mcp_provider, "register_server")("amap", endpoint)
+    # 直接获取 MCPToolProvider 并调用方法
+    mcp_provider: MCPToolProvider = AgentHub.get_provider("mcp")  # type: ignore
+    mcp_provider.register_server("amap", endpoint)
 
     try:
-        loaded = await getattr(mcp_provider, "load_server_tools")("amap")
+        loaded = await mcp_provider.load_server_tools("amap")
         logger.info(f"Loaded {len(loaded)} tools from Amap MCP")
     except Exception as e:
         logger.error(f"Failed to load Amap MCP tools: {e}")

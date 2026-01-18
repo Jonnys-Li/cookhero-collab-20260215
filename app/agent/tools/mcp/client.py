@@ -66,7 +66,7 @@ class MCPClient:
             "method": method,
         }
         if params:
-            payload["params"] = params
+            payload["params"] = params # type: ignore
 
         headers = {
             "Content-Type": "application/json",
@@ -171,8 +171,6 @@ class MCPClient:
                     "arguments": arguments,
                 },
             )
-
-            print(name, arguments, result)
 
             # Parse MCP tool result
             content = result.get("content", [])

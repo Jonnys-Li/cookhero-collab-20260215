@@ -50,7 +50,7 @@ from app.config.rag_config import (
     HowToCookConfig,
 )
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig
+from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig, ImageStorageConfig
 from app.config.mcp_config import MCPConfig, MCPServerConfig
 
 __all__ = [
@@ -86,4 +86,5 @@ __all__ = [
     "MCPConfig",
     "MCPServerConfig",
     "ImageGenerationConfig",
+    "ImageStorageConfig",
 ]

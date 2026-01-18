@@ -32,9 +32,6 @@ class ToolProvider(Protocol):
 
     name: str
 
-    def list_tool_infos(self) -> list[dict]:
-        raise NotImplementedError
-
     def get_tool(self, name: str) -> Optional[BaseTool]:
         raise NotImplementedError
 
@@ -53,22 +50,22 @@ class ToolProvider(Protocol):
     def unregister_tool(self, name: str) -> bool:
         raise NotImplementedError
 
+    def list_servers_with_tools(self) -> list[dict]:
+        """Return tools grouped by server.
+
+        Returns:
+            List of server info dicts, each containing:
+            - name: server name
+            - type: "local" or "mcp"
+            - tools: list of tool info dicts
+        """
+        raise NotImplementedError
+
 
 @dataclass(frozen=True)
 class _AgentEntry:
     cls: Type["BaseAgent"]
     config: AgentConfig
-
-
-class MCPServerProvider(ToolProvider, Protocol):
-    def register_server(self, name: str, endpoint: str) -> None:
-        raise NotImplementedError
-
-    def list_servers(self) -> list[str]:
-        raise NotImplementedError
-
-    async def load_server_tools(self, name: str):
-        raise NotImplementedError
 
 
 class AgentHub:
@@ -133,7 +130,7 @@ class AgentHub:
     # ==================== Tool surface (aggregated) ====================
 
     @classmethod
-    def register_tool(cls, tool: BaseTool, provider: str = "builtin") -> None:
+    def register_tool(cls, tool: BaseTool, provider: str = "local") -> None:
         cls.get_provider(provider).register_tool(tool)
 
     @classmethod
@@ -177,11 +174,20 @@ class AgentHub:
         return names
 
     @classmethod
-    def list_tools_info(cls) -> list[dict]:
-        infos: list[dict] = []
+    def list_all_servers(cls) -> list[dict]:
+        """Aggregate all servers with tools from all providers.
+
+        Returns:ith unified structure:
+            [
+                { "name": "builtin", "type": "local", "tools": [...] },
+                { "name": "amap", "type": "mcp", "tools": [...] },
+            ]
+            List of server dicts w
+        """
+        servers: list[dict] = []
         for p in cls._providers.values():
-            infos.extend(p.list_tool_infos())
-        return infos
+            servers.extend(p.list_servers_with_tools())
+        return servers
 
     @classmethod
     def create_tool_executor(
@@ -215,4 +221,4 @@ class AgentHub:
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.agent.base import BaseAgent  # pragma: no cover
+    from app.agent.agents import BaseAgent  # pragma: no cover

@@ -25,7 +25,7 @@ from app.config.database_config import (
 from app.config.llm_config import LLMConfig
 from app.config.rag_config import RAGConfig
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig
+from app.config.vision_config import VisionConfig, VisionModelConfig, ImageGenerationConfig, ImageStorageConfig
 from app.config.evaluation_config import EvaluationConfig, AlertThresholds
 from app.config.mcp_config import MCPConfig, MCPServerConfig
 
@@ -277,3 +277,21 @@ def load_image_generation_config() -> ImageGenerationConfig:
         ig_data["api_key"] = api_key
 
     return ImageGenerationConfig.model_validate(ig_data)
+
+
+def load_image_storage_config() -> ImageStorageConfig:
+    """
+    Load image storage configuration from YAML + environment variables.
+
+    Environment variables:
+    - IMGBB_STORAGE_API_KEY: imgbb API key for image storage
+    """
+    config_data = _load_config_data()
+    is_data = dict(config_data.get("image_storage", {}) or {})
+
+    # Load API key from environment
+    api_key = os.getenv("IMGBB_STORAGE_API_KEY")
+    if api_key:
+        is_data["api_key"] = api_key
+
+    return ImageStorageConfig.model_validate(is_data)

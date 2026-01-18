@@ -99,21 +99,45 @@ class MCPToolProvider:
             return [t.to_openai_schema() for t in self._tools.values()]
         return [self._tools[n].to_openai_schema() for n in names if n in self._tools]
 
-    def list_tool_infos(self) -> list[dict]:
-        infos: list[dict] = []
+    def list_servers_with_tools(self) -> list[dict]:
+        """Return tools grouped by MCP server.
+
+        Returns:
+            List of server dicts, each containing:
+            - name: server name
+            - type: "mcp"
+            - tools: list of tool info dicts
+        """
+        # Group tools by server
+        servers: dict[str, list[dict]] = {}
+
         for t in self._tools.values():
             # name format: mcp_{server}_{tool}
-            source = None
+            server_name = None
             if t.name.startswith("mcp_"):
                 parts = t.name.split("_", 2)
                 if len(parts) >= 2:
-                    source = parts[1]
-            infos.append(
+                    server_name = parts[1]
+
+            if server_name is None:
+                server_name = "unknown"
+
+            if server_name not in servers:
+                servers[server_name] = []
+
+            servers[server_name].append(
                 {
                     "name": t.name,
                     "description": t.description,
-                    "type": "mcp",
-                    "source": source,
                 }
             )
-        return infos
+
+        # Convert to list format
+        return [
+            {
+                "name": server_name,
+                "type": "mcp",
+                "tools": tools,
+            }
+            for server_name, tools in servers.items()
+        ]

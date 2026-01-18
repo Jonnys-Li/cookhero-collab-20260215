@@ -898,8 +898,19 @@ export default function LLMStatsPage() {
               <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                 {toolDist?.distribution.map((tool: ToolDistribution) => (
                   <tr key={tool.tool_name} className="hover:bg-gray-50 dark:hover:bg-gray-800/30">
-                    <td className="px-6 py-4 font-medium text-gray-900 dark:text-white">
-                      {tool.tool_name}
+                    <td className="px-6 py-4">
+                      <div className="relative group">
+                        <div className="font-medium text-gray-900 dark:text-white max-w-[250px] truncate overflow-hidden whitespace-nowrap cursor-default">
+                          {tool.tool_name}
+                        </div>
+                        {/* Tooltip */}
+                        <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block z-50 pointer-events-none">
+                          <div className="bg-gray-900 dark:bg-gray-700 text-white text-xs rounded-lg py-2 px-3 whitespace-nowrap shadow-lg max-w-md break-all">
+                            {tool.tool_name}
+                          </div>
+                          <div className="absolute left-4 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900 dark:border-t-gray-700" />
+                        </div>
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right text-gray-600 dark:text-gray-300">
                       {tool.call_count.toLocaleString()}

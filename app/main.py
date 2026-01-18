@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Agent module (registers default agent, tools, skills)
     logger.info("Initializing Agent module...")
-    from app.agent import setup_agent_module
+    from app.agent import setup_agent_module, setup_mcp_servers
 
     setup_agent_module()
     logger.info("Agent module initialized.")
@@ -60,9 +60,7 @@ async def lifespan(app: FastAPI):
     # Register MCP servers (async)
     logger.info("Registering MCP servers...")
     try:
-        from app.agent.tools.mcp.setup import register_amap_mcp
-
-        await register_amap_mcp()
+        await setup_mcp_servers()
         logger.info("MCP servers registered.")
     except Exception as e:
         logger.warning(f"Failed to register MCP servers: {e}")

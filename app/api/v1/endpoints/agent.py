@@ -24,20 +24,25 @@ router = APIRouter()
 MAX_MESSAGE_LENGTH = settings.MAX_MESSAGE_LENGTH  # 10000 characters
 
 
-class ToolInfo(BaseModel):
-    """Tool information for the tools list endpoint."""
+class ToolSchema(BaseModel):
+    """Tool schema for the tools API."""
 
     name: str
     description: str
-    type: str  # "builtin" | "mcp"
-    source: Optional[str] = None  # MCP server name for MCP tools
+
+
+class ServerInfo(BaseModel):
+    """Server info for the tools API."""
+
+    name: str
+    type: str  # "local" or "mcp"
+    tools: List[ToolSchema]
 
 
 class ToolsListResponse(BaseModel):
     """Response model for the tools list endpoint."""
 
-    tools: List[ToolInfo]
-    mcp_servers: List[str]
+    servers: List[ServerInfo]
 
 
 class AgentChatRequest(BaseModel):
@@ -103,29 +108,30 @@ class AgentHistoryResponse(BaseModel):
 @router.get("/agent/tools")
 async def list_available_tools(http_request: Request) -> ToolsListResponse:
     """
-    List all available tools and MCP servers.
+    List all available tools grouped by server.
 
-    Returns a list of all registered tools (both builtin and MCP) along with
-    the list of registered MCP servers.
+    Returns a unified structure where both builtin and MCP tools are grouped
+    by their respective servers.
 
     **Response:**
     ```json
     {
-        "tools": [
+        "servers": [
             {
-                "name": "calculator",
-                "description": "执行数学计算...",
-                "type": "builtin",
-                "source": null
+                "name": "builtin",
+                "type": "local",
+                "tools": [
+                    {"name": "calculator", "description": "执行数学计算..."}
+                ]
             },
             {
-                "name": "mcp_amap_poi_search",
-                "description": "搜索兴趣点...",
+                "name": "amap",
                 "type": "mcp",
-                "source": "amap"
+                "tools": [
+                    {"name": "mcp_amap_poi_search", "description": "搜索兴趣点..."}
+                ]
             }
-        ],
-        "mcp_servers": ["amap"]
+        ]
     }
     ```
     """
@@ -134,28 +140,19 @@ async def list_available_tools(http_request: Request) -> ToolsListResponse:
     if not user_id:
         raise HTTPException(status_code=401, detail="需要登录")
 
-    tools: List[ToolInfo] = []
+    # Get unified server list from AgentHub
+    servers_data = AgentHub.list_all_servers()
 
-    # Get all registered tools with their info
-    for tool_info in AgentHub.list_tools_info():
-        tools.append(
-            ToolInfo(
-                name=tool_info["name"],
-                description=tool_info["description"],
-                type=tool_info["type"],
-                source=tool_info.get("source"),
-            )
+    servers = [
+        ServerInfo(
+            name=s["name"],
+            type=s["type"],
+            tools=[ToolSchema(**t) for t in s["tools"]],
         )
+        for s in servers_data
+    ]
 
-    # Get MCP servers
-    mcp_provider_any = AgentHub.get_provider("mcp")  # type: ignore[assignment]
-    mcp_servers = (
-        getattr(mcp_provider_any, "list_servers")()
-        if hasattr(mcp_provider_any, "list_servers")
-        else []
-    )
-
-    return ToolsListResponse(tools=tools, mcp_servers=mcp_servers)
+    return ToolsListResponse(servers=servers)
 
 
 @router.post("/agent/chat")

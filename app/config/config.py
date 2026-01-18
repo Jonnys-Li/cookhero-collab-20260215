@@ -17,7 +17,7 @@ from app.config.database_config import DatabaseConfig
 from app.config.llm_config import LLMConfig
 from app.config.rag_config import RAGConfig
 from app.config.web_search_config import WebSearchConfig
-from app.config.vision_config import VisionConfig, ImageGenerationConfig
+from app.config.vision_config import VisionConfig, ImageGenerationConfig, ImageStorageConfig
 from app.config.evaluation_config import EvaluationConfig
 from app.config.mcp_config import MCPConfig
 from app.config.config_loader import (
@@ -29,6 +29,7 @@ from app.config.config_loader import (
     load_evaluation_config,
     load_mcp_config,
     load_image_generation_config,
+    load_image_storage_config,
 )
 
 
@@ -108,6 +109,9 @@ class Settings(BaseModel):
 
     # Image Generation configuration loaded from config.yml
     image_generation: ImageGenerationConfig = load_image_generation_config()
+
+    # Image Storage configuration loaded from config.yml (imgbb)
+    image_storage: ImageStorageConfig = load_image_storage_config()
 
     class Config:
         arbitrary_types_allowed = True

@@ -11,7 +11,7 @@ import type {
 } from '../../types';
 
 /**
- * Get available tools and MCP servers
+ * Get available tools grouped by server
  */
 export async function getAvailableTools(token?: string): Promise<ToolsListResponse> {
   const response = await fetch(`${API_BASE}/agent/tools`, {

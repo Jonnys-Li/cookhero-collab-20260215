@@ -43,6 +43,7 @@ CookHero targets kitchen beginners, fitness enthusiasts, health-conscious users,
 - Natural language understanding of user needs (e.g., "I want to make a low-fat, high-protein dinner")
 - Multi-turn conversation support with context history
 - Automatic intent recognition (query, recommendation, chat, etc.)
+- Streaming responses with real-time display
 
 ### 2. Hybrid Retrieval System
 - **Vector Retrieval**: Semantic similarity matching (based on Milvus)
@@ -60,29 +61,39 @@ CookHero targets kitchen beginners, fitness enthusiasts, health-conscious users,
 ### 4. Advanced Reranking
 - Use specialized Reranker models for secondary sorting of retrieval results
 - Improve result relevance and accuracy
+- Support for Qwen3-Reranker-8B and other mainstream models
 
 ### 5. Web Search Enhancement
 - Integrate Tavily search engine to automatically query online when knowledge base is insufficient
 - Combine real-time information with local knowledge for comprehensive answers
+- LLM-based intelligent search trigger decision
 
 ### 6. User System
 - User registration/login (JWT authentication)
 - Session management (multi-session isolation, history saving)
+- Dual token mechanism (access token + refresh token)
 
-### 7. Multimodal Support 🆕
+### 7. Multimodal Support
 - **Image Recognition**: Upload food/ingredient images for intelligent identification
 - **Intent Understanding**: Combine images and text to understand complete user intent
 - **Multiple Scenarios**: Dish identification, ingredient recognition, cooking guidance, recipe queries
 - **Flexible Integration**: Support for OpenAI-compatible vision model APIs
 
-### 8. RAG Evaluation System 🆕
+### 8. RAG Evaluation System
 - **Quality Monitoring**: Automated evaluation based on the RAGAS framework
 - **Core Metrics**: Faithfulness, Answer Relevancy
 - **Async Evaluation**: Background asynchronous execution without affecting response speed
 - **Trend Analysis**: Support for evaluation trend viewing and quality alerts
 - **Data Persistence**: Evaluation results stored in PostgreSQL
 
-### 9. Security Protection System 🆕
+### 9. LLM Usage Statistics
+- **Real-time Monitoring**: Track Token usage for each request
+- **Performance Metrics**: Record response time, thinking time, generation time
+- **Statistical Analysis**: Usage statistics by user, session, and module
+- **Tool Tracking**: Record Agent tool call names
+- **Visualization**: Frontend LLM statistics page
+
+### 10. Security Protection System
 - **Multi-layer Defense**: Input validation → Pattern detection → LLM deep detection
 - **Prompt Injection Protection**: Dual detection mechanism based on rules and AI
 - **Rate Limiting**: Redis sliding window algorithm with endpoint-specific limits
@@ -92,9 +103,52 @@ CookHero targets kitchen beginners, fitness enthusiasts, health-conscious users,
 
 > 📖 For detailed security architecture, see [Security Documentation](SECURITY.md)
 
+### 11. Agent Intelligent Mode (New Feature)
+- **ReAct Pattern**: Implements reasoning + action loop for autonomous decision-making and tool invocation
+- **Built-in Tools**: Calculator, datetime, text processing and other practical tools
+- **Extensible Architecture**: Support for custom Agent and Tool registration
+- **Independent Session Management**: Agent sessions separated from standard conversations
+- **Context Compression**: Automatically compress long conversation history to reduce Token consumption
+- **Real-time Feedback**: SSE event stream for live display of tool calls and results
+- **Execution Tracing**: Complete recording of Agent execution trajectory for debugging and analysis
+
 ---
 
 ## 🏗️ Technical Architecture
+
+### System Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Frontend (React + TypeScript)                       │
+│                      [Chat Mode]        [Agent Mode]                     │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         FastAPI Backend Service                          │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐   │
+│  │  Auth Module│  │ Conversation│  │ Agent Module│  │ Evaluation  │   │
+│  │             │  │   Module    │  │             │  │   Module    │   │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                    │
+              ┌─────────────────────┼─────────────────────┐
+              ▼                     ▼                     ▼
+┌─────────────────────┐  ┌─────────────────────┐  ┌─────────────────────┐
+│   RAG Pipeline      │  │  Agent Execution    │  │   Security Layer    │
+│ Intent→Rewrite→RAG  │  │  ReAct Loop + Tools │  │ Rate Limit+Guards   │
+└─────────────────────┘  └─────────────────────┘  └─────────────────────┘
+                                    │
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            Data Storage Layer                            │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
+│  │PostgreSQL│  │  Redis   │  │  Milvus  │  │  MinIO   │               │
+│  │(Main DB) │  │(L1 Cache)|  │(Vectors) │  │(Files)   │               │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘               │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
 ### RAG Pipeline Flow
 
@@ -115,7 +169,7 @@ CookHero targets kitchen beginners, fitness enthusiasts, health-conscious users,
 
 ## 📂 Project Structure
 
-See [Project Structure Documentation](docs/PROJECT_STRUCTURE.md)
+See [Project Structure Documentation](PROJECT_STRUCTURE.md)
 
 ---
 
@@ -159,10 +213,10 @@ See [Project Structure Documentation](docs/PROJECT_STRUCTURE.md)
    python -m venv .venv
    source .venv/bin/activate  # Windows: .venv\Scripts\activate
    pip install -r requirements.txt
-   
+
    # Initialize database
    python -m scripts.howtocook_loader
-   
+
    # Start backend service
    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
@@ -188,47 +242,144 @@ See [Project Structure Documentation](docs/PROJECT_STRUCTURE.md)
 Create a `.env` file (refer to `.env.example`):
 
 ```env
-# LLM API Keys
-LLM_API_KEY=your_openai_or_custom_api_key
-FAST_LLM_API_KEY=your_fast_model_api_key  # Optional
+# ==================== LLM API Configuration ====================
+# Main API Key (default for all modules)
+LLM_API_KEY=your_main_api_key
 
-# Database
+# Fast Model API Key (for intent detection, query rewriting)
+FAST_LLM_API_KEY=your_fast_model_api_key
+
+# Vision Model API Key (for multimodal analysis)
+VISION_API_KEY=your_vision_model_api_key
+
+# Reranker API Key (for result reranking)
+RERANKER_API_KEY=your_reranker_api_key
+
+# ==================== Database Configuration ====================
 DATABASE_PASSWORD=your_postgres_password
-REDIS_PASSWORD=your_redis_password  # Optional
+
+# Redis Password (optional)
+REDIS_PASSWORD=your_redis_password
+
+# Milvus Authentication (optional)
 MILVUS_USER=root
 MILVUS_PASSWORD=your_milvus_password
 
-# Reranker (Optional)
-RERANKER_API_KEY=your_reranker_api_key
-
-# Web Search (Optional)
+# ==================== Web Search ====================
 WEB_SEARCH_API_KEY=your_tavily_api_key
 
-# JWT Secret
-JWT_SECRET_KEY=your_jwt_secret_key
+# ==================== Security / Authentication ====================
+JWT_SECRET_KEY=your_secure_jwt_secret_key
+JWT_ALGORITHM=HS256
+
+# Access token expiration (minutes)
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+# Refresh token expiration (days)
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# ==================== Rate Limiting ====================
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_LOGIN_PER_MINUTE=5
+RATE_LIMIT_CONVERSATION_PER_MINUTE=30
+RATE_LIMIT_GLOBAL_PER_MINUTE=100
+
+# ==================== Account Security ====================
+LOGIN_MAX_FAILED_ATTEMPTS=5
+LOGIN_LOCKOUT_MINUTES=15
+MAX_MESSAGE_LENGTH=10000
+MAX_IMAGE_SIZE_MB=5
+PROMPT_GUARD_ENABLED=true
 ```
 
 ### 2. Main Configuration File (`config.yml`)
 
-Contains:
-- LLM provider configuration (fast/normal two-tier models)
-- Vector storage configuration
-- Retrieval parameters (top_k, score_threshold)
-- Reranker configuration
-- Caching strategy
-- Database connection information
+`config.yml` contains the core configuration of the application:
 
-See comments in [config.yml](config.yml) for detailed explanations.
+```yaml
+# LLM Provider Configuration (Layered: fast / normal)
+llm:
+  fast:    # Fast models (low latency)
+  normal:  # Standard models (high quality)
 
-### 3. Security Configuration
+# Data paths
+paths:
+  base_data_path: "data/HowToCook"
+
+# Embedding model
+embedding:
+  model_name: "BAAI/bge-small-zh-v1.5"
+
+# Vector store
+vector_store:
+  type: "milvus"
+  collection_names:
+    recipes: "cook_hero_recipes"
+    personal: "cook_hero_personal_docs"
+
+# Retrieval configuration
+retrieval:
+  top_k: 9
+  score_threshold: 0.2
+  ranker_type: "weighted"
+  ranker_weights: [0.8, 0.2]
+
+# Reranker configuration
+reranker:
+  enabled: true
+  model_name: "Qwen/Qwen3-Reranker-8B"
+
+# Cache configuration
+cache:
+  enabled: true
+  ttl: 3600
+  l2_enabled: true
+  similarity_threshold: 0.92
+
+# Web search configuration
+web_search:
+  enabled: true
+  max_results: 6
+
+# Vision/Multimodal configuration
+vision:
+  model:
+    enabled: true
+    model_name: "Qwen/QVQ-72B-Preview"
+
+# Evaluation configuration
+evaluation:
+  enabled: true
+  async_mode: true
+  sample_rate: 1.0
+
+# Database connections
+database:
+  postgres:
+    host: "localhost"
+    port: 5432
+  redis:
+    host: "localhost"
+    port: 6379
+  milvus:
+    host: "localhost"
+    port: 19530
+```
+
+See comments in `config.yml` for detailed explanations.
+
+### 3. Security Configuration Details
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `JWT_SECRET_KEY` | **Required** | JWT signing key, must be set in production |
+| `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Access token expiration time (minutes) |
-| `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token expiration time (days) |
+| `RATE_LIMIT_ENABLED` | `false` | Enable rate limiting |
 | `RATE_LIMIT_LOGIN_PER_MINUTE` | `5` | Login endpoint rate limit per minute |
 | `RATE_LIMIT_CONVERSATION_PER_MINUTE` | `30` | Conversation endpoint rate limit per minute |
+| `RATE_LIMIT_GLOBAL_PER_MINUTE` | `100` | Global endpoint rate limit per minute |
 | `LOGIN_MAX_FAILED_ATTEMPTS` | `5` | Failed login attempts before lockout |
 | `LOGIN_LOCKOUT_MINUTES` | `15` | Account lockout duration (minutes) |
 | `PROMPT_GUARD_ENABLED` | `true` | Enable prompt injection protection |
@@ -241,10 +392,26 @@ See comments in [config.yml](config.yml) for detailed explanations.
 
 ### Backend Development
 
+```
+app/
+├── api/v1/endpoints/   # API endpoint definitions
+├── services/           # Business logic services
+├── conversation/       # Conversation management module
+├── agent/             # Agent intelligent module (ReAct + Tools)
+├── rag/               # RAG pipeline implementation
+├── security/          # Security protection module
+├── llm/               # LLM provider
+├── vision/            # Multimodal vision module
+├── database/          # Database layer
+└── config/            # Configuration module
+```
+
 - **Add new API endpoints**: Create new files in `app/api/v1/endpoints/`
 - **Add new services**: Implement business logic in `app/services/`
 - **Modify conversation flow**: Adjust conversation management logic in `app/conversation/`
 - **Modify RAG pipeline**: Adjust retrieval process in `app/rag/pipeline/`
+- **Add new Agent**: Inherit `BaseAgent` and use `@register_agent` decorator
+- **Add new Tool**: Inherit `BaseTool` and use `@register_tool` decorator
 
 ### Frontend Development
 
@@ -255,6 +422,17 @@ npm run build   # Production build
 npm run lint    # Code linting
 ```
 
+### Running Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific module tests
+pytest tests/test_rag.py -v
+pytest tests/test_guardrails.py -v
+```
+
 ---
 
 ## 🗺️ Roadmap
@@ -262,11 +440,14 @@ npm run lint    # Code linting
 - [x] **Multimodal Support**: Ingredient image recognition, dish identification ✅
 - [x] **RAG Evaluation System**: Quality monitoring based on RAGAS ✅
 - [x] **Security Protection System**: Input validation, prompt injection protection, rate limiting ✅
+- [x] **LLM Usage Statistics**: Token monitoring, performance analysis page ✅
+- [x] **Agent Intelligent Mode**: ReAct reasoning, tool invocation, session management ✅
 - [ ] **Voice Interaction**: Voice input queries, voice step narration
 - [ ] **Nutrition Analysis**: Automatic calculation of calories and nutrients
 - [ ] **Community Features**: User sharing, ratings, comments
 - [ ] **Smart Ingredient Management**: Fridge inventory, expiration reminders
 - [ ] **AR Cooking Guidance**: Augmented reality cooking assistance
+- [ ] **More Agent Tools**: Recipe search, nutrition calculation, shopping list generation
 
 ---
 
@@ -295,6 +476,7 @@ This project is licensed under the [APACHE LICENSE 2.0](LICENSE). See the LICENS
 - [Milvus](https://milvus.io/) - High-performance vector database
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
 - [NVIDIA NeMo Guardrails](https://developer.nvidia.com/nvidia-nemo) - Advanced security protection framework
+- [RAGAS](https://docs.ragas.io/) - RAG evaluation framework
 
 ---
 

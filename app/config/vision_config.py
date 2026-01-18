@@ -47,6 +47,18 @@ class ImageGenerationConfig(BaseModel):
     temperature: float = 1.0  # Only used for some compatible APIs
 
 
+class ImageStorageConfig(BaseModel):
+    """
+    Configuration for image storage using imgbb API.
+    Used to persist generated images.
+    """
+
+    enabled: bool = True
+    api_key: Optional[str] = None  # Loaded from .env (IMGBB_STORAGE_API_KEY)
+    upload_url: str = "https://api.imgbb.com/1/upload"
+    expiration: Optional[int] = None  # Optional expiration in seconds (60-15552000), None = never
+
+
 class VisionConfig(BaseModel):
     """Top-level vision configuration."""
 
