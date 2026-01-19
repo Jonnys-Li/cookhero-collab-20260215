@@ -15,7 +15,7 @@ from typing import Any, AsyncGenerator, Optional
 DEFAULT_TRUNCATE_THRESHOLD = 500
 TRUNCATE_SUFFIX = "...[truncated]"
 
-from app.agent.types import AgentChunk, AgentChunkType
+from app.agent.types import AgentChunk, AgentChunkType, AgentContext
 from app.agent.agents import BaseAgent
 from app.agent.context import AgentContextBuilder, AgentContextCompressor
 from app.agent.database.repository import AgentRepository, agent_repository
@@ -122,6 +122,7 @@ class AgentService:
         agent_name: str = "default",
         streaming: bool = False,
         selected_tools: Optional[list[str]] = None,
+        images: Optional[list[dict]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         主入口：与 Agent 对话。
@@ -133,6 +134,7 @@ class AgentService:
             agent_name: Agent 名称（用于选择 Agent，不存储在 Session 中）
             streaming: 是否启用流式输出
             selected_tools: 用户选择的工具列表（为空则使用默认工具）
+            images: 用户上传的图片列表 [{data, mime_type}]
 
         Yields:
             SSE 格式的事件字符串
@@ -168,18 +170,26 @@ class AgentService:
                 user_id,
                 agent_name=agent_name,
                 selected_tools=selected_tools,
+                images=images,
             )
 
-            # 4. 获取 Agent
+            # 4. If images present, run vision analysis and emit event
+            if context.images:
+                vision_result = await self._analyze_images(context)
+                if vision_result:
+                    context.vision_analysis = vision_result
+                    yield self._format_event("vision", vision_result)
+
+            # 5. 获取 Agent
             agent = self._get_agent_or_fallback(agent_name)
 
-            # 5. 创建 LLM invoker
+            # 6. 创建 LLM invoker
             invoker = provider.create_invoker(
                 llm_type="fast",
                 streaming=streaming,
             )
 
-            # 6. 执行 Agent
+            # 7. 执行 Agent
             response_content = ""
             trace_steps = []
 
@@ -317,8 +327,31 @@ class AgentService:
             if answer_end_time is None:
                 answer_end_time = time.time()
 
+            # Build user message content (keep original message, don't append vision analysis)
+            user_message_content = message
+
+            # Build trace with image URLs for user message
+            user_trace = None
+            if context.images:
+                image_sources = []
+                for img in context.images:
+                    if img.get("url"):
+                        image_sources.append({
+                            "type": "image",
+                            "url": img.get("url"),
+                            "display_url": img.get("display_url"),
+                            "thumb_url": img.get("thumb_url"),
+                        })
+                if image_sources:
+                    user_trace = image_sources
+
             # 保存用户消息
-            await self.repository.save_message(actual_session_id, "user", message)
+            await self.repository.save_message(
+                actual_session_id,
+                "user",
+                user_message_content,
+                trace=user_trace,
+            )
 
             final_thinking_ms = None
             final_answer_ms = None
@@ -362,6 +395,62 @@ class AgentService:
         except KeyError:
             logger.warning(f"Agent {agent_name} not found, using fallback")
             return _build_fallback_agent("default")
+
+    async def _analyze_images(self, context: AgentContext) -> Optional[dict]:
+        """
+        Analyze images using the vision provider.
+
+        Args:
+            context: Agent context with images
+
+        Returns:
+            Vision analysis result dict, or None if analysis fails
+        """
+        if not context.images:
+            return None
+
+        try:
+            from app.vision.provider import vision_provider, ImageInput
+
+            # Check if vision is enabled
+            if not vision_provider.is_enabled:
+                logger.warning("Vision provider is not enabled, skipping image analysis")
+                return None
+
+            # Convert images to ImageInput format
+            image_inputs = []
+            for img in context.images:
+                image_inputs.append(
+                    ImageInput.from_base64(img["data"], img["mime_type"])
+                )
+
+            # Build analysis prompt
+            prompt = f"请分析这张图片并描述你看到的内容。用户的问题是：{context.current_message}"
+
+            # Run vision analysis
+            result_str = await vision_provider.analyze(
+                text=prompt,
+                images=image_inputs,
+                user_id=context.user_id,
+                conversation_id=context.session_id,
+            )
+
+            # Parse JSON response
+            import json
+            try:
+                result = json.loads(result_str)
+                return result
+            except json.JSONDecodeError:
+                # Return as plain text if not valid JSON
+                return {
+                    "description": result_str,
+                    "is_food_related": False,
+                    "confidence": 0.5,
+                }
+
+        except Exception as e:
+            logger.error(f"Vision analysis failed: {e}", exc_info=True)
+            return None
 
     async def get_session(self, session_id: str) -> Optional[dict]:
         """获取 Session 信息。"""

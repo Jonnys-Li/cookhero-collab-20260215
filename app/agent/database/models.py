@@ -68,6 +68,9 @@ class AgentSessionModel(Base):
             "compressed_summary": self.compressed_summary,
             "compressed_count": self.compressed_count,
             "message_count": len(self.messages) if self.messages else 0,
+            "last_message_preview": (
+                self.messages[-1].content[:80] if self.messages else None
+            ),
         }
 
 
@@ -94,8 +97,9 @@ class AgentMessageModel(Base):
         DateTime, default=datetime.utcnow, nullable=False
     )
 
-    # Agent 执行轨迹（仅 assistant 消息）
-    # [{iteration, action, tool_calls, content, timestamp, error}, ...]
+    # Agent 执行轨迹（assistant 消息）或图片URL列表（user 消息）
+    # assistant: [{iteration, action, tool_calls, content, timestamp, error}, ...]
+    # user: [{type: "image", url, display_url, thumb_url}, ...]
     trace: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
     # 计时统计（仅 assistant 消息）

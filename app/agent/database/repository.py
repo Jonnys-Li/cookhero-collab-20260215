@@ -233,7 +233,19 @@ class AgentRepository:
             result = await session.execute(stmt)
             messages = result.scalars().all()
 
-            return [{"role": msg.role, "content": msg.content + self._extract_tool_results(msg.trace)} for msg in messages]
+            result_list = []
+            for msg in messages:
+                msg_dict = {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "trace": msg.trace,
+                }
+                # For assistant messages, append tool results to content
+                if msg.role == "assistant":
+                    msg_dict["content"] = msg.content + self._extract_tool_results(msg.trace)
+                result_list.append(msg_dict)
+
+            return result_list
         
     def _extract_tool_results(self, trace: Optional[list]) -> str:
         if not trace:

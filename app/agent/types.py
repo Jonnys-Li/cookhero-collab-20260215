@@ -19,6 +19,7 @@ class AgentChunkType(str, Enum):
     TRACE = "trace"  # 执行轨迹
     TOOL_CALL = "tool_call"  # Tool 调用
     TOOL_RESULT = "tool_result"  # Tool 执行结果
+    VISION = "vision"  # 图片分析结果
     ERROR = "error"  # 错误信息
     DONE = "done"  # 完成信号
 
@@ -83,6 +84,8 @@ class AgentContext:
     recent_messages: list[dict] = field(default_factory=list)  # 近期消息
     available_tools: list[dict] = field(default_factory=list)  # 可用 Tool schema
     current_message: str = ""  # 当前用户消息
+    images: list[dict] | None = None  # [{data, mime_type, url}]
+    vision_analysis: dict | None = None  # Vision analysis result
 
 
 @dataclass

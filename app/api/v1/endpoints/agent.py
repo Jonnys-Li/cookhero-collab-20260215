@@ -5,6 +5,7 @@ Independent from the conversation endpoints, designed for agent-based interactio
 """
 
 import asyncio
+import base64
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -22,6 +23,9 @@ router = APIRouter()
 
 # Constants for input validation
 MAX_MESSAGE_LENGTH = settings.MAX_MESSAGE_LENGTH  # 10000 characters
+MAX_IMAGES = 4
+MAX_IMAGE_SIZE_MB = 10.0
+SUPPORTED_IMAGE_FORMATS = ["image/jpeg", "image/png", "image/gif", "image/webp"]
 
 
 class ToolSchema(BaseModel):
@@ -45,10 +49,42 @@ class ToolsListResponse(BaseModel):
     servers: List[ServerInfo]
 
 
+class ImageData(BaseModel):
+    """Image data for multimodal requests."""
+
+    data: str  # Base64 encoded image data
+    mime_type: str = "image/jpeg"
+
+    @field_validator("mime_type")
+    @classmethod
+    def validate_mime_type(cls, v: str) -> str:
+        """Validate image MIME type."""
+        if v not in SUPPORTED_IMAGE_FORMATS:
+            raise ValueError(f"不支持的图片格式: {v}。支持的格式: {SUPPORTED_IMAGE_FORMATS}")
+        return v
+
+    @field_validator("data")
+    @classmethod
+    def validate_data(cls, v: str) -> str:
+        """Validate base64 image data size."""
+        try:
+            # Decode to check size (base64 is ~33% larger than binary)
+            decoded_size = len(base64.b64decode(v))
+            max_size = MAX_IMAGE_SIZE_MB * 1024 * 1024
+            if decoded_size > max_size:
+                raise ValueError(f"图片大小超过限制 ({MAX_IMAGE_SIZE_MB}MB)")
+        except Exception as e:
+            if "图片大小超过限制" in str(e):
+                raise
+            raise ValueError("无效的 base64 图片数据")
+        return v
+
+
 class AgentChatRequest(BaseModel):
     """Request model for agent chat endpoint."""
 
     message: str = Field(..., max_length=MAX_MESSAGE_LENGTH)
+    images: Optional[List[ImageData]] = Field(default=None, max_length=MAX_IMAGES)
     session_id: Optional[str] = None
     agent_name: str = Field(default="default", max_length=100)
     stream: bool = True
@@ -74,6 +110,7 @@ class AgentSessionResponse(BaseModel):
     created_at: str
     updated_at: str
     message_count: int
+    last_message_preview: Optional[str] = None
 
 
 class AgentMessageResponse(BaseModel):
@@ -165,6 +202,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
 
     **Request Body:**
     - `message`: The user's input message
+    - `images`: Optional list of images (base64 encoded, max 4)
     - `session_id`: Optional ID for continuing a session
     - `agent_name`: Name of the agent to use (default: "default")
     - `stream`: Whether to stream the response (default: true)
@@ -173,6 +211,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     **Response (SSE stream when stream=true):**
     ```
     data: {"type": "session", "session_id": "...", "agent_name": "..."}
+    data: {"type": "vision", "is_food_related": true, "description": "..."}
     data: {"type": "text", "content": "..."}
     data: {"type": "tool_call", "id": "...", "name": "...", "arguments": {...}}
     data: {"type": "tool_result", "name": "...", "success": true, "result": "..."}
@@ -185,8 +224,13 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     # ==========================================================================
     secured_message = await check_message_security(request.message, http_request)
 
+    # Convert images to dict format for service
+    images_data = None
+    if request.images:
+        images_data = [{"data": img.data, "mime_type": img.mime_type} for img in request.images]
+
     logger.info(
-        f"Agent chat request: '{secured_message[:50]}...', agent={request.agent_name}"
+        f"Agent chat request: '{secured_message[:50]}...', agent={request.agent_name}, images={len(images_data) if images_data else 0}"
     )
 
     # Get user information from request state
@@ -204,6 +248,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
                 agent_name=request.agent_name,
                 streaming=request.stream,
                 selected_tools=request.selected_tools,
+                images=images_data,
             ):
                 # Check if client is still connected
                 if await http_request.is_disconnected():
@@ -241,6 +286,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
                 agent_name=request.agent_name,
                 streaming=False,
                 selected_tools=request.selected_tools,
+                images=images_data,
             ):
                 # Parse SSE event
                 if event.startswith("data: "):

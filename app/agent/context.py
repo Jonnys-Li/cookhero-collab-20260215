@@ -47,6 +47,7 @@ class AgentContextBuilder:
         user_id: str,
         agent_name: str = "default",
         selected_tools: Optional[list[str]] = None,
+        images: Optional[list[dict]] = None,
     ) -> AgentContext:
         """
         构建 Agent 上下文。
@@ -54,10 +55,10 @@ class AgentContextBuilder:
         Args:
             session: Agent Session 模型
             current_message: 当前用户消息
+            user_id: 用户 ID
             agent_name: Agent 名称（用于选择 Agent 配置）
-            user_profile: 用户画像
-            user_instruction: 用户长期指令
             selected_tools: 用户选择的工具列表（为空则使用 Agent 默认工具）
+            images: 用户上传的图片列表 [{data, mime_type}]
 
         Returns:
             完整的 Agent 上下文
@@ -102,6 +103,11 @@ class AgentContextBuilder:
                 user_profile = user_data.profile
                 user_instruction = user_data.user_instruction
 
+        # 6. Process images if provided
+        processed_images = None
+        if images:
+            processed_images = await self._process_images(images)
+
         return AgentContext(
             system_prompt=config.system_prompt,
             user_id=session.user_id,
@@ -112,7 +118,45 @@ class AgentContextBuilder:
             recent_messages=recent_messages,
             available_tools=available_tools,
             current_message=current_message,
+            images=processed_images,
         )
+
+    async def _process_images(self, images: list[dict]) -> list[dict]:
+        """
+        Process images by uploading to imgbb for persistent URLs.
+
+        Args:
+            images: List of images [{data, mime_type}]
+
+        Returns:
+            List of processed images [{data, mime_type, url}]
+        """
+        from app.utils.image_storage import upload_to_imgbb
+
+        processed = []
+        for img in images:
+            result = {
+                "data": img["data"],
+                "mime_type": img["mime_type"],
+                "url": None,
+            }
+
+            # Upload to imgbb for persistent URL
+            try:
+                upload_result = await upload_to_imgbb(
+                    img["data"],
+                    img["mime_type"],
+                )
+                if upload_result:
+                    result["url"] = upload_result.get("url")
+                    result["display_url"] = upload_result.get("display_url")
+                    result["thumb_url"] = upload_result.get("thumb_url")
+            except Exception as e:
+                logger.warning(f"Failed to upload image to imgbb: {e}")
+
+            processed.append(result)
+
+        return processed
 
     def build_messages(self, context: AgentContext) -> list[dict]:
         """
@@ -149,8 +193,51 @@ class AgentContextBuilder:
         # 3. 近期消息
         messages.extend(context.recent_messages)
 
-        # 4. 当前消息
-        messages.append({"role": "user", "content": context.current_message})
+        # 4. 当前消息（可能包含图片）
+        if context.images:
+            # Build multimodal content with images
+            content_parts = []
+
+            # Add vision analysis context if available
+            if context.vision_analysis:
+                vision_desc = context.vision_analysis.get("description", "")
+                if vision_desc:
+                    content_parts.append({
+                        "type": "text",
+                        "text": f"[图片分析结果]\n{vision_desc}\n\n[用户问题]\n{context.current_message}"
+                    })
+                else:
+                    content_parts.append({
+                        "type": "text",
+                        "text": context.current_message
+                    })
+            else:
+                content_parts.append({
+                    "type": "text",
+                    "text": context.current_message
+                })
+
+            # Add image content
+            for img in context.images:
+                if img.get("url"):
+                    # Use imgbb URL
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": img["url"]}
+                    })
+                elif img.get("data"):
+                    # Use base64 data URL
+                    mime_type = img.get("mime_type", "image/jpeg")
+                    data_url = f"data:{mime_type};base64,{img['data']}"
+                    content_parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": data_url}
+                    })
+
+            messages.append({"role": "user", "content": content_parts})
+        else:
+            # Plain text message
+            messages.append({"role": "user", "content": context.current_message})
 
         return messages
 
