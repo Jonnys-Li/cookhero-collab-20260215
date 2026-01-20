@@ -39,6 +39,8 @@
 
 CookHero 面向厨房新手、健身爱好者、健康饮食倡导者、过敏体质用户等多种人群，致力于让烹饪变得简单、科学、有趣。
 
+> 内部自带的食谱来源于[Anduin2017/HowToCook](https://github.com/Anduin2017/HowToCook)，感谢该项目的贡献者！
+
 ---
 
 ## ✨ 核心功能

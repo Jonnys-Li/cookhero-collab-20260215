@@ -35,6 +35,8 @@
 
 CookHero targets kitchen beginners, fitness enthusiasts, health-conscious users, people with allergies, and more, aiming to make cooking simple, scientific, and fun.
 
+> The internal recipe library is sourced from [Anduin2017/HowToCook](https://github.com/Anduin2017/HowToCook), thanks to the contributors of that project!
+
 ---
 
 ## ✨ Core Features
