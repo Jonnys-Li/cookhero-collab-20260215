@@ -119,6 +119,13 @@ export interface MCPServerListResponse {
   servers: MCPServer[];
 }
 
+export interface MCPServerUpdateRequest {
+  endpoint?: string;
+  auth_header_name?: string | null;
+  auth_token?: string | null;
+  enabled?: boolean;
+}
+
 export interface AgentSessionResponse {
   id: string;
   user_id: string;
@@ -172,6 +179,7 @@ export interface SubagentSchema {
   name: string;
   display_name: string;
   description: string;
+  system_prompt?: string;
   tools: string[];
   max_iterations: number;
   enabled: boolean;
@@ -201,6 +209,18 @@ export interface CreateSubagentRequest {
   display_name: string;
   description: string;
   system_prompt: string;
+  tools?: string[];
+  max_iterations?: number;
+  category?: string;
+}
+
+/**
+ * Request to update a custom subagent.
+ */
+export interface UpdateSubagentRequest {
+  display_name?: string;
+  description?: string;
+  system_prompt?: string;
   tools?: string[];
   max_iterations?: number;
   category?: string;

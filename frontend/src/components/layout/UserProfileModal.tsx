@@ -5,14 +5,17 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Settings, Palette, Plug, Bot, Trash2 } from 'lucide-react';
+import { X, Settings, Palette, Plug, Bot, Trash2, Pencil } from 'lucide-react';
 import {
   createMcpServer,
+  deleteMcpServer,
   getProfile,
   listMcpServers,
+  updateMcpServer,
   updateProfile,
   createSubagent,
   deleteSubagent,
+  updateSubagent,
   listSubagents,
   getAvailableTools,
 } from '../../services/api';
@@ -47,6 +50,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
   const [mcpAuthToken, setMcpAuthToken] = useState('');
   const [mcpAuthEnabled, setMcpAuthEnabled] = useState(false);
   const [mcpLoading, setMcpLoading] = useState(false);
+  const [editingMcpName, setEditingMcpName] = useState<string | null>(null);
   const [subagents, setSubagents] = useState<SubagentSchema[]>([]);
   const [availableAgentTools, setAvailableAgentTools] = useState<ToolSchema[]>([]);
   const [agentName, setAgentName] = useState('');
@@ -56,6 +60,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
   const [agentTools, setAgentTools] = useState<string[]>([]);
   const [agentMaxIterations, setAgentMaxIterations] = useState(10);
   const [agentLoading, setAgentLoading] = useState(false);
+  const [editingAgentName, setEditingAgentName] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open || !token) return;
@@ -142,6 +147,15 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
     }
   };
 
+  const resetMcpForm = () => {
+    setMcpName('');
+    setMcpEndpoint('');
+    setMcpAuthEnabled(false);
+    setMcpAuthHeaderName('Authorization');
+    setMcpAuthToken('');
+    setEditingMcpName(null);
+  };
+
   const handleAddMcpServer = async () => {
     setError(null);
     if (!token) return setError('Not authenticated');
@@ -173,6 +187,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
       setMcpAuthEnabled(false);
       setMcpAuthHeaderName('Authorization');
       setMcpAuthToken('');
+      setEditingMcpName(null);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
@@ -186,6 +201,108 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
     } finally {
       setMcpLoading(false);
     }
+  };
+
+  const handleEditMcpServer = (server: {
+    name: string;
+    endpoint: string;
+    authHeaderName?: string | null;
+    authToken?: string | null;
+  }) => {
+    setEditingMcpName(server.name);
+    setMcpName(server.name);
+    setMcpEndpoint(server.endpoint);
+    const hasAuth = !!(server.authHeaderName && server.authToken);
+    setMcpAuthEnabled(hasAuth);
+    setMcpAuthHeaderName(server.authHeaderName ?? 'Authorization');
+    setMcpAuthToken(server.authToken ?? '');
+  };
+
+  const handleUpdateMcpServer = async () => {
+    setError(null);
+    if (!token) return setError('Not authenticated');
+    if (!editingMcpName) return;
+    if (!mcpEndpoint.trim()) {
+      return setError('请填写 MCP Endpoint');
+    }
+    if (mcpAuthEnabled && !mcpAuthToken.trim()) {
+      return setError('请填写认证 Token');
+    }
+
+    setMcpLoading(true);
+    try {
+      const updated = await updateMcpServer(
+        editingMcpName,
+        {
+          endpoint: mcpEndpoint.trim(),
+          auth_header_name: mcpAuthEnabled ? mcpAuthHeaderName.trim() : null,
+          auth_token: mcpAuthEnabled ? mcpAuthToken.trim() : null,
+        },
+        token
+      );
+      setMcpServers((prev) =>
+        prev.map((server) =>
+          server.name === editingMcpName
+            ? {
+                name: updated.name,
+                endpoint: updated.endpoint,
+                authHeaderName: updated.auth_header_name ?? null,
+                authToken: updated.auth_token ?? null,
+              }
+            : server
+        )
+      );
+      resetMcpForm();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(
+        msg.includes('\n')
+          ? msg
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : msg
+      );
+    } finally {
+      setMcpLoading(false);
+    }
+  };
+
+  const handleDeleteMcpServer = async (name: string) => {
+    setError(null);
+    if (!token) return setError('Not authenticated');
+    if (!window.confirm(`确认删除 MCP 服务器 ${name} 吗？`)) return;
+
+    setMcpLoading(true);
+    try {
+      await deleteMcpServer(name, token);
+      setMcpServers((prev) => prev.filter((server) => server.name !== name));
+      if (editingMcpName === name) {
+        resetMcpForm();
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(
+        msg.includes('\n')
+          ? msg
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : msg
+      );
+    } finally {
+      setMcpLoading(false);
+    }
+  };
+
+  const resetAgentForm = () => {
+    setAgentName('');
+    setAgentDisplayName('');
+    setAgentDescription('');
+    setAgentSystemPrompt('');
+    setAgentTools([]);
+    setAgentMaxIterations(10);
+    setEditingAgentName(null);
   };
 
   const handleAddSubagent = async () => {
@@ -220,6 +337,61 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
       setAgentSystemPrompt('');
       setAgentTools([]);
       setAgentMaxIterations(10);
+      setEditingAgentName(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(
+        msg.includes('\n')
+          ? msg
+              .split('\n')
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : msg
+      );
+    } finally {
+      setAgentLoading(false);
+    }
+  };
+
+  const handleEditSubagent = (agent: SubagentSchema) => {
+    setEditingAgentName(agent.name);
+    setAgentName(agent.name);
+    setAgentDisplayName(agent.display_name);
+    setAgentDescription(agent.description);
+    setAgentSystemPrompt(agent.system_prompt ?? '');
+    setAgentTools(agent.tools);
+    setAgentMaxIterations(agent.max_iterations);
+  };
+
+  const handleUpdateSubagent = async () => {
+    setError(null);
+    if (!token) return setError('Not authenticated');
+    if (!editingAgentName) return;
+    if (!agentDisplayName.trim()) {
+      return setError('请填写 Agent 显示名称');
+    }
+    if (!agentDescription.trim() || !agentSystemPrompt.trim()) {
+      return setError('请填写 Agent 描述和系统提示词');
+    }
+
+    setAgentLoading(true);
+    try {
+      const updated = await updateSubagent(
+        editingAgentName,
+        {
+          display_name: agentDisplayName.trim(),
+          description: agentDescription.trim(),
+          system_prompt: agentSystemPrompt.trim(),
+          tools: agentTools,
+          max_iterations: agentMaxIterations,
+          category: 'custom',
+        },
+        token
+      );
+      setSubagents((prev) =>
+        prev.map((agent) => (agent.name === updated.name ? updated : agent))
+      );
+      resetAgentForm();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
@@ -242,6 +414,9 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
     try {
       await deleteSubagent(name, token);
       setSubagents((prev) => prev.filter((agent) => agent.name !== name));
+      if (editingAgentName === name) {
+        resetAgentForm();
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
@@ -365,6 +540,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
                 endpoint={mcpEndpoint}
                 servers={mcpServers}
                 loading={mcpLoading}
+                editingName={editingMcpName}
                 authHeaderName={mcpAuthHeaderName}
                 authToken={mcpAuthToken}
                 authEnabled={mcpAuthEnabled}
@@ -374,6 +550,10 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
                 onAuthTokenChange={setMcpAuthToken}
                 onAuthEnabledChange={setMcpAuthEnabled}
                 onAdd={handleAddMcpServer}
+                onUpdate={handleUpdateMcpServer}
+                onCancelEdit={resetMcpForm}
+                onEdit={handleEditMcpServer}
+                onDelete={handleDeleteMcpServer}
               />
             )}
 
@@ -388,6 +568,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
                 availableTools={availableAgentTools}
                 subagents={subagents}
                 loading={agentLoading}
+                editingName={editingAgentName}
                 onNameChange={setAgentName}
                 onDisplayNameChange={setAgentDisplayName}
                 onDescriptionChange={setAgentDescription}
@@ -395,6 +576,9 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
                 onToolsChange={setAgentTools}
                 onMaxIterationsChange={setAgentMaxIterations}
                 onAdd={handleAddSubagent}
+                onUpdate={handleUpdateSubagent}
+                onCancelEdit={resetAgentForm}
+                onEdit={handleEditSubagent}
                 onDelete={handleDeleteSubagent}
               />
             )}
@@ -670,6 +854,7 @@ function McpTab({
   endpoint,
   servers,
   loading,
+  editingName,
   authHeaderName,
   authToken,
   authEnabled,
@@ -679,6 +864,10 @@ function McpTab({
   onAuthTokenChange,
   onAuthEnabledChange,
   onAdd,
+  onUpdate,
+  onCancelEdit,
+  onEdit,
+  onDelete,
 }: {
   name: string;
   endpoint: string;
@@ -689,6 +878,7 @@ function McpTab({
     authToken?: string | null;
   }[];
   loading: boolean;
+  editingName: string | null;
   authHeaderName: string;
   authToken: string;
   authEnabled: boolean;
@@ -698,7 +888,18 @@ function McpTab({
   onAuthTokenChange: (value: string) => void;
   onAuthEnabledChange: (value: boolean) => void;
   onAdd: () => void;
+  onUpdate: () => void;
+  onCancelEdit: () => void;
+  onEdit: (server: {
+    name: string;
+    endpoint: string;
+    authHeaderName?: string | null;
+    authToken?: string | null;
+  }) => void;
+  onDelete: (name: string) => void;
 }) {
+  const isEditing = Boolean(editingName);
+
   return (
     <>
       <div className="flex-1 overflow-y-auto pr-1">
@@ -721,7 +922,8 @@ function McpTab({
                 value={name}
                 onChange={(e) => onNameChange(e.target.value)}
                 placeholder="例如：amap"
-                className="w-full rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 px-4 py-2.5 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200"
+                disabled={isEditing}
+                className="w-full rounded-lg border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 px-4 py-2.5 focus:outline-none focus:border-indigo-400 dark:focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 transition-all duration-200 disabled:opacity-70"
               />
             </FormField>
 
@@ -772,13 +974,24 @@ function McpTab({
           </div>
 
           <div className="mt-5 pt-4 border-t border-indigo-200/60 dark:border-indigo-700/60">
-            <button
-              onClick={onAdd}
-              disabled={loading}
-              className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium disabled:opacity-70 shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 transition-all duration-200 hover:-translate-y-0.5"
-            >
-              {loading ? '保存中...' : '添加 MCP 服务器'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={isEditing ? onUpdate : onAdd}
+                disabled={loading}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white font-medium disabled:opacity-70 shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/40 transition-all duration-200 hover:-translate-y-0.5"
+              >
+                {loading ? '保存中...' : isEditing ? '更新 MCP 服务器' : '添加 MCP 服务器'}
+              </button>
+              {isEditing && (
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="px-4 py-2.5 rounded-lg border border-indigo-200 dark:border-indigo-700 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all duration-200"
+                >
+                  取消编辑
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -821,9 +1034,27 @@ function McpTab({
                       )}
                     </div>
                   </div>
-                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 font-medium">
-                    已启用
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs px-2 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 font-medium">
+                      已启用
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onEdit(server)}
+                      className="p-2 rounded-lg text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-all duration-200"
+                      aria-label={`Edit ${server.name}`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDelete(server.name)}
+                      className="p-2 rounded-lg text-gray-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all duration-200"
+                      aria-label={`Delete ${server.name}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))
             )}
@@ -844,6 +1075,7 @@ function AgentTab({
   availableTools,
   subagents,
   loading,
+  editingName,
   onNameChange,
   onDisplayNameChange,
   onDescriptionChange,
@@ -851,6 +1083,9 @@ function AgentTab({
   onToolsChange,
   onMaxIterationsChange,
   onAdd,
+  onUpdate,
+  onCancelEdit,
+  onEdit,
   onDelete,
 }: {
   name: string;
@@ -862,6 +1097,7 @@ function AgentTab({
   availableTools: ToolSchema[];
   subagents: SubagentSchema[];
   loading: boolean;
+  editingName: string | null;
   onNameChange: (value: string) => void;
   onDisplayNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
@@ -869,9 +1105,13 @@ function AgentTab({
   onToolsChange: (value: string[]) => void;
   onMaxIterationsChange: (value: number) => void;
   onAdd: () => void;
+  onUpdate: () => void;
+  onCancelEdit: () => void;
+  onEdit: (agent: SubagentSchema) => void;
   onDelete: (name: string) => void;
 }) {
   const customAgents = subagents.filter((agent) => !agent.builtin);
+  const isEditing = Boolean(editingName);
 
   return (
     <>
@@ -895,7 +1135,8 @@ function AgentTab({
                 value={name}
                 onChange={(e) => onNameChange(e.target.value)}
                 placeholder="例如：recipe_helper"
-                className="w-full rounded-lg border border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-800/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 px-4 py-2.5 focus:outline-none focus:border-purple-400 dark:focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all duration-200"
+                disabled={isEditing}
+                className="w-full rounded-lg border border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-800/50 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 px-4 py-2.5 focus:outline-none focus:border-purple-400 dark:focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all duration-200 disabled:opacity-70"
               />
             </FormField>
 
@@ -985,13 +1226,24 @@ function AgentTab({
           </div>
 
           <div className="mt-5 pt-4 border-t border-purple-200/60 dark:border-purple-700/60">
-            <button
-              onClick={onAdd}
-              disabled={loading}
-              className="w-full px-4 py-2.5 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-medium disabled:opacity-70 shadow-lg shadow-purple-500/30 hover:shadow-purple-500/40 transition-all duration-200 hover:-translate-y-0.5"
-            >
-              {loading ? '保存中...' : '添加 Agent'}
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={isEditing ? onUpdate : onAdd}
+                disabled={loading}
+                className="flex-1 px-4 py-2.5 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 text-white font-medium disabled:opacity-70 shadow-lg shadow-purple-500/30 hover:shadow-purple-500/40 transition-all duration-200 hover:-translate-y-0.5"
+              >
+                {loading ? '保存中...' : isEditing ? '更新 Agent' : '添加 Agent'}
+              </button>
+              {isEditing && (
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  className="px-4 py-2.5 rounded-lg border border-purple-200 dark:border-purple-700 text-purple-600 dark:text-purple-300 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-all duration-200"
+                >
+                  取消编辑
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1038,6 +1290,14 @@ function AgentTab({
                     >
                       {agent.enabled ? '已启用' : '已禁用'}
                     </span>
+                    <button
+                      onClick={() => onEdit(agent)}
+                      disabled={loading}
+                      className="p-2 rounded-lg text-gray-500 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-900/30 transition-all duration-200"
+                      aria-label={`Edit ${agent.display_name}`}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
                     <button
                       onClick={() => onDelete(agent.name)}
                       disabled={loading}

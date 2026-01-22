@@ -10,10 +10,12 @@ import type {
   ToolsListResponse,
   MCPServerListResponse,
   MCPServer,
+  MCPServerUpdateRequest,
   SubagentListResponse,
   SubagentSchema,
   SubagentToggleRequest,
   CreateSubagentRequest,
+  UpdateSubagentRequest,
 } from '../../types';
 
 /**
@@ -64,6 +66,48 @@ export async function createMcpServer(
     method: 'POST',
     headers: createJsonHeaders(token),
     body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const msg = await parseErrorResponse(response);
+    throw new Error(msg || `HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Update an existing MCP server
+ */
+export async function updateMcpServer(
+  name: string,
+  payload: MCPServerUpdateRequest,
+  token?: string
+): Promise<MCPServer> {
+  const response = await fetch(`${API_BASE}/agent/mcp-servers/${name}`, {
+    method: 'PATCH',
+    headers: createJsonHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const msg = await parseErrorResponse(response);
+    throw new Error(msg || `HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Delete an MCP server
+ */
+export async function deleteMcpServer(
+  name: string,
+  token?: string
+): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE}/agent/mcp-servers/${name}`, {
+    method: 'DELETE',
+    headers: createAuthHeaders(token),
   });
 
   if (!response.ok) {
@@ -332,6 +376,28 @@ export async function createSubagent(
 ): Promise<SubagentSchema> {
   const response = await fetch(`${API_BASE}/agent/subagents`, {
     method: 'POST',
+    headers: createJsonHeaders(token),
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const msg = await parseErrorResponse(response);
+    throw new Error(msg || `HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Update a custom subagent
+ */
+export async function updateSubagent(
+  name: string,
+  request: UpdateSubagentRequest,
+  token?: string
+): Promise<SubagentSchema> {
+  const response = await fetch(`${API_BASE}/agent/subagents/${name}`, {
+    method: 'PUT',
     headers: createJsonHeaders(token),
     body: JSON.stringify(request),
   });

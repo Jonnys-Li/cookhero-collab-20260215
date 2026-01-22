@@ -111,6 +111,49 @@ class SubagentService:
         await self.sync_user_subagents(user_id)
         return True
 
+    async def update_subagent(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        display_name: Optional[str] = None,
+        description: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        tools: Optional[list[str]] = None,
+        max_iterations: Optional[int] = None,
+        category: Optional[str] = None,
+    ) -> SubagentConfig | None:
+        if name in subagent_registry.get_builtin_names():
+            raise ValueError("Builtin subagent cannot be updated")
+
+        if tools is not None:
+            self._validate_tools(tools, user_id)
+
+        async with get_session_context() as session:
+            stmt = select(AgentSubagentConfigModel).where(
+                AgentSubagentConfigModel.user_id == user_id,
+                AgentSubagentConfigModel.name == name,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if not existing:
+                return None
+
+            if display_name is not None:
+                existing.display_name = display_name
+            if description is not None:
+                existing.description = description
+            if system_prompt is not None:
+                existing.system_prompt = system_prompt
+            if tools is not None:
+                existing.tools = tools
+            if max_iterations is not None:
+                existing.max_iterations = max_iterations
+            if category is not None:
+                existing.category = category
+
+        await self.sync_user_subagents(user_id)
+        return self._config_from_model(existing)
+
     async def set_enabled(self, user_id: str, name: str, enabled: bool) -> bool:
         builtin_names = set(subagent_registry.get_builtin_names())
         async with get_session_context() as session:

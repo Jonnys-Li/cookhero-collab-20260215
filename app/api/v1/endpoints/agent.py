@@ -79,6 +79,15 @@ class MCPServerListResponse(BaseModel):
     servers: List[MCPServerResponse]
 
 
+class MCPServerUpdateRequest(BaseModel):
+    """Request model for updating MCP server."""
+
+    endpoint: Optional[HttpUrl] = None
+    auth_header_name: Optional[str] = Field(default=None, max_length=128)
+    auth_token: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
 class ImageData(BaseModel):
     """Image data for multimodal requests."""
 
@@ -263,6 +272,59 @@ async def create_mcp_server(
         raise HTTPException(status_code=400, detail=str(exc))
 
     return MCPServerResponse(**server.to_dict())
+
+
+@router.patch("/agent/mcp-servers/{server_name}")
+async def update_mcp_server(
+    server_name: str,
+    payload: MCPServerUpdateRequest,
+    http_request: Request,
+) -> MCPServerResponse:
+    """Update MCP server configuration."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    update_auth = any(
+        key in update_data for key in ("auth_header_name", "auth_token")
+    )
+
+    try:
+        server = await mcp_service.update_server(
+            user_id=user_id,
+            name=server_name,
+            endpoint=str(update_data["endpoint"]) if "endpoint" in update_data else None,
+            enabled=update_data.get("enabled"),
+            auth_header_name=update_data.get("auth_header_name"),
+            auth_token=update_data.get("auth_token"),
+            update_auth=update_auth,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not server:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+
+    return MCPServerResponse(**server.to_dict())
+
+
+@router.delete("/agent/mcp-servers/{server_name}")
+async def delete_mcp_server(server_name: str, http_request: Request):
+    """Delete MCP server configuration."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    try:
+        deleted = await mcp_service.delete_server(user_id, server_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+
+    return {"message": "MCP server deleted successfully"}
 
 
 @router.post("/agent/chat")
@@ -592,6 +654,7 @@ class SubagentSchema(BaseModel):
     name: str
     display_name: str
     description: str
+    system_prompt: str
     tools: List[str]
     max_iterations: int
     enabled: bool
@@ -621,6 +684,17 @@ class CreateSubagentRequest(BaseModel):
     tools: List[str] = Field(default_factory=list)
     max_iterations: int = Field(default=10, ge=1, le=50)
     category: str = Field(default="custom", max_length=32)
+
+
+class UpdateSubagentRequest(BaseModel):
+    """Request model for updating a custom subagent."""
+
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=64)
+    description: Optional[str] = Field(default=None, min_length=10, max_length=500)
+    system_prompt: Optional[str] = Field(default=None, min_length=20, max_length=10000)
+    tools: Optional[List[str]] = None
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=50)
+    category: Optional[str] = Field(default=None, max_length=32)
 
 
 @router.get("/agent/subagents")
@@ -659,6 +733,7 @@ async def list_subagents(http_request: Request) -> SubagentListResponse:
             name=config.name,
             display_name=config.display_name,
             description=config.description,
+            system_prompt=config.system_prompt,
             tools=config.tools,
             max_iterations=config.max_iterations,
             enabled=config.enabled,
@@ -744,6 +819,50 @@ async def create_subagent(
         name=config.name,
         display_name=config.display_name,
         description=config.description,
+        system_prompt=config.system_prompt,
+        tools=config.tools,
+        max_iterations=config.max_iterations,
+        enabled=config.enabled,
+        builtin=config.builtin,
+        category=config.category,
+    )
+
+
+@router.put("/agent/subagents/{subagent_name}")
+async def update_subagent(
+    subagent_name: str,
+    request: UpdateSubagentRequest,
+    http_request: Request,
+) -> SubagentSchema:
+    """Update a custom subagent configuration."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    update_data = request.model_dump(exclude_unset=True)
+
+    try:
+        config = await subagent_service.update_subagent(
+            user_id=user_id,
+            name=subagent_name,
+            display_name=update_data.get("display_name"),
+            description=update_data.get("description"),
+            system_prompt=update_data.get("system_prompt"),
+            tools=update_data.get("tools"),
+            max_iterations=update_data.get("max_iterations"),
+            category=update_data.get("category"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not config:
+        raise HTTPException(status_code=404, detail="Subagent not found")
+
+    return SubagentSchema(
+        name=config.name,
+        display_name=config.display_name,
+        description=config.description,
+        system_prompt=config.system_prompt,
         tools=config.tools,
         max_iterations=config.max_iterations,
         enabled=config.enabled,

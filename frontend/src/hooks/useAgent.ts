@@ -621,6 +621,9 @@ export function useAgent(token?: string) {
     setError(null);
     try {
       const history = await getAgentSessionHistory(id, token);
+      history.messages = history.messages.filter(
+        (msg) => !(msg.role === 'assistant' && msg.content.trim() === '' && !msg.trace)
+      );
       setSessionId(history.session_id);
       setMessages(mapHistoryToMessages(history.messages));
     } catch (err) {

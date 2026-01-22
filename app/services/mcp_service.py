@@ -107,6 +107,60 @@ class MCPService:
             except Exception as exc:
                 logger.warning("Failed to register MCP server %s: %s", server.name, exc)
 
+    async def update_server(
+        self,
+        *,
+        user_id: str,
+        name: str,
+        endpoint: str | None = None,
+        enabled: bool | None = None,
+        auth_header_name: str | None = None,
+        auth_token: str | None = None,
+        update_auth: bool = False,
+    ) -> AgentMCPServerModel | None:
+        async with get_session_context() as session:
+            stmt = select(AgentMCPServerModel).where(
+                AgentMCPServerModel.user_id == user_id,
+                AgentMCPServerModel.name == name,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if not existing:
+                return None
+
+            if endpoint is not None:
+                self._validate_endpoint(endpoint)
+                existing.endpoint = endpoint
+
+            if update_auth:
+                self._validate_auth(auth_header_name, auth_token)
+                existing.auth_header_name = auth_header_name
+                existing.auth_token = auth_token
+
+            if enabled is not None:
+                existing.enabled = enabled
+
+        if not existing.enabled:
+            self._unregister_server(existing.name)
+            return existing
+
+        await self.register_server(existing)
+        return existing
+
+    async def delete_server(self, user_id: str, name: str) -> bool:
+        async with get_session_context() as session:
+            stmt = select(AgentMCPServerModel).where(
+                AgentMCPServerModel.user_id == user_id,
+                AgentMCPServerModel.name == name,
+            )
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if not existing:
+                return False
+
+            await session.delete(existing)
+
+        self._unregister_server(name)
+        return True
+
     def _validate_name(self, name: str) -> None:
         if not NAME_PATTERN.match(name):
             raise ValueError("MCP 名称需为 2-64 位，支持字母、数字、_、-")
@@ -136,6 +190,10 @@ class MCPService:
 
     def _get_provider(self) -> MCPToolProvider:
         return AgentHub.get_provider("mcp")  # type: ignore
+
+    def _unregister_server(self, name: str) -> None:
+        provider = self._get_provider()
+        provider.unregister_server(name)
 
 
 mcp_service = MCPService()

@@ -102,9 +102,6 @@ export function AgentChatWindow({ messages, isLoading, onSuggestionClick, error,
             ) : (
                 <div className="max-w-3xl mx-auto w-full">
                     {messages
-                    .filter((message =>
-                        message.content !== null && message.content !== undefined && message.content !== ''
-                    ))
                     .map((message) => (
                         <AgentMessageBubble key={message.id} message={message} hasError={!!error} />
                     ))}

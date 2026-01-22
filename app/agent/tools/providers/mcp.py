@@ -47,6 +47,12 @@ class MCPToolProvider:
             )
         return self._clients[name]
 
+    def _remove_server_tools(self, name: str) -> None:
+        prefix = f"mcp_{name}_"
+        for tool_name in list(self._tools.keys()):
+            if tool_name.startswith(prefix):
+                del self._tools[tool_name]
+
     async def load_server_tools(self, name: str) -> list[MCPTool]:
         client = self._get_client(name)
         if not client:
@@ -54,6 +60,7 @@ class MCPToolProvider:
             return []
 
         try:
+            self._remove_server_tools(name)
             await client.initialize()
             tools = await client.list_tools()
             loaded: list[MCPTool] = []
@@ -69,6 +76,7 @@ class MCPToolProvider:
                     description=tool_info.get("description", ""),
                     mcp_endpoint=self._servers[name],
                     mcp_tool_name=tool_name,
+                    mcp_headers=self._server_headers.get(name),
                     parameters=tool_info.get("inputSchema", {}),
                 )
 
@@ -80,6 +88,15 @@ class MCPToolProvider:
         except Exception as e:
             logger.exception(f"Failed to load tools from MCP server {name}: {e}")
             return []
+
+    def unregister_server(self, name: str) -> None:
+        self._remove_server_tools(name)
+        if name in self._servers:
+            del self._servers[name]
+        if name in self._server_headers:
+            del self._server_headers[name]
+        if name in self._clients:
+            del self._clients[name]
 
     # ----- ToolProvider surface -----
 

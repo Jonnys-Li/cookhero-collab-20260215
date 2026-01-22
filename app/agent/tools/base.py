@@ -127,12 +127,14 @@ class MCPTool(BaseTool):
         description: str,
         mcp_endpoint: str,
         mcp_tool_name: str,
+        mcp_headers: Optional[dict[str, str]] = None,
         parameters: Optional[dict] = None,
     ):
         self.name = name
         self.description = description
         self.mcp_endpoint = mcp_endpoint
         self.mcp_tool_name = mcp_tool_name
+        self.mcp_headers = mcp_headers or {}
         if parameters:
             self.parameters = parameters
         super().__init__()
@@ -146,7 +148,10 @@ class MCPTool(BaseTool):
         try:
             from app.agent.tools.mcp.client import MCPClient
 
-            client = MCPClient(self.mcp_endpoint)
+            client = MCPClient(self.mcp_endpoint, headers=self.mcp_headers)
+
+            if kwargs and "user_id" in kwargs:
+                kwargs.pop("user_id")
 
             return await client.call_tool(self.mcp_tool_name, kwargs)
 
