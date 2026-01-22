@@ -34,7 +34,7 @@ api/
     └── endpoints/
         ├── auth.py           # 用户认证接口（注册、登录、令牌刷新）
         ├── conversation.py   # 对话接口（创建、查询、流式响应）
-        ├── agent.py          # Agent 接口（智能对话、工具调用、会话管理）
+        ├── agent.py          # Agent 接口（智能对话、工具调用、会话管理、子代理管理）
         ├── diet.py           # 饮食管理接口（计划餐次、记录、分析、偏好）
         ├── evaluation.py     # RAG 评估接口（统计、趋势、告警）
         ├── llm_stats.py      # LLM 使用统计接口（含工具统计）
@@ -257,6 +257,7 @@ services/
 ├── conversation_service.py    # 对话服务（会话管理、消息处理、流式响应）
 ├── evaluation_service.py      # RAG 评估服务（RAGAS 框架集成）
 ├── mcp_service.py             # MCP 服务器管理（注册、鉴权配置）
+├── subagent_service.py         # 子代理配置管理（创建、启用、禁用）
 ├── rag_service.py             # RAG 服务（检索、生成）
 ├── personal_document_service.py # 个人文档服务（上传、索引）
 └── user_service.py            # 用户服务（用户信息管理）
@@ -357,6 +358,15 @@ agent/
 ├── registry/             # 统一注册中心
 │   ├── __init__.py
 │   └── hub.py            # AgentHub - 统一管理 Agent、Tool、Provider
+├── subagents/             # 子代理系统
+│   ├── __init__.py
+│   ├── base.py            # 子代理基类（BaseSubagent）
+│   ├── registry.py        # 子代理注册中心
+│   ├── tool.py            # 子代理 Tool 封装
+│   └── builtin/           # 内置子代理
+│       ├── __init__.py
+│       ├── generic.py     # 通用子代理
+│       └── diet_planner.py # 饮食规划专家
 ├── tools/
 │   ├── __init__.py
 │   ├── base.py           # Tool 基类（BaseTool, MCPTool, ToolExecutor）
@@ -370,14 +380,15 @@ agent/
 │   ├── providers/        # 工具提供者
 │   │   ├── __init__.py
 │   │   ├── local.py      # 本地工具提供者（内置工具）
-│   │   └── mcp.py        # MCP 工具提供者（远程 MCP 服务器）
+│   │   ├── mcp.py        # MCP 工具提供者（远程 MCP 服务器）
+│   │   └── subagent.py   # 子代理工具提供者
 │   └── mcp/              # MCP 协议集成
 │       ├── __init__.py
 │       ├── client.py     # MCP HTTP 客户端
 │       └── setup.py      # MCP 服务器注册
 ├── database/
 │   ├── __init__.py
-│   ├── models.py         # ORM 模型（AgentSession, AgentMessage）
+│   ├── models.py         # ORM 模型（AgentSession, AgentMessage, AgentSubagentConfig）
 │   └── repository.py     # 数据访问层（CRUD 操作）
 ```
 
@@ -387,6 +398,7 @@ agent/
 - **多模态支持**：支持接收和处理图片（最多 4 张，每张最大 10MB），自动上传到 imgbb 持久化
 - **用户画像集成**：自动读取用户画像和长期指令，提供个性化服务
 - **统一工具系统**：通过 AgentHub 统一管理本地工具和 MCP 远程工具
+- **子代理体系**：内置与用户自定义子代理，可作为 Tool 被调用
 - **MCP 协议支持**：支持连接远程 MCP 服务器动态加载工具
 - **上下文压缩**：自动压缩长对话历史，减少 Token 消耗
 - **流式输出**：支持 SSE 事件流，实时反馈工具调用和结果
@@ -395,11 +407,14 @@ agent/
 - `AgentService`: 业务层入口，处理聊天请求和会话管理
 - `BaseAgent`: Agent 基类，实现 ReAct 循环逻辑
 - `AgentHub`: 统一注册中心，管理 Agent、Tool 和 Provider
+- `BaseSubagent`: 子代理基类（独立 prompt/工具集）
+- `SubagentRegistry`: 子代理注册中心
 - `BaseTool`: 工具基类，定义工具接口规范
 - `MCPTool`: MCP 远程工具封装类
 - `ToolExecutor`: 工具执行器，安全执行工具调用
 - `LocalToolProvider`: 本地（内置）工具提供者
 - `MCPToolProvider`: MCP 远程工具提供者
+- `SubagentToolProvider`: 子代理工具提供者
 - `MCPClient`: MCP 协议 HTTP 客户端
 - `AgentContextBuilder`: 上下文构建器
 - `AgentContextCompressor`: 上下文压缩器
@@ -415,6 +430,7 @@ agent/
 | `diet_log` | 饮食记录管理 | `action`, `log_date`, `items` 等 |
 | `diet_analysis` | 饮食分析 | `action`, `target_date`, `week_start_date` 等 |
 | `image_generator` | AI 图片生成 | `prompt`, `size`, `quality`, `style` |
+| `subagent_<name>` | 子代理工具 | `task`, `background` |
 
 **MCP 集成**：
 - 支持 Amap（高德地图）MCP 服务器
@@ -426,7 +442,7 @@ agent/
 - `text`: 文本内容块
 - `tool_call`: 工具调用请求
 - `tool_result`: 工具执行结果
-- `trace`: 执行轨迹
+- `trace`: 执行轨迹（含 `source=subagent` 的子代理输出）
 - `done`: 完成信号
 
 ---
@@ -492,10 +508,10 @@ frontend/
 │   │   │   ├── AgentChatWindow.tsx   # Agent 聊天窗口
 │   │   │   ├── AgentMessageBubble.tsx # Agent 消息气泡
 │   │   │   ├── AgentThinkingBlock.tsx # Agent 思考过程
-│   │   │   └── ToolSelector.tsx      # 工具选择器（动态加载可用工具）
+│   │   │   └── ToolSelector.tsx      # 工具/子代理选择器（动态加载）
 │   │   ├── layout/              # 布局组件
 │   │   │   ├── Sidebar.tsx           # 侧边栏（支持 Agent 模式切换）
-│   │   │   └── UserProfileModal.tsx  # 用户资料弹窗
+│   │   │   └── UserProfileModal.tsx  # 用户资料与子代理配置弹窗
 │   │   ├── common/              # 通用组件
 │   │   │   ├── Modal.tsx             # 模态框
 │   │   │   ├── ThemeToggle.tsx       # 主题切换
@@ -764,11 +780,19 @@ Python 依赖列表，包含所有后端依赖的精确版本号。
 7. **Agent 执行**：`BaseAgent.run()` 执行 ReAct 循环
    - 调用 LLM 判断是否需要工具
    - 如需工具，执行 `ToolExecutor.execute()`
+   - 如果调用子代理工具，实时输出子代理 trace（`source=subagent`）
    - 收集工具结果，更新消息历史
    - 重复直到生成最终回复
 8. **流式输出**：SSE 事件流实时返回
 9. **消息保存**：保存 Assistant 消息和执行轨迹
 10. **上下文压缩**：后台触发压缩任务（如需要）
+
+### 子代理管理流程
+
+1. **获取列表**：`/api/v1/agent/subagents` 返回内置 + 自定义子代理配置
+2. **启用/禁用**：`PATCH /api/v1/agent/subagents/{name}` 更新启用状态
+3. **创建自定义**：`POST /api/v1/agent/subagents` 写入配置并同步注册中心
+4. **删除自定义**：`DELETE /api/v1/agent/subagents/{name}` 删除并刷新缓存
 
 ---
 
@@ -884,6 +908,7 @@ async def setup_my_mcp_server():
 
 | 版本 | 日期 | 主要变更 |
 |------|------|---------|
+| v1.10.0 | 2026-01 | 新增子代理体系（内置/自定义）、可视化追踪与管理界面 |
 | v1.9.0 | 2026-01 | 新增饮食管理模块（计划/记录/分析）、知识库检索工具、自定义 MCP 服务器管理 |
 | v1.8.0 | 2026-01 | Agent 多模态支持（图片上传、imgbb 持久化）、用户画像集成、LLM 配置三层化 |
 | v1.7.0 | 2026-01 | 添加 MCP 协议支持、图片生成工具、AgentHub 统一注册、工具提供者架构 |

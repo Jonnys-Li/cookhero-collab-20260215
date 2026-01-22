@@ -45,6 +45,7 @@ CookHero is built for kitchen beginners, fitness/weight-loss users, glycemic con
 
 - **LLM + RAG Hybrid Retrieval**: Vector + BM25 + reranker with multi-level caching
 - **Agent ToolHub**: ReAct reasoning with tool calls and MCP extensibility
+- **Subagent Expert System**: Built-in + user-defined subagents, enabled on demand
 - **Multimodal Parsing**: Image understanding for cooking and diet logging
 - **Quality & Observability**: RAGAS evaluation + LLM usage analytics dashboards
 - **Security by Design**: Prompt injection guardrails, rate limiting, audit logs
@@ -56,6 +57,8 @@ CookHero is built for kitchen beginners, fitness/weight-loss users, glycemic con
 - **ReAct Pattern**: Implements reasoning + action loop for autonomous decision-making and tool invocation
 - **Multimodal Support**: Upload images (up to 4, max 10MB each), automatically persisted to imgbb storage
 - **User Profile Integration**: Automatically reads user profile and long-term instructions for personalized service
+- **Subagents**: Built-in/custom specialists callable as tools with their own prompts and toolsets
+- **Subagent Management**: Create/enable/disable in profile; Agents panel in Tool Selector
 - **Built-in Tools**:
   - Diet Tools: meal planning, diet logging, nutrition analysis
   - Knowledge Base Search: Call the internal RAG retriever with sources
@@ -67,8 +70,8 @@ CookHero is built for kitchen beginners, fitness/weight-loss users, glycemic con
 - **Extensible Architecture**: Unified management of Agents, Tools, and Providers via AgentHub
 - **Context Compression**: Automatically compress long conversation history to reduce Token consumption
 - **Real-time Feedback**: SSE event stream for live display of tool calls and results
-- **Execution Tracing**: Complete recording of Agent execution trajectory for debugging and analysis
-- **Tool Selection**: Frontend can dynamically select which tools to use
+- **Execution Tracing**: Layered traces for Agent and Subagent output
+- **Tool Selection**: Frontend can dynamically select tools and subagents
 
 ### 2. Meal Planning & Logging
 - Weekly planning for breakfast/lunch/dinner/snacks
@@ -493,6 +496,7 @@ pytest tests/test_guardrails.py -v
 - [x] **Security Protection System**: Input validation, prompt injection protection, rate limiting ✅
 - [x] **LLM Usage Statistics**: Token monitoring, performance analysis page ✅
 - [x] **Agent Intelligent Mode**: ReAct reasoning, tool invocation, session management ✅
+- [x] **Subagent Expert System**: Built-in/custom subagents with visual traces ✅
 - [x] **MCP Protocol Support**: Remote tool loading, Amap integration ✅
 - [x] **AI Image Generation**: DALL-E 3 integration, imgbb persistent storage ✅
 - [x] **Diet Planning & Logging**: Weekly plans, mark-as-eaten, AI logging ✅

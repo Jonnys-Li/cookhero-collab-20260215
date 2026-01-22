@@ -413,6 +413,15 @@ Custom MCP server registration is validated to prevent header injection and inva
 - Endpoint must start with `http://` or `https://`
 - Auth header name and token must be provided together, with newline checks
 
+### 6.5 Subagent Configuration Validation
+
+Custom subagent management is validated to prevent unsafe tool chains or malformed configs:
+
+- Subagent names must match `^[a-z0-9_]{2,64}$`
+- Subagents cannot call other subagents (no recursive tool chains)
+- Tool names must exist and be available for the current user
+- Create/update/delete endpoints require authenticated sessions
+
 ---
 
 ## 7. Sensitive Data Protection
