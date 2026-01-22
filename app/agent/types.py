@@ -57,10 +57,12 @@ class TraceStep:
     """执行轨迹步骤"""
 
     iteration: int
-    action: Literal["tool_call", "tool_result", "finish", "error"]
+    action: Literal["tool_call", "tool_result", "finish", "error", "subagent_output"]
     tool_calls: list[dict] | None = None
     content: str | None = None
     error: str | None = None
+    source: Literal["agent", "subagent"] = "agent"
+    subagent_name: str | None = None
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
 

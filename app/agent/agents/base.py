@@ -5,6 +5,7 @@ BaseAgent 和 AgentLoop
 Agent 的核心执行逻辑，实现 ReAct 模式的自主执行循环。
 """
 
+import asyncio
 import json
 import logging
 from abc import ABC
@@ -16,6 +17,7 @@ from app.agent.types import (
     AgentConfig,
     AgentContext,
     ToolCallInfo,
+    ToolResult,
     ToolResultInfo,
     TraceStep,
 )
@@ -79,11 +81,13 @@ class BaseAgent(ABC):
 
         # 从 tool_schemas 提取工具名称，创建对应的 Tool 执行器
         # 这样 executor 的工具集和 LLM 看到的 tools 完全一致
+        # 传入 user_id 以支持 Subagent Tools
         selected_tool_names = (
             [t["function"]["name"] for t in tool_schemas] if tool_schemas else []
         )
         tool_executor = AgentHub.create_tool_executor(
-            selected_tool_names if selected_tool_names else None
+            selected_tool_names if selected_tool_names else None,
+            user_id=context.user_id,
         )
 
         # ReAct 循环
@@ -115,11 +119,24 @@ class BaseAgent(ABC):
                             data=tool_call,
                         )
 
-                        # 执行 Tool
-                        result = await tool_executor.execute(
-                            tool_call.name,
-                            tool_call.arguments,
-                        )
+                        # 执行 Tool（支持 Subagent 流式轨迹）
+                        result = None
+                        async for event_type, payload in self._execute_tool_call(
+                            tool_executor,
+                            tool_call,
+                        ):
+                            if event_type == "trace":
+                                yield AgentChunk(
+                                    type=AgentChunkType.TRACE,
+                                    data=payload,
+                                )
+                            else:
+                                result = payload
+                        if result is None:
+                            result = ToolResult(
+                                success=False,
+                                error="Tool execution returned no result",
+                            )
 
                         # 构建结果信息
                         result_info = ToolResultInfo(
@@ -235,11 +252,13 @@ class BaseAgent(ABC):
         tool_schemas = context.available_tools
 
         # 从 tool_schemas 提取工具名称，创建对应的 Tool 执行器
+        # 传入 user_id 以支持 Subagent Tools
         selected_tool_names = (
             [t["function"]["name"] for t in tool_schemas] if tool_schemas else []
         )
         tool_executor = AgentHub.create_tool_executor(
-            selected_tool_names if selected_tool_names else None
+            selected_tool_names if selected_tool_names else None,
+            user_id=context.user_id,
         )
 
         for iteration in range(self.max_iterations):
@@ -287,10 +306,23 @@ class BaseAgent(ABC):
                                     data=tool_call,
                                 )
 
-                                result = await tool_executor.execute(
-                                    tool_call.name,
-                                    tool_call.arguments,
-                                )
+                                result = None
+                                async for event_type, payload in self._execute_tool_call(
+                                    tool_executor,
+                                    tool_call,
+                                ):
+                                    if event_type == "trace":
+                                        yield AgentChunk(
+                                            type=AgentChunkType.TRACE,
+                                            data=payload,
+                                        )
+                                    else:
+                                        result = payload
+                                if result is None:
+                                    result = ToolResult(
+                                        success=False,
+                                        error="Tool execution returned no result",
+                                    )
 
                                 result_info = ToolResultInfo(
                                     tool_call_id=tool_call.id,
@@ -354,6 +386,49 @@ class BaseAgent(ABC):
 
     # ==================== 辅助方法 ====================
 
+    async def _execute_tool_call(
+        self,
+        tool_executor,
+        tool_call: ToolCallInfo,
+    ) -> AsyncGenerator[tuple[str, Any], None]:
+        if not tool_executor:
+            yield (
+                "result",
+                ToolResult(success=False, error="Tool executor unavailable"),
+            )
+            return
+        if tool_call.name.startswith("subagent_"):
+            queue: asyncio.Queue[TraceStep] = asyncio.Queue()
+
+            async def handle_event(step: TraceStep) -> None:
+                await queue.put(step)
+
+            task = asyncio.create_task(
+                tool_executor.execute(
+                    tool_call.name,
+                    tool_call.arguments,
+                    event_handler=handle_event,
+                )
+            )
+            while True:
+                if task.done() and queue.empty():
+                    break
+                try:
+                    step = await asyncio.wait_for(queue.get(), timeout=0.1)
+                    yield ("trace", step)
+                except asyncio.TimeoutError:
+                    await asyncio.sleep(0)
+
+            result = await task
+            yield ("result", result)
+            return
+
+        result = await tool_executor.execute(
+            tool_call.name,
+            tool_call.arguments,
+        )
+        yield ("result", result)
+
     async def _invoke_with_tools(
         self,
         invoker: LLMInvoker,
@@ -403,9 +478,9 @@ class BaseAgent(ABC):
             # Handle both dict and object formats (ToolCallChunk)
             if isinstance(tc, dict):
                 index = tc.get("index", 0)
-                tc_id = tc.get("id", "")
-                tc_name = tc.get("name", "")
-                tc_args = tc.get("args", "")
+                tc_id = tc.get("id") or ""
+                tc_name = tc.get("name") or ""
+                tc_args = tc.get("args") or ""
             else:
                 # Object format (ToolCallChunk from LangChain)
                 index = getattr(tc, "index", 0) or 0

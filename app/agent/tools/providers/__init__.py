@@ -7,8 +7,10 @@ Tool Providers
 
 from app.agent.tools.providers.local import LocalToolProvider
 from app.agent.tools.providers.mcp import MCPToolProvider
+from app.agent.tools.providers.subagent import SubagentToolProvider
 
 __all__ = [
     "LocalToolProvider",
     "MCPToolProvider",
+    "SubagentToolProvider",
 ]

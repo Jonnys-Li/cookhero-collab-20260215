@@ -141,73 +141,103 @@ class AgentHub:
         return False
 
     @classmethod
-    def get_tool(cls, name: str) -> Optional[BaseTool]:
+    def get_tool(cls, name: str, user_id: Optional[str] = None) -> Optional[BaseTool]:
         for p in cls._providers.values():
-            tool = p.get_tool(name)
+            # SubagentToolProvider 需要 user_id
+            if p.name == "subagent" and user_id:
+                tool = p.get_tool(name, user_id)  # type: ignore
+            else:
+                tool = p.get_tool(name)
             if tool:
                 return tool
         return None
 
     @classmethod
-    def get_tool_schemas(cls, names: Optional[list[str]] = None) -> list[dict]:
+    def get_tool_schemas(
+        cls,
+        names: Optional[list[str]] = None,
+        user_id: Optional[str] = None,
+    ) -> list[dict]:
         if names is None:
             schemas: list[dict] = []
             for p in cls._providers.values():
-                schemas.extend(p.get_tool_schemas(None))
+                if p.name == "subagent" and user_id:
+                    schemas.extend(p.get_tool_schemas(None, user_id))  # type: ignore
+                else:
+                    schemas.extend(p.get_tool_schemas(None))
             return schemas
 
         # keep order per names
         result: list[dict] = []
         for n in names:
             for p in cls._providers.values():
-                schema = p.get_tool_schema(n)
+                if p.name == "subagent" and user_id:
+                    schema = p.get_tool_schema(n, user_id)  # type: ignore
+                else:
+                    schema = p.get_tool_schema(n)
                 if schema:
                     result.append(schema)
                     break
         return result
 
     @classmethod
-    def list_tools(cls) -> list[str]:
+    def list_tools(cls, user_id: Optional[str] = None) -> list[str]:
         names: list[str] = []
         for p in cls._providers.values():
-            names.extend(p.list_tool_names())
+            if p.name == "subagent" and user_id:
+                names.extend(p.list_tool_names(user_id))  # type: ignore
+            else:
+                names.extend(p.list_tool_names())
         return names
 
     @classmethod
-    def list_all_servers(cls) -> list[dict]:
+    def list_all_servers(cls, user_id: Optional[str] = None) -> list[dict]:
         """Aggregate all servers with tools from all providers.
 
-        Returns:ith unified structure:
+        Returns:
+            List of server dicts with unified structure:
             [
                 { "name": "builtin", "type": "local", "tools": [...] },
                 { "name": "amap", "type": "mcp", "tools": [...] },
+                { "name": "subagents", "type": "subagent", "tools": [...] },
             ]
-            List of server dicts w
         """
         servers: list[dict] = []
         for p in cls._providers.values():
-            servers.extend(p.list_servers_with_tools())
+            if p.name == "subagent" and user_id:
+                servers.extend(p.list_servers_with_tools(user_id))  # type: ignore
+            else:
+                servers.extend(p.list_servers_with_tools())
         return servers
 
     @classmethod
     def create_tool_executor(
-        cls, tool_names: Optional[list[str]] = None
+        cls,
+        tool_names: Optional[list[str]] = None,
+        user_id: Optional[str] = None,
     ) -> ToolExecutor:
         if tool_names is None:
             tools: dict[str, BaseTool] = {}
             for p in cls._providers.values():
-                for name in p.list_tool_names():
-                    tool = p.get_tool(name)
+                if p.name == "subagent" and user_id:
+                    tool_list = p.list_tool_names(user_id)  # type: ignore
+                else:
+                    tool_list = p.list_tool_names()
+                for name in tool_list:
+                    if p.name == "subagent" and user_id:
+                        tool = p.get_tool(name, user_id)  # type: ignore
+                    else:
+                        tool = p.get_tool(name)
                     if tool:
                         tools[name] = tool
-            return ToolExecutor(tools)
+            return ToolExecutor(tools, user_id=user_id)
 
         tools = {}
         for n in tool_names:
-            tool = cls.get_tool(n)
+            tool = cls.get_tool(n, user_id)
             if tool:
                 tools[n] = tool
-        return ToolExecutor(tools)
+        return ToolExecutor(tools, user_id=user_id)
 
     # ==================== Cleanup ====================
 

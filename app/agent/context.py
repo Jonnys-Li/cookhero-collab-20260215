@@ -97,8 +97,13 @@ class AgentContextBuilder:
 
         # 4. 获取可用 Tool schemas
         # Use selected_tools if provided, otherwise get all available tools
+        # 传入 user_id 以支持 Subagent Tools
         tools_to_use = selected_tools
-        available_tools = AgentHub.get_tool_schemas(tools_to_use)
+        if user_id:
+            from app.services.subagent_service import subagent_service
+
+            await subagent_service.sync_user_subagents(user_id)
+        available_tools = AgentHub.get_tool_schemas(tools_to_use, user_id=user_id)
 
         # 5. user_profile user_instruction
         user_profile = None
@@ -206,19 +211,20 @@ class AgentContextBuilder:
         if context.images:
             # Build multimodal content with images
             content_parts = []
-            content_parts.append({
-                "type": "text",
-                "text": context.current_message,
-            })
+            content_parts.append(
+                {
+                    "type": "text",
+                    "text": context.current_message,
+                }
+            )
 
             # Add image content
             for img in context.images:
                 if img.get("url"):
                     # Use imgbb URL
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": img["url"]}
-                    })
+                    content_parts.append(
+                        {"type": "image_url", "image_url": {"url": img["url"]}}
+                    )
 
             messages.append({"role": "user", "content": content_parts})
         else:

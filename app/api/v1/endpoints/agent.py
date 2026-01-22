@@ -18,6 +18,7 @@ from app.agent.service import agent_service
 from app.agent.registry import AgentHub
 from app.security.dependencies import check_message_security
 from app.services.mcp_service import mcp_service
+from app.services.subagent_service import subagent_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,7 +213,8 @@ async def list_available_tools(http_request: Request) -> ToolsListResponse:
         raise HTTPException(status_code=401, detail="需要登录")
 
     # Get unified server list from AgentHub
-    servers_data = AgentHub.list_all_servers()
+    servers_data = AgentHub.list_all_servers(user_id=user_id)
+    servers_data = [s for s in servers_data if s.get("type") != "subagent"]
 
     servers = [
         ServerInfo(
@@ -579,3 +581,196 @@ async def list_agent_sessions(
         limit=limit,
         offset=offset,
     )
+
+
+# ==================== Subagent API Endpoints ====================
+
+
+class SubagentSchema(BaseModel):
+    """Subagent schema for API responses."""
+
+    name: str
+    display_name: str
+    description: str
+    tools: List[str]
+    max_iterations: int
+    enabled: bool
+    builtin: bool
+    category: str
+
+
+class SubagentListResponse(BaseModel):
+    """Response model for subagent list."""
+
+    subagents: List[SubagentSchema]
+
+
+class SubagentToggleRequest(BaseModel):
+    """Request model for enabling/disabling a subagent."""
+
+    enabled: bool
+
+
+class CreateSubagentRequest(BaseModel):
+    """Request model for creating a custom subagent."""
+
+    name: str = Field(..., min_length=2, max_length=64, pattern=r"^[a-z0-9_]+$")
+    display_name: str = Field(..., min_length=1, max_length=64)
+    description: str = Field(..., min_length=10, max_length=500)
+    system_prompt: str = Field(..., min_length=20, max_length=10000)
+    tools: List[str] = Field(default_factory=list)
+    max_iterations: int = Field(default=10, ge=1, le=50)
+    category: str = Field(default="custom", max_length=32)
+
+
+@router.get("/agent/subagents")
+async def list_subagents(http_request: Request) -> SubagentListResponse:
+    """
+    List all available subagents for the current user.
+
+    Returns both builtin and user-defined subagents with their enabled status.
+
+    **Response:**
+    ```json
+    {
+        "subagents": [
+            {
+                "name": "diet_planner",
+                "display_name": "饮食规划专家",
+                "description": "专业的饮食规划助手...",
+                "tools": ["datetime", "web_search", "diet_analysis"],
+                "max_iterations": 15,
+                "enabled": true,
+                "builtin": true,
+                "category": "diet"
+            }
+        ]
+    }
+    ```
+    """
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    configs = await subagent_service.sync_user_subagents(user_id)
+
+    subagents = [
+        SubagentSchema(
+            name=config.name,
+            display_name=config.display_name,
+            description=config.description,
+            tools=config.tools,
+            max_iterations=config.max_iterations,
+            enabled=config.enabled,
+            builtin=config.builtin,
+            category=config.category,
+        )
+        for config in configs
+    ]
+
+    return SubagentListResponse(subagents=subagents)
+
+
+@router.patch("/agent/subagents/{subagent_name}")
+async def toggle_subagent(
+    subagent_name: str,
+    request: SubagentToggleRequest,
+    http_request: Request,
+):
+    """
+    Enable or disable a subagent for the current user.
+
+    **Parameters:**
+    - `subagent_name`: The name of the subagent to toggle
+
+    **Request Body:**
+    - `enabled`: Whether to enable (true) or disable (false) the subagent
+    """
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    try:
+        success = await subagent_service.set_enabled(
+            user_id, subagent_name, request.enabled
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Subagent not found")
+
+    return {
+        "message": f"Subagent {'enabled' if request.enabled else 'disabled'} successfully"
+    }
+
+
+@router.post("/agent/subagents", status_code=201)
+async def create_subagent(
+    request: CreateSubagentRequest,
+    http_request: Request,
+) -> SubagentSchema:
+    """
+    Create a custom subagent for the current user.
+
+    **Request Body:**
+    - `name`: Unique identifier (lowercase, underscores allowed)
+    - `display_name`: Display name for UI
+    - `description`: Description of what the subagent does
+    - `system_prompt`: The system prompt for the subagent
+    - `tools`: List of tool names the subagent can use
+    - `max_iterations`: Maximum iterations (default: 10)
+    - `category`: Category for organization (default: "custom")
+    """
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    try:
+        config = await subagent_service.create_subagent(
+            user_id=user_id,
+            name=request.name,
+            display_name=request.display_name,
+            description=request.description,
+            system_prompt=request.system_prompt,
+            tools=request.tools,
+            max_iterations=request.max_iterations,
+            category=request.category,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SubagentSchema(
+        name=config.name,
+        display_name=config.display_name,
+        description=config.description,
+        tools=config.tools,
+        max_iterations=config.max_iterations,
+        enabled=config.enabled,
+        builtin=config.builtin,
+        category=config.category,
+    )
+
+
+@router.delete("/agent/subagents/{subagent_name}")
+async def delete_subagent(subagent_name: str, http_request: Request):
+    """
+    Delete a custom subagent.
+
+    Note: Builtin subagents cannot be deleted, only disabled.
+
+    **Parameters:**
+    - `subagent_name`: The name of the subagent to delete
+    """
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    try:
+        success = await subagent_service.delete_subagent(user_id, subagent_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not success:
+        raise HTTPException(status_code=404, detail="Subagent not found")
+
+    return {"message": "Subagent deleted successfully"}

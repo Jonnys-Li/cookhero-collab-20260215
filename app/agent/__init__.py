@@ -18,7 +18,11 @@ from app.agent.types import (
 )
 from app.agent.agents import BaseAgent, DefaultAgent
 from app.agent.registry import AgentHub
-from app.agent.tools.providers import LocalToolProvider, MCPToolProvider
+from app.agent.tools.providers import (
+    LocalToolProvider,
+    MCPToolProvider,
+    SubagentToolProvider,
+)
 from app.agent.service import AgentService, agent_service
 from app.agent.prompts import DEFAULT_AGENT_SYSTEM_PROMPT
 from app.agent.context import (
@@ -34,13 +38,14 @@ def setup_agent_module():
     """
     初始化 Agent 模块（同步部分）。
 
-    注册内置 Agent、Tool 和 Skill。
+    注册内置 Agent、Tool、Skill 和 Subagent。
     应在应用启动时调用。
     """
     # Register tool providers once
     if not AgentHub.list_providers():
         AgentHub.register_provider(LocalToolProvider())
         AgentHub.register_provider(MCPToolProvider())
+        AgentHub.register_provider(SubagentToolProvider())
 
     # 注册内置 Tools
     from app.agent.tools.common import register_common_tools
@@ -51,6 +56,11 @@ def setup_agent_module():
     from app.diet.tools import register_diet_tools
 
     register_diet_tools()
+
+    # 注册内置 Subagents
+    from app.agent.subagents import register_builtin_subagents
+
+    register_builtin_subagents()
 
     # 注册默认 Agent
     _register_default_agent()

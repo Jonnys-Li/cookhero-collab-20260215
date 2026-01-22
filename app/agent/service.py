@@ -78,6 +78,18 @@ def _truncate_value(
     return value
 
 
+def _sanitize_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {k: _sanitize_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_value(item) for item in value]
+    return str(value)
+
+
 def _build_fallback_agent(name: str) -> BaseAgent:
     from app.agent.agents import DefaultAgent
     from app.agent.types import AgentConfig
@@ -614,7 +626,8 @@ class AgentService:
         """
         # 截断数据中的字符串字段
         truncated_data = _truncate_value(data, truncate_threshold)
-        payload = {"type": event_type, **truncated_data}
+        safe_data = _sanitize_value(truncated_data)
+        payload = {"type": event_type, **safe_data}
         return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 

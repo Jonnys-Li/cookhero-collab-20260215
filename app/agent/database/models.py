@@ -175,3 +175,48 @@ class AgentMCPServerModel(Base):
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }
+
+
+class AgentSubagentConfigModel(Base):
+    """User-defined subagent configuration."""
+
+    __tablename__ = "agent_subagent_configs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    tools: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    max_iterations: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_agent_subagent_configs_user_name", "user_id", "name", unique=True),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "user_id": self.user_id,
+            "name": self.name,
+            "display_name": self.display_name,
+            "description": self.description,
+            "system_prompt": self.system_prompt,
+            "tools": list(self.tools or []),
+            "max_iterations": self.max_iterations,
+            "category": self.category,
+            "enabled": self.enabled,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
