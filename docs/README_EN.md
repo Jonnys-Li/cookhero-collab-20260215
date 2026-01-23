@@ -15,8 +15,10 @@
 
 <div align="center">
 <p align="center">
-  <img src="./example.gif" width="48%">
-  <img src="./show.jpg" width="48%">
+  <img src="./docs/agent.jpg" width="48%">
+  <img src="./docs/demo_2x.gif" width="48%"/>
+  <img src="./docs/diet.jpg" width="48%">
+  <img src="./docs/statistics.jpg" width="48%">
 </p>
 </div>
 

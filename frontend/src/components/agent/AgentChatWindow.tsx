@@ -194,7 +194,7 @@ function EmptyState({
                     onClick={onSuggestionClick}
                 />
                 <SuggestionChip
-                    text="将 2 杯面粉转换为克"
+                    text="帮我记录一下今天的午餐"
                     emoji="⚖️"
                     onClick={onSuggestionClick}
                 />
