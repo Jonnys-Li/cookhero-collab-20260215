@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f97316;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#ea580c;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded rectangle -->
+  <rect x="5" y="10" width="390" height="100" rx="20" ry="20" fill="url(#grad)" opacity="0.1"/>
+
+  <!-- Pan emoji representation -->
+  <g transform="translate(30, 25)">
+    <!-- Pan body -->
+    <ellipse cx="35" cy="40" rx="30" ry="25" fill="#f97316" opacity="0.9"/>
+    <!-- Pan handle -->
+    <rect x="60" y="32" width="35" height="16" rx="4" fill="#78716c"/>
+    <!-- Steam lines -->
+    <path d="M25 15 Q30 5, 25 -5" stroke="#f97316" stroke-width="3" fill="none" opacity="0.6"/>
+    <path d="M40 10 Q45 0, 40 -10" stroke="#f97316" stroke-width="3" fill="none" opacity="0.6"/>
+    <path d="M55 15 Q60 5, 55 -5" stroke="#f97316" stroke-width="3" fill="none" opacity="0.6"/>
+  </g>
+
+  <!-- HealthHero text -->
+  <text x="150" y="75" font-family="Arial, sans-serif" font-size="42" font-weight="bold" fill="#f97316">
+    Health<tspan fill="#ea580c">Hero</tspan>
+  </text>
+</svg>

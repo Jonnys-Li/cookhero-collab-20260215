@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { BookOpen, Lightbulb, UtensilsCrossed } from 'lucide-react';
+import { Lightbulb, UtensilsCrossed, Heart } from 'lucide-react';
 import type { Message } from '../../types';
 import { MessageBubble } from './MessageBubble';
 
@@ -106,12 +106,37 @@ function EmptyState({
         <div className="flex flex-col items-center justify-center h-full w-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500 overflow-x-hidden px-4 box-border">
             <section className="empty-state-hero relative flex-1 flex flex-col items-center justify-center overflow-hidden">
                 <div className="relative group w-full px-4">
-                    <div className="w-100 h-48 max-w-5xl mx-auto flex items-center justify-center">
-                        <img
-                            src="/image.png"
-                            alt="CookHero Logo"
-                            className="w-full max-w-4xl object-contain transition-all duration-500 group-hover:scale-105"
-                        />
+                    {/* HealthHero Text Logo */}
+                    <div className="flex flex-col items-center justify-center py-8">
+                        {/* Icon with gradient background */}
+                        <div className="relative mb-4">
+                            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/25 group-hover:scale-105 transition-transform duration-300">
+                                <span className="text-4xl">🍳</span>
+                            </div>
+                            {/* Decorative dots */}
+                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+                            <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-orange-300 rounded-full"></div>
+                        </div>
+
+                        {/* Main title */}
+                        <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+                            <span className="bg-gradient-to-r from-orange-500 via-orange-600 to-amber-500 bg-clip-text text-transparent">
+                                Health
+                            </span>
+                            <span className="text-gray-800 dark:text-gray-100">Hero</span>
+                        </h1>
+
+                        {/* Subtitle */}
+                        <p className="mt-3 text-sm sm:text-base text-gray-500 dark:text-gray-400 text-center max-w-md">
+                            Your AI-powered health companion for better living
+                        </p>
+
+                        {/* Decorative line */}
+                        <div className="mt-4 flex items-center gap-2">
+                            <div className="w-8 h-0.5 bg-gradient-to-r from-transparent to-orange-400 rounded-full"></div>
+                            <div className="w-2 h-2 rounded-full bg-orange-400"></div>
+                            <div className="w-8 h-0.5 bg-gradient-to-l from-transparent to-orange-400 rounded-full"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -119,19 +144,19 @@ function EmptyState({
             {/* Feature Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 w-full max-w-3xl mb-6 sm:mb-8">
                 <FeatureCard
-                    icon={<BookOpen className="w-5 h-5" />}
-                    title="Recipe Search"
-                    description="Find detailed cooking instructions"
+                    icon={<Heart className="w-5 h-5" />}
+                    title="Health Tracking"
+                    description="Monitor your wellness journey"
                 />
                 <FeatureCard
                     icon={<Lightbulb className="w-5 h-5" />}
-                    title="Cooking Tips"
-                    description="Learn professional techniques"
+                    title="Smart Advice"
+                    description="Get personalized recommendations"
                 />
                 <FeatureCard
                     icon={<UtensilsCrossed className="w-5 h-5" />}
-                    title="Ingredient Match"
-                    description="Discover dishes you can make"
+                    title="Diet Planning"
+                    description="Plan balanced meals easily"
                 />
             </div>
 
@@ -223,7 +248,7 @@ function LoadingIndicator() {
             </div>
             <div className="space-y-2 pt-2">
                 <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                    <span className="animate-pulse">CookHero is thinking...</span>
+                    <span className="animate-pulse">HealthHero is thinking...</span>
                 </div>
             </div>
         </div>

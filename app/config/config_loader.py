@@ -272,13 +272,14 @@ def load_image_generation_config() -> ImageGenerationConfig:
     Load image generation configuration from YAML + environment variables.
 
     Environment variables:
-    - IMAGE_GENERATION_API_KEY: OpenAI API key for DALL-E image generation
+    - OPENAI_IMAGE_API_KEY: Preferred image generation API key
+    - IMAGE_GENERATION_API_KEY: Backward-compatible alias
     """
     config_data = _load_config_data()
     ig_data = dict(config_data.get("image_generation", {}) or {})
 
     # Load API key from environment
-    api_key = os.getenv("IMAGE_GENERATION_API_KEY")
+    api_key = os.getenv("OPENAI_IMAGE_API_KEY") or os.getenv("IMAGE_GENERATION_API_KEY")
     if api_key:
         ig_data["api_key"] = api_key
 
