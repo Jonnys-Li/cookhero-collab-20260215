@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: cookhero-backend
+    runtime: python
+    plan: free
+    autoDeploy: true
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: RATE_LIMIT_ENABLED
+        value: "false"
+      - key: CORS_ALLOW_ORIGINS
+        value: "https://frontend-one-gray-39.vercel.app,http://localhost:5173"
+      - key: OPENAI_IMAGE_API_KEY
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: FAST_LLM_API_KEY
+        sync: false
+      - key: VISION_API_KEY
+        sync: false

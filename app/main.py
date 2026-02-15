@@ -1,5 +1,6 @@
 # app/main.py
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,29 @@ logger = logging.getLogger(__name__)
 
 # Setup secure logging with sensitive data filtering
 setup_secure_logging()
+
+
+def _load_cors_origins() -> list[str]:
+    """
+    Load CORS allowed origins from environment.
+
+    Environment:
+    - CORS_ALLOW_ORIGINS: comma-separated origins
+      Example: "https://frontend-one-gray-39.vercel.app,http://localhost:5173"
+    """
+    raw = os.getenv("CORS_ALLOW_ORIGINS", "").strip()
+    if raw:
+        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        if origins:
+            return origins
+
+    # Safe defaults for local development and current production frontend
+    return [
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://localhost:8080",
+        "https://frontend-one-gray-39.vercel.app",
+    ]
 
 
 @asynccontextmanager
@@ -100,11 +124,8 @@ app = FastAPI(
 # CORS middleware for frontend development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:8000",
-        "http://localhost:8080",
-    ],
+    allow_origins=_load_cors_origins(),
+    allow_origin_regex=os.getenv("CORS_ALLOW_ORIGIN_REGEX"),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
