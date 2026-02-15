@@ -9,6 +9,7 @@ Environment variable loading:
 - Supports inheritance (e.g., RERANKER_API_KEY falls back to LLM_API_KEY)
 """
 
+from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict

@@ -4,6 +4,7 @@ RAG Service - Orchestrates the RAG pipeline for knowledge retrieval and response
 All documents are stored in PostgreSQL and Milvus, no in-memory document storage.
 """
 
+from __future__ import annotations
 import asyncio
 import logging
 import uuid

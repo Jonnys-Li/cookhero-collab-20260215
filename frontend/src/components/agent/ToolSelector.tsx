@@ -10,9 +10,16 @@
  */
 
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Wrench, Globe, Check, Info, Bot, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Wrench, Globe, Check, Info, Bot, Loader2, Settings } from 'lucide-react';
 import type { ServerInfo, ToolSchema, SubagentSchema } from '../../types';
 import { getAvailableTools, listSubagents, toggleSubagent } from '../../services/api/agent';
+import { AgentManager } from './AgentManager';
+
+// 默认选中的 subagent 名称
+const DEFAULT_SELECTED_SUBAGENTS = [
+  'subagent_cooking_master',
+  'subagent_emotion_support',
+];
 
 export interface ToolSelectorProps {
   token?: string;
@@ -299,6 +306,7 @@ export function ToolSelector({
   const [subagentError, setSubagentError] = useState<string | null>(null);
   const [showingInfoAgent, setShowingInfoAgent] = useState<string | null>(null);
   const [togglingAgents, setTogglingAgents] = useState<Set<string>>(new Set());
+  const [agentManagerOpen, setAgentManagerOpen] = useState(false);
   const selectedToolsRef = useRef<string[]>(selectedTools);
 
   // Load available tools
@@ -349,31 +357,67 @@ export function ToolSelector({
       const response = await listSubagents(token);
       setSubagents(response.subagents);
 
+      // 当前本地已选择过 subagent（避免覆盖用户临时选择）
+      const hasExistingSubagentSelection = selectedToolsRef.current.some((t) =>
+        t.startsWith('subagent_')
+      );
+
+      // 全部可用 subagent 工具名
+      const allSubagentTools = response.subagents.map(
+        (subagent) => `subagent_${subagent.name}`
+      );
       const enabledSubagentTools = response.subagents
         .filter((subagent) => subagent.enabled)
         .map((subagent) => `subagent_${subagent.name}`);
-      const enabledSet = new Set(enabledSubagentTools);
 
-      const cleanedSelection = selectedToolsRef.current.filter(
-        (toolName) =>
-          !toolName.startsWith('subagent_') || enabledSet.has(toolName)
-      );
-      const mergedSelection = [...cleanedSelection];
-
-      enabledSubagentTools.forEach((name) => {
-        if (!mergedSelection.includes(name)) {
-          mergedSelection.push(name);
-        }
-      });
-
-      const hasDiff =
-        mergedSelection.length !== selectedToolsRef.current.length ||
-        mergedSelection.some(
-          (name, index) => name !== selectedToolsRef.current[index]
+      if (!hasExistingSubagentSelection) {
+        // 首次加载：优先以后端 enabled 状态为准；若全未启用，再使用默认兜底
+        const fallbackDefaults = DEFAULT_SELECTED_SUBAGENTS.filter((toolName) =>
+          allSubagentTools.includes(toolName)
         );
+        const initialSubagentTools =
+          enabledSubagentTools.length > 0 ? enabledSubagentTools : fallbackDefaults;
 
-      if (hasDiff) {
-        onSelectionChange(mergedSelection);
+        const nonSubagentTools = selectedToolsRef.current.filter(
+          (toolName) => !toolName.startsWith('subagent_')
+        );
+        const mergedSelection = [...nonSubagentTools];
+        initialSubagentTools.forEach((toolName) => {
+          if (!mergedSelection.includes(toolName)) {
+            mergedSelection.push(toolName);
+          }
+        });
+
+        const hasDiff =
+          mergedSelection.length !== selectedToolsRef.current.length ||
+          mergedSelection.some(
+            (name, index) => name !== selectedToolsRef.current[index]
+          );
+        if (hasDiff) {
+          onSelectionChange(mergedSelection);
+        }
+      } else {
+        // 已有选择：同步后端 enabled 状态，移除无效项并补齐已启用项
+        const enabledSet = new Set(enabledSubagentTools);
+        const cleanedSelection = selectedToolsRef.current.filter(
+          (toolName) =>
+            !toolName.startsWith('subagent_') || enabledSet.has(toolName)
+        );
+        const mergedSelection = [...cleanedSelection];
+        enabledSubagentTools.forEach((toolName) => {
+          if (!mergedSelection.includes(toolName)) {
+            mergedSelection.push(toolName);
+          }
+        });
+
+        const hasDiff =
+          mergedSelection.length !== selectedToolsRef.current.length ||
+          mergedSelection.some(
+            (name, index) => name !== selectedToolsRef.current[index]
+          );
+        if (hasDiff) {
+          onSelectionChange(mergedSelection);
+        }
       }
     } catch (err) {
       console.error('Failed to load subagents:', err);
@@ -596,37 +640,47 @@ export function ToolSelector({
 
         {/* Agents Header */}
         {hasSubagents && (
-          <button
-            onClick={() => {
-              setIsAgentsExpanded(!isAgentsExpanded);
-              if (!isAgentsExpanded) {
-                setIsToolsExpanded(false);
-                setIsMCPExpanded(false);
-              }
-            }}
-            disabled={isSubagentLoading}
-            className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg text-sm
-              transition-colors duration-150 whitespace-nowrap
-              ${isSubagentLoading
-                ? 'text-gray-400 cursor-not-allowed'
-                : isAgentsExpanded
-                  ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200'
-                  : 'text-gray-700 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/20'
-              }
-            `}
-          >
-            <Bot className="w-4 h-4 text-purple-500" />
-            <span className="font-medium">Agents</span>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              ({subagentSelectedCount}/{subagents.length})
-            </span>
-            {isAgentsExpanded ? (
-              <ChevronUp className="w-4 h-4" />
-            ) : (
-              <ChevronDown className="w-4 h-4" />
-            )}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => {
+                setIsAgentsExpanded(!isAgentsExpanded);
+                if (!isAgentsExpanded) {
+                  setIsToolsExpanded(false);
+                  setIsMCPExpanded(false);
+                }
+              }}
+              disabled={isSubagentLoading}
+              className={`
+                flex items-center gap-2 px-3 py-2 rounded-lg text-sm
+                transition-colors duration-150 whitespace-nowrap
+                ${isSubagentLoading
+                  ? 'text-gray-400 cursor-not-allowed'
+                  : isAgentsExpanded
+                    ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-200'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/20'
+                }
+              `}
+            >
+              <Bot className="w-4 h-4 text-purple-500" />
+              <span className="font-medium">Agents</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                ({subagentSelectedCount}/{subagents.length})
+              </span>
+              {isAgentsExpanded ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+            </button>
+            {/* Agent Manager Button */}
+            <button
+              onClick={() => setAgentManagerOpen(true)}
+              className="p-2 rounded-lg text-gray-500 hover:text-purple-600 dark:text-gray-400 dark:hover:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors"
+              title="Manage Agents"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          </div>
         )}
       </div>
 
@@ -749,6 +803,14 @@ export function ToolSelector({
           )}
         </div>
       )}
+
+      {/* Agent Manager Modal */}
+      <AgentManager
+        open={agentManagerOpen}
+        onClose={() => setAgentManagerOpen(false)}
+        token={token}
+        onAgentsChange={loadSubagents}
+      />
     </div>
   );
 }

@@ -2,6 +2,7 @@
 Subagent service for managing user-defined subagents.
 """
 
+from __future__ import annotations
 import re
 from typing import Optional
 

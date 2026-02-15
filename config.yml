@@ -35,24 +35,31 @@ llm:
   # Fast tier - Low latency models for auxiliary tasks
   fast:
     model_names:
-      - "XiaomiMiMo/MiMo-V2-Flash"
-      # - "deepseek-ai/DeepSeek-V3.2"
-      - "Qwen/Qwen3-235B-A22B-Instruct-2507"
-      - "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    base_url: "https://api-inference.modelscope.cn/v1"
+      - "glm-4-flash-250414"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
     # api_key: Loaded from .env (FAST_LLM_API_KEY or LLM_API_KEY)
-    temperature: 1
-    max_tokens: 131072
+    temperature: 0.7
+    max_tokens: 8192
 
   # Normal tier - High quality models for main generation
   normal:
     model_names:
-      - "Qwen/Qwen3-VL-30B-A3B-Instruct"
-      - "deepseek-ai/DeepSeek-V3.2"
-    base_url: "https://api.siliconflow.cn/v1"
+      - "glm-4-flash-250414"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
     # api_key: Loaded from .env (LLM_API_KEY)
-    temperature: 1
-    max_tokens: 131072
+    temperature: 0.7
+    max_tokens: 8192
+
+  # Vision tier - Multimodal (image + text) understanding
+  vision:
+    model_names:
+      - "glm-4.6v-flash"
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    # api_key: Loaded from .env (VISION_API_KEY or LLM_API_KEY)
+    temperature: 0.3
+    max_tokens: 4096
+    max_image_size_mb: 10.0
+    request_timeout: 120
 
 # =============================================================================
 # 2. Embedding Model Configuration
@@ -127,7 +134,7 @@ reranker:
 # Connection settings are in database.redis and database.milvus sections below.
 # ------------------------------------------------------------------------------
 cache:
-  enabled: true
+  enabled: false
   # Cache TTL in seconds (applies to both L1 and L2)
   ttl: 3600  # 1 hour
 
@@ -250,9 +257,9 @@ data_source:
 database:
   # PostgreSQL - Primary relational database
   postgres:
-    host: "localhost"
+    host: "sqlite"
     port: 5432
-    database: "cookhero"
+    database: "cookhero.db"
     user: "cookhero"
     # password: Loaded from .env (DATABASE_PASSWORD)
     # Connection pool settings
@@ -272,7 +279,7 @@ database:
 
   # Milvus - Vector database for embeddings and L2 cache
   milvus:
-    host: "localhost"
+    host: "./milvus_demo.db"
     port: 19530
     # user: Loaded from .env (MILVUS_USER, optional)
     # password: Loaded from .env (MILVUS_PASSWORD, optional)

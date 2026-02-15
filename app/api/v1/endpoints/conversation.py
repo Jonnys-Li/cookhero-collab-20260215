@@ -4,6 +4,8 @@ Conversation API endpoints for multi-turn chat with RAG integration.
 Includes security features: input validation, prompt injection protection.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import logging

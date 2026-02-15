@@ -1,7 +1,9 @@
 # app/rag/cache/backends.py
 """Concrete implementations of cache backends."""
+from __future__ import annotations
 import asyncio
 import base64
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple

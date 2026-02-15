@@ -191,6 +191,8 @@ class UserFoodPreferenceModel(Base):
     )
 
     def to_dict(self) -> dict:
+        stats = self.stats or {}
+        goals = stats.get("goals", {}) if isinstance(stats, dict) else {}
         return {
             "id": str(self.id),
             "user_id": self.user_id,
@@ -200,7 +202,12 @@ class UserFoodPreferenceModel(Base):
             "avg_daily_calories_min": self.avg_daily_calories_min,
             "avg_daily_calories_max": self.avg_daily_calories_max,
             "deviation_patterns": self.deviation_patterns or [],
-            "stats": self.stats or {},
+            "stats": stats,
+            # 兼容层：从 stats.goals 恢复前端/工具期望字段
+            "calorie_goal": goals.get("calorie_goal"),
+            "protein_goal": goals.get("protein_goal"),
+            "fat_goal": goals.get("fat_goal"),
+            "carbs_goal": goals.get("carbs_goal"),
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
         }

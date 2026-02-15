@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import func, select, and_
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import LLMUsageLogModel
 from app.database.session import get_session_context
@@ -179,11 +180,12 @@ class LLMUsageRepository:
             if model_name:
                 conditions.append(LLMUsageLogModel.model_name == model_name)
 
-            # Time grouping
-            if granularity == "day":
-                date_trunc = func.date_trunc("day", LLMUsageLogModel.created_at)
-            else:
-                date_trunc = func.date_trunc("hour", LLMUsageLogModel.created_at)
+            # Time grouping (SQLite does not support date_trunc)
+            date_trunc = self._time_bucket_expr(
+                session=session,
+                granularity=granularity,
+                column=LLMUsageLogModel.created_at,
+            )
 
             stmt = (
                 select(
@@ -204,7 +206,7 @@ class LLMUsageRepository:
 
             return [
                 {
-                    "period": row.period.isoformat() if row.period else None,
+                    "period": self._serialize_period(row.period),
                     "call_count": row.call_count,
                     "input_tokens": row.input_tokens or 0,
                     "output_tokens": row.output_tokens or 0,
@@ -498,11 +500,12 @@ class LLMUsageRepository:
             if module_name:
                 conditions.append(LLMUsageLogModel.module_name == module_name)
 
-            # Time grouping
-            if granularity == "day":
-                date_trunc = func.date_trunc("day", LLMUsageLogModel.created_at)
-            else:
-                date_trunc = func.date_trunc("hour", LLMUsageLogModel.created_at)
+            # Time grouping (SQLite does not support date_trunc)
+            date_trunc = self._time_bucket_expr(
+                session=session,
+                granularity=granularity,
+                column=LLMUsageLogModel.created_at,
+            )
 
             stmt = (
                 select(
@@ -524,7 +527,7 @@ class LLMUsageRepository:
 
             return [
                 {
-                    "period": row.period.isoformat() if row.period else None,
+                    "period": self._serialize_period(row.period),
                     "tool_name": row.tool_name or "no_tool",
                     "call_count": row.call_count,
                     "input_tokens": row.input_tokens or 0,
@@ -576,6 +579,27 @@ class LLMUsageRepository:
             conditions.append(LLMUsageLogModel.created_at <= end_date)
 
         return conditions
+
+    def _time_bucket_expr(self, session: AsyncSession, granularity: str, column):
+        """
+        Build a DB-compatible time bucket expression.
+        - PostgreSQL: date_trunc(...)
+        - SQLite: strftime(...)
+        """
+        dialect = session.bind.dialect.name if session.bind else ""
+        if dialect == "sqlite":
+            fmt = "%Y-%m-%dT00:00:00" if granularity == "day" else "%Y-%m-%dT%H:00:00"
+            return func.strftime(fmt, column)
+        trunc_unit = "day" if granularity == "day" else "hour"
+        return func.date_trunc(trunc_unit, column)
+
+    def _serialize_period(self, period: Any) -> Optional[str]:
+        """Serialize DB period value to ISO-like string."""
+        if period is None:
+            return None
+        if hasattr(period, "isoformat"):
+            return period.isoformat()
+        return str(period)
 
 
 # Singleton instance

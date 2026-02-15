@@ -6,7 +6,6 @@ from langchain_milvus import Milvus, BM25BuiltInFunction
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 
-from app.config.rag_config import VectorStoreConfig
 from app.config.database_config import MilvusConfig
 
 logger = logging.getLogger(__name__)
@@ -25,6 +24,32 @@ METADATA_SCALAR_SCHEMA: Dict[str, Any] = {
     "source_type": {"dtype": DataType.VARCHAR, "max_length": 64},
     "is_dish_index": {"dtype": DataType.BOOL},
 }
+
+
+def _is_local_milvus_lite(host: str) -> bool:
+    """Treat path-like hosts as Milvus Lite URIs."""
+    return host.endswith(".db") or host.startswith("/") or host.startswith("./")
+
+
+def _build_vector_store_kwargs(
+    collection_name: str,
+    connection_args: Dict[str, Any],
+    use_hybrid_search: bool,
+) -> Dict[str, Any]:
+    """Build kwargs for langchain_milvus.Milvus constructor/factory."""
+    kwargs: Dict[str, Any] = {
+        "collection_name": collection_name,
+        "connection_args": connection_args,
+        "text_field": "text",
+        "metadata_schema": METADATA_SCALAR_SCHEMA,
+    }
+    if use_hybrid_search:
+        kwargs["vector_field"] = ["dense", "sparse"]
+        kwargs["builtin_function"] = BM25BuiltInFunction()
+    else:
+        kwargs["index_params"] = {"metric_type": "L2", "index_type": "FLAT"}
+    return kwargs
+
 
 def get_vector_store(
     milvus_config: MilvusConfig,
@@ -48,7 +73,11 @@ def get_vector_store(
     Returns:
         An instance of the Milvus vector store.
     """
-    connection_args = {"host": milvus_config.host, "port": milvus_config.port}
+    use_hybrid_search = not _is_local_milvus_lite(milvus_config.host)
+    if not use_hybrid_search:
+        connection_args = {"uri": milvus_config.host}
+    else:
+        connection_args = {"host": milvus_config.host, "port": milvus_config.port}
     if milvus_config.user:
         connection_args["user"] = milvus_config.user
     if milvus_config.password:
@@ -57,7 +86,11 @@ def get_vector_store(
         connection_args["secure"] = milvus_config.secure
     alias = "default"
 
-    logger.info(f"Managing Milvus connection at {connection_args['host']}:{connection_args['port']}")
+    logger.info(f"Managing Milvus connection: {connection_args}")
+    logger.info(
+        "Milvus retrieval mode: %s",
+        "hybrid(dense+sparse)" if use_hybrid_search else "dense-only",
+    )
     
     try:
         connections.connect(alias=alias, **connection_args)
@@ -74,21 +107,25 @@ def get_vector_store(
     if not collection_exists:
         logger.info(f"Milvus collection '{collection_name}' not found. Creating via LangChain...")
 
-        # Use BM25BuiltInFunction for hybrid search (dense + sparse vectors)
-        logger.info("Initializing Milvus with BM25 built-in function for hybrid search")
+        # Enable hybrid mode when connected to full Milvus.
+        # Milvus Lite (uri mode) runs in dense-only mode.
+        logger.info(
+            "Initializing Milvus collection (hybrid=%s)",
+            use_hybrid_search,
+        )
         logger.info(f"Adding metadata scalar fields for filtering: {list(METADATA_SCALAR_SCHEMA.keys())}")
+        vector_store_kwargs = _build_vector_store_kwargs(
+            collection_name=collection_name,
+            connection_args=connection_args,
+            use_hybrid_search=use_hybrid_search,
+        )
         
         if chunks:
             # Normal path: create collection with documents
             vector_store = Milvus.from_documents(
                 documents=chunks,
                 embedding=embeddings,
-                collection_name=collection_name,
-                connection_args=connection_args,
-                text_field="text",
-                vector_field=["dense", "sparse"],  # dense for embeddings, sparse for BM25
-                builtin_function=BM25BuiltInFunction(),
-                metadata_schema=METADATA_SCALAR_SCHEMA,  # Add scalar fields for filtering
+                **vector_store_kwargs,
             )
         else:
             # Empty chunks: create collection with a placeholder document to ensure schema is created,
@@ -111,12 +148,7 @@ def get_vector_store(
             vector_store = Milvus.from_documents(
                 documents=[placeholder_doc],
                 embedding=embeddings,
-                collection_name=collection_name,
-                connection_args=connection_args,
-                text_field="text",
-                vector_field=["dense", "sparse"],
-                builtin_function=BM25BuiltInFunction(),
-                metadata_schema=METADATA_SCALAR_SCHEMA,
+                **vector_store_kwargs,
             )
             # Delete the placeholder document
             try:
@@ -128,14 +160,14 @@ def get_vector_store(
         logger.info(f"Successfully created and populated Milvus collection: {collection_name}")
     else:
         logger.info(f"Connecting to existing Milvus collection: {collection_name}")
-        vector_store = Milvus(
-            embedding_function=embeddings,
+        vector_store_kwargs = _build_vector_store_kwargs(
             collection_name=collection_name,
             connection_args=connection_args,
-            text_field="text",
-            vector_field=["dense", "sparse"],
-            builtin_function=BM25BuiltInFunction(),
-            metadata_schema=METADATA_SCALAR_SCHEMA,  # Include schema for existing collection
+            use_hybrid_search=use_hybrid_search,
+        )
+        vector_store = Milvus(
+            embedding_function=embeddings,
+            **vector_store_kwargs,
         )
         logger.info(f"Successfully connected to Milvus collection: {collection_name}")
         

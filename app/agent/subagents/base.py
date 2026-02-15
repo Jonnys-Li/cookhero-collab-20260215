@@ -127,6 +127,7 @@ class BaseSubagent(ABC):
         user_id: Optional[str] = None,
         background: Optional[str] = None,
         event_handler: Optional[Callable[[TraceStep], Awaitable[None]]] = None,
+        tool_names_override: Optional[list[str]] = None,
     ) -> ToolResult:
         """
         使用工具执行任务的通用实现。
@@ -137,6 +138,7 @@ class BaseSubagent(ABC):
             task: 任务描述
             user_id: 用户 ID
             background: 额外背景
+            tool_names_override: 可选工具白名单，传入时覆盖配置中的默认 tools
 
         Returns:
             ToolResult: 执行结果
@@ -159,17 +161,19 @@ class BaseSubagent(ABC):
             {"role": "user", "content": task},
         ]
 
+        tool_names = tool_names_override if tool_names_override is not None else self.tools
+
         # 获取 Tool schemas
         tool_schemas = (
-            AgentHub.get_tool_schemas(self.tools, user_id=user_id)
-            if self.tools
+            AgentHub.get_tool_schemas(tool_names, user_id=user_id)
+            if tool_names
             else []
         )
 
         # 创建 Tool 执行器
         tool_executor = (
-            AgentHub.create_tool_executor(self.tools, user_id=user_id)
-            if self.tools
+            AgentHub.create_tool_executor(tool_names, user_id=user_id)
+            if tool_names
             else None
         )
 

@@ -78,17 +78,32 @@ class RetrievalOptimizationModule:
         if ranker_type == "weighted":
             ranker_params = {"weights": ranker_weights, "norm_score": True}
         
-        # Milvus hybrid search with configurable ranker
-        # Use asyncio.to_thread to avoid blocking the event loop
-        results = await asyncio.to_thread(
-            self.vectorstore.similarity_search_with_score,
-            query=query,
-            k=top_k,
-            fetch_k=int(top_k * 4),
-            ranker_type=ranker_type,
-            ranker_params=ranker_params if ranker_params else None,
-            expr=expr,
-        )
+        used_dense_fallback = False
+        # Milvus hybrid search with configurable ranker.
+        # Fallback to dense search when collection does not support hybrid fields.
+        # Use asyncio.to_thread to avoid blocking the event loop.
+        try:
+            results = await asyncio.to_thread(
+                self.vectorstore.similarity_search_with_score,
+                query=query,
+                k=top_k,
+                fetch_k=int(top_k * 4),
+                ranker_type=ranker_type,
+                ranker_params=ranker_params if ranker_params else None,
+                expr=expr,
+            )
+        except Exception as exc:
+            used_dense_fallback = True
+            logger.warning(
+                "hybrid search failed; fallback to dense-only search. error=%s",
+                exc,
+            )
+            results = await asyncio.to_thread(
+                self.vectorstore.similarity_search_with_score,
+                query=query,
+                k=top_k,
+                expr=expr,
+            )
         
         # Extract documents and scores
         docs, scores = [], []
@@ -99,7 +114,7 @@ class RetrievalOptimizationModule:
         logger.info("hybrid search docs=%d", len(docs))
         
         # Apply score threshold filtering
-        if score_threshold > 0 and ranker_type == "weighted":
+        if score_threshold > 0 and ranker_type == "weighted" and not used_dense_fallback:
             filtered_results = [(doc, score) for doc, score in zip(docs, scores) if score >= score_threshold]
             filtered_docs, filtered_scores = [], []
             for doc, score in filtered_results:

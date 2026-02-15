@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging, json
 import re
 from typing import Optional

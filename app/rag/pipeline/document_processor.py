@@ -4,6 +4,7 @@ Unified document processor for RAG pipeline.
 Handles chunk splitting and post-processing of retrieved documents.
 """
 
+from __future__ import annotations
 import logging
 import uuid
 from typing import Any, Dict, List, Optional

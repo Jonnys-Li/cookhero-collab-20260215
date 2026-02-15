@@ -3,7 +3,7 @@ AgentService - Agent 模块的主入口
 
 职责单一：组装上下文 → 交给 Agent 执行
 """
-
+from __future__ import annotations
 import asyncio
 import json
 import logging

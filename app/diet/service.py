@@ -6,7 +6,8 @@
 """
 
 import logging
-from datetime import date, timedelta
+from copy import deepcopy
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 from app.diet.database.repository import diet_repository, DietRepository
@@ -21,6 +22,12 @@ from app.diet.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+GOAL_KEYS = ("calorie_goal", "protein_goal", "fat_goal", "carbs_goal")
+GOALS_STATS_KEY = "goals"
+TODAY_BUDGET_ADJUSTMENTS_KEY = "today_budget_adjustments"
+TODAY_BUDGET_HISTORY_DAYS = 14
+TODAY_BUDGET_DAILY_CAP = 150
 
 
 def get_week_start_date(target_date: date) -> date:
@@ -540,10 +547,211 @@ class DietService:
 
     # ==================== 用户偏好 ====================
 
+    def _normalize_stats(self, stats: Optional[dict]) -> dict:
+        """标准化 stats 字段，保证返回可写字典。"""
+        if not isinstance(stats, dict):
+            return {}
+        return deepcopy(stats)
+
+    def _merge_stats(self, base: Optional[dict], patch: Optional[dict]) -> dict:
+        """浅层合并 stats 字段（dict 值按一层键合并）。"""
+        merged = self._normalize_stats(base)
+        if not isinstance(patch, dict):
+            return merged
+
+        for key, value in patch.items():
+            if isinstance(value, dict) and isinstance(merged.get(key), dict):
+                next_value = dict(merged[key])
+                next_value.update(value)
+                merged[key] = next_value
+            else:
+                merged[key] = value
+        return merged
+
+    def _extract_goals(self, stats: Optional[dict]) -> dict:
+        if not isinstance(stats, dict):
+            return {}
+        goals = stats.get(GOALS_STATS_KEY)
+        return goals if isinstance(goals, dict) else {}
+
+    def _resolve_base_calorie_goal(self, pref: Optional[object]) -> Optional[int]:
+        if not pref:
+            return None
+
+        stats = getattr(pref, "stats", None)
+        goals = self._extract_goals(stats)
+        goal_value = goals.get("calorie_goal")
+        if isinstance(goal_value, (int, float)):
+            return int(goal_value)
+
+        avg_min = getattr(pref, "avg_daily_calories_min", None)
+        avg_max = getattr(pref, "avg_daily_calories_max", None)
+        if isinstance(avg_min, int) and isinstance(avg_max, int):
+            return int((avg_min + avg_max) / 2)
+        if isinstance(avg_max, int):
+            return avg_max
+        if isinstance(avg_min, int):
+            return avg_min
+        return None
+
+    def _prune_adjustment_history(self, entries: list, target_date: date) -> list[dict]:
+        min_date = target_date - timedelta(days=TODAY_BUDGET_HISTORY_DAYS - 1)
+        normalized: list[dict] = []
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            date_str = entry.get("date")
+            if not isinstance(date_str, str):
+                continue
+            try:
+                entry_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if entry_date < min_date:
+                continue
+
+            delta = entry.get("delta_calories", 0)
+            try:
+                delta_value = int(delta)
+            except (TypeError, ValueError):
+                delta_value = 0
+
+            normalized.append(
+                {
+                    "date": entry_date.isoformat(),
+                    "delta_calories": max(0, delta_value),
+                    "reason": str(entry.get("reason") or ""),
+                    "source": str(entry.get("source") or "emotion_subagent"),
+                    "updated_at": str(entry.get("updated_at") or ""),
+                }
+            )
+
+        return normalized
+
+    def _sum_today_adjustment(self, entries: list[dict], target_date: date) -> int:
+        target_key = target_date.isoformat()
+        return sum(
+            int(item.get("delta_calories") or 0)
+            for item in entries
+            if item.get("date") == target_key
+        )
+
+    def _build_budget_snapshot(
+        self,
+        pref: Optional[object],
+        target_date: date,
+    ) -> dict:
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        entries = self._prune_adjustment_history(
+            list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []),
+            target_date,
+        )
+        today_adjustment = self._sum_today_adjustment(entries, target_date)
+        base_goal = self._resolve_base_calorie_goal(pref)
+        effective_goal = (
+            base_goal + today_adjustment if isinstance(base_goal, int) else None
+        )
+
+        return {
+            "date": target_date.isoformat(),
+            "base_goal": base_goal,
+            "today_adjustment": today_adjustment,
+            "effective_goal": effective_goal,
+            "remaining_adjustment_cap": max(0, TODAY_BUDGET_DAILY_CAP - today_adjustment),
+            "adjustment_cap": TODAY_BUDGET_DAILY_CAP,
+        }
+
     async def get_user_preference(self, user_id: str) -> Optional[dict]:
         """获取用户偏好"""
         pref = await self.repository.get_user_preference(user_id)
         return pref.to_dict() if pref else None
+
+    async def get_today_budget(
+        self,
+        user_id: str,
+        target_date: Optional[date] = None,
+    ) -> dict:
+        """获取用户当天热量预算与临时调整状态。"""
+        actual_date = target_date or date.today()
+        pref = await self.repository.get_user_preference(user_id)
+        if not pref:
+            return {
+                "date": actual_date.isoformat(),
+                "base_goal": None,
+                "today_adjustment": 0,
+                "effective_goal": None,
+                "remaining_adjustment_cap": TODAY_BUDGET_DAILY_CAP,
+                "adjustment_cap": TODAY_BUDGET_DAILY_CAP,
+            }
+
+        stats = self._normalize_stats(pref.stats)
+        cleaned_entries = self._prune_adjustment_history(
+            list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []),
+            actual_date,
+        )
+        if cleaned_entries != list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []):
+            stats[TODAY_BUDGET_ADJUSTMENTS_KEY] = cleaned_entries
+            pref = await self.repository.upsert_user_preference(user_id, stats=stats)
+
+        return self._build_budget_snapshot(pref, actual_date)
+
+    async def adjust_today_budget(
+        self,
+        user_id: str,
+        delta_calories: int,
+        reason: Optional[str] = None,
+        target_date: Optional[date] = None,
+        source: str = "emotion_subagent",
+    ) -> dict:
+        """
+        增加当天临时热量预算。
+
+        仅允许正值，且单日累计上限为 TODAY_BUDGET_DAILY_CAP。
+        """
+        try:
+            requested_delta = int(delta_calories)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("delta_calories 必须是正整数") from exc
+
+        if requested_delta <= 0:
+            raise ValueError("delta_calories 必须大于 0")
+
+        actual_date = target_date or date.today()
+        pref = await self.repository.get_user_preference(user_id)
+        stats = self._normalize_stats(pref.stats if pref else None)
+
+        entries = self._prune_adjustment_history(
+            list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []),
+            actual_date,
+        )
+        current_total = self._sum_today_adjustment(entries, actual_date)
+        remaining = max(0, TODAY_BUDGET_DAILY_CAP - current_total)
+        applied_delta = min(requested_delta, remaining)
+
+        if applied_delta > 0:
+            entries.append(
+                {
+                    "date": actual_date.isoformat(),
+                    "delta_calories": applied_delta,
+                    "reason": reason or "情绪支持临时调整",
+                    "source": source or "emotion_subagent",
+                    "updated_at": datetime.utcnow().isoformat(),
+                }
+            )
+
+        stats[TODAY_BUDGET_ADJUSTMENTS_KEY] = entries
+        pref = await self.repository.upsert_user_preference(user_id, stats=stats)
+
+        snapshot = self._build_budget_snapshot(pref, actual_date)
+        snapshot.update(
+            {
+                "requested_delta": requested_delta,
+                "applied_delta": applied_delta,
+                "capped": applied_delta < requested_delta,
+            }
+        )
+        return snapshot
 
     async def update_user_preference(self, user_id: str, **kwargs) -> dict:
         """更新用户偏好"""
@@ -552,6 +760,27 @@ class DietService:
             update_data["avoided_foods"] = update_data.pop("disliked_foods")
         else:
             update_data.pop("disliked_foods", None)
+
+        goal_updates = {}
+        for key in GOAL_KEYS:
+            if key in update_data:
+                value = update_data.pop(key)
+                if value is not None:
+                    goal_updates[key] = value
+
+        existing_pref = await self.repository.get_user_preference(user_id)
+        stats_patch = update_data.pop("stats", None)
+        merged_stats = self._merge_stats(
+            getattr(existing_pref, "stats", None),
+            stats_patch,
+        )
+        if goal_updates:
+            goals = self._extract_goals(merged_stats)
+            goals.update(goal_updates)
+            merged_stats[GOALS_STATS_KEY] = goals
+        if merged_stats:
+            update_data["stats"] = merged_stats
+
         pref = await self.repository.upsert_user_preference(user_id, **update_data)
         return pref.to_dict()
 

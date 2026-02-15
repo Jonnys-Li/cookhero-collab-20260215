@@ -4,6 +4,7 @@ Tool 基类和辅助类
 Tool 是 Agent 可以调用的外部功能，如搜索、计算、API 调用等。
 """
 
+from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod

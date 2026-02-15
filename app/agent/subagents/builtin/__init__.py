@@ -7,8 +7,12 @@
 
 from app.agent.subagents.builtin.generic import GenericSubagent
 from app.agent.subagents.builtin.diet_planner import DietPlannerSubagent
+from app.agent.subagents.builtin.emotion_support import EmotionSupportSubagent
+from app.agent.subagents.builtin.cooking_master import CookingMasterSubagent
 
 __all__ = [
     "GenericSubagent",
     "DietPlannerSubagent",
+    "EmotionSupportSubagent",
+    "CookingMasterSubagent",
 ]

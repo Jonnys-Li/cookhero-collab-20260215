@@ -1,6 +1,7 @@
 """
 User profile endpoints: get current user and update profile.
 """
+from __future__ import annotations
 import logging
 from typing import Optional
 

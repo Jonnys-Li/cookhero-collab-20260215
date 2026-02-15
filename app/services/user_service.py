@@ -1,4 +1,5 @@
 import logging
+import uuid
 from typing import Optional
 
 from sqlalchemy import select
@@ -20,6 +21,13 @@ class UserService:
             return result.scalar_one_or_none()
 
     async def get_user_by_id(self, user_id) -> Optional[UserModel]:
+        if user_id is None:
+            return None
+        if isinstance(user_id, str):
+            try:
+                user_id = uuid.UUID(user_id)
+            except ValueError:
+                return None
         async with get_session_context() as session:
             stmt = select(UserModel).where(UserModel.id == user_id)
             result = await session.execute(stmt)

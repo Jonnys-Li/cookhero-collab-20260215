@@ -3,6 +3,8 @@
 Conversation Service - Orchestrates chat processing with RAG and multimodal support.
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

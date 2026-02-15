@@ -24,6 +24,9 @@ dist/
 /vector_index/
 /deployments/volumes/
 /cookhero.db
+/milvus_demo.db
+/.milvus_demo.db.lock
+/artifacts/
 
 # Secrets
 .env

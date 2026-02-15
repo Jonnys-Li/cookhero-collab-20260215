@@ -29,7 +29,9 @@ class DietAnalysisTool(BaseTool):
 - weekly_summary: 获取某周饮食摘要
 - deviation: 计划 vs 实际偏差分析
 - preferences: 获取饮食偏好
-- update_preferences: 更新饮食偏好"""
+- update_preferences: 更新饮食偏好
+- get_today_budget: 获取当天临时热量预算状态
+- adjust_today_budget: 增加当天临时热量预算（带上限保护）"""
 
     parameters = {
         "type": "object",
@@ -42,8 +44,14 @@ class DietAnalysisTool(BaseTool):
                     "deviation",
                     "preferences",
                     "update_preferences",
+                    "get_today_budget",
+                    "adjust_today_budget",
                 ],
-                "description": "操作类型：daily_summary/weekly_summary/deviation/preferences/update_preferences",
+                "description": (
+                    "操作类型：daily_summary/weekly_summary/deviation/"
+                    "preferences/update_preferences/get_today_budget/"
+                    "adjust_today_budget"
+                ),
             },
             "user_id": {
                 "type": "string",
@@ -103,6 +111,18 @@ class DietAnalysisTool(BaseTool):
                 "type": "number",
                 "description": "每日碳水目标(克)",
             },
+            "delta_calories": {
+                "type": "integer",
+                "description": "当天临时热量调整值（正整数）",
+            },
+            "reason": {
+                "type": "string",
+                "description": "调整原因（用于审计和追踪）",
+            },
+            "source": {
+                "type": "string",
+                "description": "调整来源（默认 emotion_subagent）",
+            },
         },
         "required": ["action", "user_id"],
     }
@@ -123,6 +143,9 @@ class DietAnalysisTool(BaseTool):
         protein_goal: Optional[float] = None,
         fat_goal: Optional[float] = None,
         carbs_goal: Optional[float] = None,
+        delta_calories: Optional[int] = None,
+        reason: Optional[str] = None,
+        source: Optional[str] = None,
         **kwargs,
     ) -> ToolResult:
         """执行饮食分析操作"""
@@ -238,6 +261,49 @@ class DietAnalysisTool(BaseTool):
                     data={
                         "message": "更新用户偏好成功",
                         "preference": result,
+                    },
+                )
+
+            elif action == "get_today_budget":
+                actual_date = None
+                if target_date:
+                    actual_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+
+                result = await diet_service.get_today_budget(
+                    user_id=user_id,
+                    target_date=actual_date,
+                )
+                return ToolResult(
+                    success=True,
+                    data={
+                        "message": "获取当天预算状态成功",
+                        "budget": result,
+                    },
+                )
+
+            elif action == "adjust_today_budget":
+                if delta_calories is None:
+                    return ToolResult(
+                        success=False,
+                        error="adjust_today_budget 操作需要 delta_calories 参数",
+                    )
+
+                actual_date = None
+                if target_date:
+                    actual_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+
+                result = await diet_service.adjust_today_budget(
+                    user_id=user_id,
+                    delta_calories=delta_calories,
+                    reason=reason,
+                    target_date=actual_date,
+                    source=source or "emotion_subagent",
+                )
+                return ToolResult(
+                    success=True,
+                    data={
+                        "message": "当天预算调整完成",
+                        "budget": result,
                     },
                 )
 

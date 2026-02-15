@@ -21,13 +21,18 @@ from app.database.models import Base
 logger = logging.getLogger(__name__)
 
 # Create async engine
+engine_kwargs = {"echo": settings.database.postgres.echo}
+if settings.database.postgres.host != "sqlite":
+    engine_kwargs.update({
+        "pool_size": settings.database.postgres.pool_size,
+        "max_overflow": settings.database.postgres.max_overflow,
+        "pool_timeout": settings.database.postgres.pool_timeout,
+        "pool_recycle": settings.database.postgres.pool_recycle,
+    })
+
 _engine = create_async_engine(
     settings.database.postgres.async_url,
-    pool_size=settings.database.postgres.pool_size,
-    max_overflow=settings.database.postgres.max_overflow,
-    pool_timeout=settings.database.postgres.pool_timeout,
-    pool_recycle=settings.database.postgres.pool_recycle,
-    echo=settings.database.postgres.echo,
+    **engine_kwargs
 )
 
 # Create session factory
@@ -57,13 +62,18 @@ def get_background_session_factory() -> async_sessionmaker[AsyncSession]:
     global _background_engine, _background_session_factory
 
     if _background_session_factory is None:
+        bg_engine_kwargs = {"echo": False}
+        if settings.database.postgres.host != "sqlite":
+            bg_engine_kwargs.update({
+                "pool_size": 2,
+                "max_overflow": 2,
+                "pool_timeout": 30,
+                "pool_recycle": settings.database.postgres.pool_recycle,
+            })
+        
         _background_engine = create_async_engine(
             settings.database.postgres.async_url,
-            pool_size=2,  # Smaller pool for background operations
-            max_overflow=2,
-            pool_timeout=30,
-            pool_recycle=settings.database.postgres.pool_recycle,
-            echo=False,
+            **bg_engine_kwargs
         )
         _background_session_factory = async_sessionmaker(
             bind=_background_engine,

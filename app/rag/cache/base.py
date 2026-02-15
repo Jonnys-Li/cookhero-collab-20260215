@@ -5,6 +5,7 @@ Cache backend abstractions.
 - KeywordCacheBackend: key/value semantics (for exact match, e.g., Redis L1).
 - VectorCacheBackend: vector insert/search semantics (for semantic match, e.g., in-memory or future Milvus).
 """
+from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, List, Optional, Tuple
 

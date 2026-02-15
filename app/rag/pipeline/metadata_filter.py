@@ -5,11 +5,12 @@ Combines the user query, available metadata values, and Milvus reference docs
 to produce a ready-to-use boolean expression string for the vector store `expr` field.
 """
 
+from __future__ import annotations
 import json
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib import response
 
 from langchain_core.prompts import ChatPromptTemplate

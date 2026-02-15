@@ -18,8 +18,9 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    Uuid,
 )
-from sqlalchemy.dialects.postgresql import UUID
+# from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -36,7 +37,7 @@ class UserModel(Base):
     __tablename__ = "users"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     username: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
@@ -71,7 +72,7 @@ class ConversationModel(Base):
     __tablename__ = "conversations"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, nullable=False
@@ -126,10 +127,10 @@ class MessageModel(Base):
     __tablename__ = "messages"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         ForeignKey("conversations.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -184,11 +185,11 @@ class KnowledgeDocumentModel(Base):
     __tablename__ = "knowledge_documents"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     # NULL for public documents (GLOBAL), actual user_id for personal documents
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=True
     )
     dish_name: Mapped[str] = mapped_column(String(255), nullable=False)
     category: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -255,16 +256,16 @@ class RAGEvaluationModel(Base):
     __tablename__ = "rag_evaluations"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     message_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+        Uuid,
         ForeignKey("messages.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
+        Uuid, nullable=False, index=True
     )
     user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
 
@@ -340,7 +341,7 @@ class LLMUsageLogModel(Base):
     __tablename__ = "llm_usage_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     # Unique request identifier for tracing
     request_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
@@ -350,7 +351,7 @@ class LLMUsageLogModel(Base):
     user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     # Conversation context (optional)
     conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True, index=True
+        Uuid, nullable=True, index=True
     )
     # Model information
     model_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)

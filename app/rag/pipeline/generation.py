@@ -1,6 +1,7 @@
 # app/rag/pipeline/generation.py
 """LLM integration for query rewriting and response generation."""
 
+from __future__ import annotations
 import logging
 from typing import Optional
 

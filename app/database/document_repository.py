@@ -3,7 +3,7 @@
 Repository for knowledge document CRUD operations.
 Provides async database access for documents stored in PostgreSQL.
 """
-
+from __future__ import annotations
 import logging
 import uuid
 from typing import Dict, List, Optional
@@ -56,23 +56,34 @@ class DocumentRepository:
             cls._user_cache = {}
             for field_name in ("dish_name", "category", "difficulty"):
                 field = getattr(KnowledgeDocumentModel, field_name)
+                # Use Python aggregation for SQLite compatibility (no array_agg)
                 stmt = select(
                     KnowledgeDocumentModel.user_id,
-                    func.array_agg(func.distinct(field))
+                    field
                 ).where(
                     KnowledgeDocumentModel.user_id.is_not(None)
-                ).group_by(KnowledgeDocumentModel.user_id)
+                ).distinct()
                 
                 rows = (await session.execute(stmt)).all()
-                for user_uuid, values in rows:
+                
+                # Group by user_id
+                temp_map = {}
+                for user_uuid, value in rows:
                     user_id = str(user_uuid)
+                    if user_id not in temp_map:
+                        temp_map[user_id] = []
+                    if value:
+                        temp_map[user_id].append(value)
+                
+                # Update cache
+                for user_id, values in temp_map.items():
                     if user_id not in cls._user_cache:
                         cls._user_cache[user_id] = {
                             "dish_name": [],
                             "category": [],
                             "difficulty": [],
                         }
-                    cls._user_cache[user_id][field_name] = sorted([v for v in (values or []) if v])
+                    cls._user_cache[user_id][field_name] = sorted(values)
         
         cls._cache_initialized = True
         logger.info(

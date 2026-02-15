@@ -4,6 +4,8 @@ Agent API endpoints for tool-augmented chat.
 Independent from the conversation endpoints, designed for agent-based interactions.
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
 import logging

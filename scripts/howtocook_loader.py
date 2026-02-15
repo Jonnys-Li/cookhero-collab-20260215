@@ -9,7 +9,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter
@@ -84,8 +84,8 @@ class HowToCookLoader:
     def __init__(
         self,
         data_path: str,
-        tips_path: str | None = None,
-        headers_to_split_on: List[tuple] | None = None,
+        tips_path: Optional[str] = None,
+        headers_to_split_on: Optional[List[tuple]] = None,
     ):
         self.data_path = Path(data_path)
         self.tips_path = Path(tips_path) if tips_path else None
@@ -179,7 +179,7 @@ class HowToCookLoader:
         logger.info("Created %d chunks from %d documents", len(all_chunks), len(documents))
         return all_chunks
 
-    def _parse_recipe_file(self, file_path: Path, source_type: str) -> ParsedDocument | None:
+    def _parse_recipe_file(self, file_path: Path, source_type: str) -> Optional[ParsedDocument]:
         """Parse a recipe markdown file."""
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -202,7 +202,7 @@ class HowToCookLoader:
             content=content,
         )
 
-    def _parse_tips_file(self, file_path: Path) -> ParsedDocument | None:
+    def _parse_tips_file(self, file_path: Path) -> Optional[ParsedDocument]:
         """Parse a tips markdown file."""
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -286,7 +286,7 @@ class HowToCookLoader:
         self,
         dishes_by_category: Dict[str, List[str]],
         dishes_by_difficulty: Dict[str, List[str]],
-    ) -> ParsedDocument | None:
+    ) -> Optional[ParsedDocument]:
         """Create the overall dish index document."""
         if not dishes_by_category and not dishes_by_difficulty:
             return None
@@ -336,7 +336,7 @@ class HowToCookLoader:
 
     def _create_category_index(
         self, category: str, dish_list: List[str]
-    ) -> ParsedDocument | None:
+    ) -> Optional[ParsedDocument]:
         """Create an index document for a specific category."""
         if not dish_list:
             return None
@@ -357,7 +357,7 @@ class HowToCookLoader:
 
     def _create_difficulty_index(
         self, difficulty: str, dish_list: List[str]
-    ) -> ParsedDocument | None:
+    ) -> Optional[ParsedDocument]:
         """Create an index document for a specific difficulty."""
         if not dish_list:
             return None
@@ -391,3 +391,77 @@ class HowToCookLoader:
 
         content_parts.append("欢迎根据口味挑选合适的菜谱")
         return "".join(content_parts)
+
+if __name__ == "__main__":
+    import asyncio
+    from app.config import settings
+    from app.database.session import init_db, async_session_factory
+    from app.database.models import KnowledgeDocumentModel
+    from sqlalchemy import delete
+    from app.rag.embeddings.embedding_factory import get_embedding_model as get_embeddings
+    from app.rag.vector_stores.vector_store_factory import get_vector_store
+    
+    # Configure logging
+    logging.basicConfig(level=logging.INFO)
+    
+    async def main():
+        # Initialize DB
+        await init_db()
+        
+        # Load documents
+        data_path = settings.rag.paths.base_data_path
+        tips_path = Path(data_path) / "tips"
+        loader = HowToCookLoader(
+            data_path=data_path,
+            tips_path=str(tips_path) if tips_path.exists() else None
+        )
+        docs = loader.load_documents()
+        
+        if not docs:
+            logger.warning("No documents loaded!")
+            return
+
+        # Deduplicate by deterministic document id to keep ingestion idempotent.
+        deduped_docs = {doc.doc_id: doc for doc in docs}
+        docs = list(deduped_docs.values())
+
+        # Save to Postgres (SQLite)
+        logger.info("Rebuilding recipe documents in database with %d rows...", len(docs))
+        async with async_session_factory() as session:
+            await session.execute(
+                delete(KnowledgeDocumentModel).where(
+                    KnowledgeDocumentModel.data_source == "recipes"
+                )
+            )
+            for doc in docs:
+                db_doc = KnowledgeDocumentModel(
+                    id=uuid.UUID(doc.doc_id),
+                    dish_name=doc.dish_name,
+                    category=doc.category,
+                    difficulty=doc.difficulty,
+                    data_source=doc.data_source,
+                    source_type=doc.source_type,
+                    source=doc.source,
+                    is_dish_index=doc.is_dish_index,
+                    content=doc.content,
+                    user_id=None # Global
+                )
+                session.add(db_doc)
+            await session.commit()
+        
+        # Save to Milvus
+        logger.info("Saving chunks to Milvus...")
+        chunks = loader.create_chunks(docs)
+        embeddings = get_embeddings(settings.rag)
+        
+        # This will create collection and insert
+        vector_store = get_vector_store(
+            settings.database.milvus,
+            settings.rag.vector_store.collection_names["recipes"],
+            embeddings,
+            chunks,
+            force_rebuild=True
+        )
+        logger.info("Done!")
+
+    asyncio.run(main())

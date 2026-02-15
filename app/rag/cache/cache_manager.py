@@ -8,6 +8,7 @@ Cache Strategy:
 
 Only caches Query -> Retrieved Documents (Context), NOT LLM responses.
 """
+from __future__ import annotations
 import hashlib
 import logging
 import pickle

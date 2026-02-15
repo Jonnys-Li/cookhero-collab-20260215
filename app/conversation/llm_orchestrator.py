@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import AsyncGenerator, List, Optional
 
 from langchain_core.messages import BaseMessage

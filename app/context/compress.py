@@ -15,6 +15,7 @@ Compression rule:
   - This ensures uncompressed count stays in range [COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD + RECENT_MESSAGES_LIMIT)
 """
 
+from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Dict, List, Optional
 

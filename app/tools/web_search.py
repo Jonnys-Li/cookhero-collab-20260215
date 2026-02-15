@@ -8,6 +8,7 @@ Provides two core methods:
 Uses Tavily official Python client for reliable web search.
 Uses LLM tool calling for structured output.
 """
+from __future__ import annotations
 
 import json
 import logging

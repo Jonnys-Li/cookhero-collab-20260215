@@ -3,7 +3,9 @@
  */
 
 // API Configuration
-export const API_BASE = '/api/v1';
+// 支持通过环境变量配置 API 基础路径，适配不同的部署环境
+// 例如：VITE_API_BASE=/admin/api/v1
+export const API_BASE = import.meta.env.VITE_API_BASE || '/api/v1';
 
 // Pagination
 export const CONVERSATIONS_PAGE_SIZE = 30;

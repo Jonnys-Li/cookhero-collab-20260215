@@ -3,7 +3,7 @@ Agent 模块类型定义
 
 Agent 模块是独立的对话处理系统，与现有 ConversationService 完全分离。
 """
-
+from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum

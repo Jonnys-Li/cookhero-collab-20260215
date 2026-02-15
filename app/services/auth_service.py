@@ -5,6 +5,7 @@ Provides user registration, password hashing, and JWT token generation.
 Includes security features: account lockout after failed attempts.
 """
 
+from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Tuple

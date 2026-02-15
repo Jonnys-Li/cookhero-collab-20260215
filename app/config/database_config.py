@@ -34,12 +34,16 @@ class PostgresConfig(BaseModel):
     @property
     def async_url(self) -> str:
         """Build async database URL for SQLAlchemy."""
+        if self.host == "sqlite":
+            return f"sqlite+aiosqlite:///{self.database}"
         password_part = f":{self.password}" if self.password else ""
         return f"postgresql+asyncpg://{self.user}{password_part}@{self.host}:{self.port}/{self.database}"
 
     @property
     def sync_url(self) -> str:
         """Build sync database URL for SQLAlchemy."""
+        if self.host == "sqlite":
+            return f"sqlite:///{self.database}"
         password_part = f":{self.password}" if self.password else ""
         return f"postgresql+psycopg2://{self.user}{password_part}@{self.host}:{self.port}/{self.database}"
 

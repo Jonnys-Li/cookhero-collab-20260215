@@ -19,11 +19,29 @@ def register_builtin_subagents() -> None:
     from app.agent.subagents.builtin.diet_planner import (
         DietPlannerSubagent,
     )
+    from app.agent.subagents.builtin.emotion_support import (
+        EmotionSupportSubagent,
+    )
+    from app.agent.subagents.builtin.cooking_master import (
+        CookingMasterSubagent,
+    )
 
     # 注册饮食规划专家
     subagent_registry.register_builtin(
         DietPlannerSubagent,
         DietPlannerSubagent.get_default_config(),
+    )
+
+    # 注册情感安抚专家
+    subagent_registry.register_builtin(
+        EmotionSupportSubagent,
+        EmotionSupportSubagent.get_default_config(),
+    )
+
+    # 注册烹饪大师
+    subagent_registry.register_builtin(
+        CookingMasterSubagent,
+        CookingMasterSubagent.get_default_config(),
     )
 
 

@@ -268,11 +268,12 @@ class EvaluationRepository:
             if user_id:
                 conditions.append(RAGEvaluationModel.user_id == user_id)
 
-            # Group by date
-            if granularity == "hour":
-                date_trunc = func.date_trunc("hour", RAGEvaluationModel.created_at)
-            else:
-                date_trunc = func.date_trunc("day", RAGEvaluationModel.created_at)
+            # Group by date (SQLite does not support date_trunc)
+            date_trunc = self._time_bucket_expr(
+                session=session,
+                granularity=granularity,
+                column=RAGEvaluationModel.created_at,
+            )
 
             stmt = (
                 select(
@@ -291,7 +292,7 @@ class EvaluationRepository:
 
             return [
                 {
-                    "period": row.period.isoformat() if row.period else None,
+                    "period": self._serialize_period(row.period),
                     "count": row.count,
                     "metrics": {
                         "faithfulness": float(row.avg_faithfulness) if row.avg_faithfulness else None,
@@ -368,6 +369,27 @@ class EvaluationRepository:
                 alerts.append(alert_data)
 
             return alerts
+
+    def _time_bucket_expr(self, session: AsyncSession, granularity: str, column):
+        """
+        Build a DB-compatible time bucket expression.
+        - PostgreSQL: date_trunc(...)
+        - SQLite: strftime(...)
+        """
+        dialect = session.bind.dialect.name if session.bind else ""
+        if dialect == "sqlite":
+            fmt = "%Y-%m-%dT00:00:00" if granularity == "day" else "%Y-%m-%dT%H:00:00"
+            return func.strftime(fmt, column)
+        trunc_unit = "hour" if granularity == "hour" else "day"
+        return func.date_trunc(trunc_unit, column)
+
+    def _serialize_period(self, period: Any) -> Optional[str]:
+        """Serialize DB period value to ISO-like string."""
+        if period is None:
+            return None
+        if hasattr(period, "isoformat"):
+            return period.isoformat()
+        return str(period)
 
 
 # Singleton instance

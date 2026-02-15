@@ -1,5 +1,6 @@
 """Endpoints for personal knowledge documents."""
 
+from __future__ import annotations
 import logging
 from typing import Literal
 

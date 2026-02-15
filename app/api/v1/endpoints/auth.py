@@ -3,6 +3,7 @@ Authentication API endpoints: register and login.
 Includes security features: account lockout, audit logging.
 """
 
+from __future__ import annotations
 import logging
 from typing import Optional
 

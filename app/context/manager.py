@@ -18,6 +18,7 @@ Key invariant:
 This module does NOT call LLM directly. Compression is handled by ContextCompressor.
 """
 
+from __future__ import annotations
 from sys import path
 from typing import Dict, List, Optional
 
