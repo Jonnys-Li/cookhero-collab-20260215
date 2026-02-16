@@ -25,13 +25,12 @@ aiosqlite==0.21.0             # SQLite 异步驱动（开发/测试）
 # 向量数据库 & 检索
 # ----------------------------------------------------------------------------
 pymilvus==2.6.4               # Milvus 向量数据库客户端
-langchain-milvus==0.1.2       # LangChain Milvus 集成
 
 # ----------------------------------------------------------------------------
-# LangChain 生态系统
+# LangChain 生态系统 (版本兼容性修复)
 # ----------------------------------------------------------------------------
 langchain==0.3.7              # LangChain 核心框架
-langchain-core==0.3.15        # LangChain 核心抽象
+langchain-core==0.2.43        # LangChain 核心抽象 (兼容 langchain-milvus)
 langchain-community==0.3.5    # 社区集成
 langchain-openai==0.2.5       # OpenAI 集成
 langchain-text-splitters==0.3.2  # 文本分割工具
