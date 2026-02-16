@@ -16,21 +16,22 @@ aiosqlite==0.21.0
 # 向量数据库
 pymilvus==2.6.4
 
-# LangChain 生态系统 - 让 pip 自动解决版本冲突
-langchain
-langchain-community
-langchain-openai
-langchain-text-splitters
-langchain-milvus
+# LangChain 生态系统
+langchain==0.3.7
+langchain-core==0.2.43
+langchain-community==0.3.5
+langchain-openai==0.2.5
+langchain-text-splitters==0.3.2
+langchain-milvus==0.1.2
 
 # 嵌入模型
 sentence-transformers
 langchain-huggingface
 huggingface-hub
 
-# LLM 提供商
-openai==1.54.5
-httpx==0.28.1
+# LLM 提供商 - 降低版本以兼容 langchain
+openai==1.54.0
+httpx==0.27.0
 
 # 缓存
 redis==5.2.1
