@@ -6,11 +6,11 @@ services:
     autoDeploy: true
     rootDir: .
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    startCommand: python start_render.py
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.7
+        value: "3.12"
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: RATE_LIMIT_ENABLED
@@ -25,3 +25,7 @@ services:
         sync: false
       - key: VISION_API_KEY
         sync: false
+      - key: RAG_INIT_ON_STARTUP
+        value: "false"
+      - key: MCP_STARTUP_TIMEOUT_SECONDS
+        value: "10"
