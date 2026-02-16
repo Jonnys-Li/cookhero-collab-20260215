@@ -59,6 +59,19 @@ def _load_cors_origins() -> list[str]:
     ]
 
 
+def _load_cors_origin_regex() -> str | None:
+    """
+    Load optional CORS origin regex from environment.
+
+    If not configured, allow Vercel preview/production subdomains by default
+    so frontend redeploys do not break cross-origin requests.
+    """
+    raw = os.getenv("CORS_ALLOW_ORIGIN_REGEX", "").strip()
+    if raw:
+        return raw
+    return r"^https://.*\.vercel\.app$"
+
+
 async def _run_non_blocking_startup_tasks() -> None:
     """Run non-critical startup tasks in background to avoid blocking port bind."""
     from app.agent import setup_mcp_servers
@@ -159,7 +172,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_load_cors_origins(),
-    allow_origin_regex=os.getenv("CORS_ALLOW_ORIGIN_REGEX"),
+    allow_origin_regex=_load_cors_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
