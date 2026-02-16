@@ -10,7 +10,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from threading import Lock
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownHeaderTextSplitter
@@ -21,14 +21,6 @@ from app.config import (
     settings,
 )
 from app.database.document_repository import document_repository
-from app.rag.embeddings.embedding_factory import get_embedding_model
-from app.rag.vector_stores.vector_store_factory import get_vector_store
-from app.rag.pipeline.document_processor import document_processor
-from app.rag.pipeline.retrieval import RetrievalOptimizationModule
-from app.rag.pipeline.generation import GenerationIntegrationModule
-from app.rag.pipeline.metadata_filter import MetadataFilterExtractor
-from app.rag.rerankers.base import BaseReranker
-from app.rag.cache import CacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +58,52 @@ class RAGService:
         logger.info("Initializing RAGService")
         self.config = config or DefaultRAGConfig
         self.db_config = settings.database
-        self.embeddings = get_embedding_model(self.config)
+        self._dependency_error: str | None = None
 
-        self.retrieval_modules: Dict[str, RetrievalOptimizationModule] = {}
-        self.reranker: BaseReranker | None = None
+        # Initialize optional heavy RAG dependencies lazily with graceful fallback.
+        try:
+            from app.rag.embeddings.embedding_factory import get_embedding_model
+            from app.rag.vector_stores.vector_store_factory import get_vector_store
+            from app.rag.pipeline.document_processor import document_processor
+            from app.rag.pipeline.retrieval import RetrievalOptimizationModule
+            from app.rag.pipeline.generation import GenerationIntegrationModule
+            from app.rag.pipeline.metadata_filter import MetadataFilterExtractor
+            from app.rag.cache import CacheManager
+
+            self._get_vector_store = get_vector_store
+            self._document_processor = document_processor
+            self._retrieval_module_cls = RetrievalOptimizationModule
+            self._cache_manager_cls = CacheManager
+
+            self.embeddings = get_embedding_model(self.config)
+        except Exception as exc:
+            self._dependency_error = f"{exc.__class__.__name__}: {exc}"
+            logger.warning(
+                "RAG dependencies unavailable; running without retrieval features. %s",
+                self._dependency_error,
+            )
+            self.embeddings = None
+            self.retrieval_modules = {}
+            self.reranker = None
+            self.generation_module = None
+            self.metadata_filter_extractor = None
+            self.cache_manager = None
+            # Keep splitter available so non-RAG flows remain functional.
+            self._md_splitter = MarkdownHeaderTextSplitter(
+                headers_to_split_on=[("#", "header_1"), ("##", "header_2")],
+                strip_headers=False,
+            )
+            self._initialized = True
+            logger.info("RAGService initialized in degraded mode")
+            return
+
+        self.retrieval_modules = {}
+        self.reranker = None
 
         # Initialize vector store connections (no local file loading)
         self._init_vector_stores()
 
         self.generation_module = GenerationIntegrationModule(llm_type="fast")
-
         self.metadata_filter_extractor = MetadataFilterExtractor(llm_type="fast")
 
         if self.config.reranker.enabled:
@@ -85,13 +113,14 @@ class RAGService:
                 self.reranker = SiliconFlowReranker(self.config.reranker)
             else:
                 logger.warning(
-                    f"Reranker type '{self.config.reranker.type}' not recognized. Reranking disabled."
+                    "Reranker type '%s' not recognized. Reranking disabled.",
+                    self.config.reranker.type,
                 )
 
         # Initialize cache manager if enabled
-        self.cache_manager: CacheManager | None = None
+        self.cache_manager = None
         if self.config.cache.enabled:
-            self.cache_manager = CacheManager(
+            self.cache_manager = self._cache_manager_cls(
                 redis_host=self.db_config.redis.host,
                 redis_port=self.db_config.redis.port,
                 redis_db=self.db_config.redis.db,
@@ -129,14 +158,14 @@ class RAGService:
             if not collection:
                 continue
             try:
-                vector_store = get_vector_store(
+                vector_store = self._get_vector_store(
                     milvus_config=self.db_config.milvus,
                     collection_name=collection,
                     embeddings=self.embeddings,
                     chunks=[],
                     force_rebuild=False,
                 )
-                retrieval_module = RetrievalOptimizationModule(
+                retrieval_module = self._retrieval_module_cls(
                     vectorstore=vector_store,
                     score_threshold=self.config.retrieval.score_threshold,
                     default_ranker_type=self.config.retrieval.ranker_type,
@@ -160,6 +189,9 @@ class RAGService:
         conversation_id: str | None = None,
     ) -> RetrievalResult:
         """Perform query rewriting and retrieval only, without LLM generation."""
+        if self._dependency_error:
+            raise RuntimeError(f"RAG dependencies unavailable: {self._dependency_error}")
+
         if not self.retrieval_modules:
             raise RuntimeError("RAG Service is not properly initialized.")
 
@@ -197,7 +229,9 @@ class RAGService:
         )
 
         # Post-process: fetch parent documents from database
-        processed_docs = await document_processor.post_process_retrieval(reranked_docs)
+        processed_docs = await self._document_processor.post_process_retrieval(
+            reranked_docs
+        )
 
         # Build context string
         context_parts = [doc.page_content for doc in processed_docs]
@@ -391,7 +425,9 @@ class RAGService:
         }
 
         # Create chunks
-        chunks = document_processor.create_chunks(document_id, content, metadata)
+        if self._dependency_error:
+            raise RuntimeError(f"RAG dependencies unavailable: {self._dependency_error}")
+        chunks = self._document_processor.create_chunks(document_id, content, metadata)
 
         if chunks:
             retrieval_module = self.retrieval_modules["personal"]

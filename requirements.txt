@@ -15,6 +15,7 @@ aiosqlite>=0.19.0
 
 # 向量数据库
 pymilvus>=2.3.0
+langchain-milvus>=0.2.1
 
 # LangChain 生态系统 - 让 pip 自动解决依赖
 langchain>=0.3.0
