@@ -20,7 +20,6 @@ from app.config import settings
 from app.database.session import init_db, close_db
 from app.database.document_repository import DocumentRepository
 from app.services.auth_service import auth_service
-from app.services.rag_service import rag_service_instance
 from app.security.middleware.rate_limiter import rate_limiter
 from app.security.sanitizer import setup_secure_logging
 from app.security.audit import audit_logger
@@ -95,17 +94,21 @@ async def lifespan(app: FastAPI):
     await DocumentRepository.init_all_metadata_cache()
     logger.info("Metadata cache initialized.")
 
-    # Clear Redis cache on startup and initialize rate limiter
-    if (
-        rag_service_instance.cache_manager
-        and rag_service_instance.cache_manager.redis_client
-    ):
-        # Initialize rate limiter with Redis client
-        rate_limiter.set_redis(rag_service_instance.cache_manager.redis_client)
-        logger.info("Rate limiter initialized with Redis.")
-        # Initialize auth service with Redis client for login tracking
-        auth_service.set_redis(rag_service_instance.cache_manager.redis_client)
-        logger.info("Auth service initialized with Redis for login tracking.")
+    # Keep startup lightweight for cloud deploys.
+    # Heavy RAG initialization is deferred until first retrieval request by default.
+    if os.getenv("RAG_INIT_ON_STARTUP", "false").lower() == "true":
+        from app.services.rag_service import get_rag_service
+
+        rag_service = get_rag_service()
+        if rag_service.cache_manager and rag_service.cache_manager.redis_client:
+            # Initialize rate limiter with Redis client
+            rate_limiter.set_redis(rag_service.cache_manager.redis_client)
+            logger.info("Rate limiter initialized with Redis.")
+            # Initialize auth service with Redis client for login tracking
+            auth_service.set_redis(rag_service.cache_manager.redis_client)
+            logger.info("Auth service initialized with Redis for login tracking.")
+    else:
+        logger.info("Skipping eager RAG init at startup (RAG_INIT_ON_STARTUP=false).")
 
     yield
     # Shutdown

@@ -9,6 +9,7 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
+from threading import Lock
 from typing import Dict, List, Optional
 
 from langchain_core.documents import Document
@@ -514,5 +515,28 @@ class RAGService:
         return sources
 
 
-# Instantiate the singleton service
-rag_service_instance = RAGService()
+_rag_service_instance: RAGService | None = None
+_rag_service_lock = Lock()
+
+
+def get_rag_service() -> RAGService:
+    """Get RAG service with lazy initialization."""
+    global _rag_service_instance
+
+    if _rag_service_instance is None:
+        with _rag_service_lock:
+            if _rag_service_instance is None:
+                _rag_service_instance = RAGService()
+
+    return _rag_service_instance
+
+
+class _LazyRAGServiceProxy:
+    """Proxy that delays heavy RAG initialization until first actual use."""
+
+    def __getattr__(self, name: str):
+        return getattr(get_rag_service(), name)
+
+
+# Backward-compatible exported handle used across services.
+rag_service_instance = _LazyRAGServiceProxy()
