@@ -116,10 +116,15 @@ class MetadataFilterExtractor:
     ):
         self._llm_type = llm_type
         self._provider = provider or LLMProvider(settings.llm)
-        # Use tracked invoker for usage statistics
-        self._llm = self._provider.create_invoker(llm_type, temperature=0.0)
+        self._llm = None
 
         self.reference_material = self._load_reference_material()
+
+    def _get_llm(self):
+        if self._llm is None:
+            # Use tracked invoker for usage statistics
+            self._llm = self._provider.create_invoker(self._llm_type, temperature=0.0)
+        return self._llm
 
     async def build_filter_expression(
         self,
@@ -135,6 +140,7 @@ class MetadataFilterExtractor:
 
         metadata_schema = self._summarize_metadata(metadata_catalog)
         try:
+            llm = self._get_llm()
             template = FILTER_EXPRESSION_PROMPT.format_prompt(
                 query=query,
                 reference_material=self.reference_material,
@@ -142,7 +148,7 @@ class MetadataFilterExtractor:
             )
             # Use llm_context for usage tracking
             with llm_context(self.MODULE_NAME, user_id, conversation_id):
-                response = await self._llm.ainvoke(list(template.messages))
+                response = await llm.ainvoke(list(template.messages))
             content = response.content.strip()
             debugc = content
 

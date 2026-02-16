@@ -74,7 +74,7 @@ class VisionProvider:
         from app.llm.provider import LLMProvider
 
         self._provider = LLMProvider(settings.llm)
-        self._invoker = self._provider.create_invoker(llm_type="vision")
+        self._invoker = None
         self._callbacks = get_usage_callbacks()
 
     @property
@@ -162,6 +162,9 @@ class VisionProvider:
         )
 
         try:
+            if self._invoker is None:
+                self._invoker = self._provider.create_invoker(llm_type="vision")
+
             # Use llm_context for usage tracking
             with llm_context(self.MODULE_NAME, user_id, conversation_id):
                 response = await self._invoker.ainvoke(

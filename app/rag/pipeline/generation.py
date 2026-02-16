@@ -80,8 +80,13 @@ class GenerationIntegrationModule:
         """
         self._llm_type = llm_type
         self._provider = provider or LLMProvider(settings.llm)
-        # Use tracked invoker for usage statistics
-        self._llm = self._provider.create_invoker(llm_type, temperature=0.0)
+        self._llm = None
+
+    def _get_llm(self):
+        if self._llm is None:
+            # Use tracked invoker for usage statistics
+            self._llm = self._provider.create_invoker(self._llm_type, temperature=0.0)
+        return self._llm
 
     async def rewrite_query(
         self,
@@ -92,10 +97,11 @@ class GenerationIntegrationModule:
         """
         Uses the LLM to rewrite a vague query into a more specific one for better retrieval.
         """
+        llm = self._get_llm()
         template = REWRITE_PROMPT.format_prompt(query=query)
         # Use llm_context for usage tracking
         with llm_context(self.MODULE_NAME, user_id, conversation_id):
-            response = await self._llm.ainvoke(list(template.messages))
+            response = await llm.ainvoke(list(template.messages))
         rewritten_query = response.content.strip()
 
         if rewritten_query != query:

@@ -70,8 +70,13 @@ class QueryRewriter:
     ):
         self._llm_type = llm_type
         self._provider = provider or LLMProvider(settings.llm)
-        # Use tracked invoker for usage statistics
-        self._llm = self._provider.create_invoker(llm_type, temperature=0.0)
+        self._llm = None
+
+    def _get_llm(self):
+        if self._llm is None:
+            # Use tracked invoker for usage statistics
+            self._llm = self._provider.create_invoker(self._llm_type, temperature=0.0)
+        return self._llm
 
     async def rewrite(
         self,
@@ -86,12 +91,13 @@ class QueryRewriter:
         debugc = ""
 
         try:
+            llm = self._get_llm()
             template = HISTORY_REWRITE_PROMPT.format_prompt(
                 history=history_text,
             )
             # Use llm_context for usage tracking
             with llm_context(self.MODULE_NAME, user_id, conversation_id):
-                response = await self._llm.ainvoke(list(template.messages))
+                response = await llm.ainvoke(list(template.messages))
             content = response.content.strip()
             debugc = content
 

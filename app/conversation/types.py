@@ -1,11 +1,14 @@
 # app/conversation/types.py
 """Data classes for conversation processing."""
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
 
-from app.tools.web_search import WebSearchResult
-from app.vision import VisionAnalysisResult
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from app.tools.web_search import WebSearchResult
+    from app.vision import VisionAnalysisResult
 
 
 @dataclass

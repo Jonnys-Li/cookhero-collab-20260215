@@ -183,13 +183,10 @@ class WebSearchTool:
         # Create decision tool
         self._decision_tool = self._create_decision_tool()
 
-        # Create LLM with callbacks and bind tools
-        # Use tracked invoker for usage statistics
+        # Initialize LLM lazily to avoid import-time hard failures when optional
+        # LLM dependencies or credentials are not ready yet.
         self._callbacks = get_usage_callbacks()
-        base_llm = self._provider.create_llm(llm_type, temperature=0.3)
-        self._llm = base_llm.bind_tools(
-            [self._decision_tool], tool_choice="make_search_decision"
-        )
+        self._llm = None
 
     def _create_decision_tool(self):
         """Create the tool for search decision using @tool decorator."""
@@ -218,6 +215,17 @@ class WebSearchTool:
             }
 
         return make_search_decision
+
+    def _ensure_llm(self):
+        """Lazy-create decision LLM client."""
+        if self._llm is not None:
+            return self._llm
+
+        base_llm = self._provider.create_llm(self._llm_type, temperature=0.3)
+        self._llm = base_llm.bind_tools(
+            [self._decision_tool], tool_choice="make_search_decision"
+        )
+        return self._llm
 
     @property
     def tavily_client(self) -> Optional[TavilyClient]:
@@ -250,7 +258,17 @@ class WebSearchTool:
         Returns:
             WebSearchDecision with confidence score and search parameters
         """
+        if not self.enabled:
+            return WebSearchDecision(
+                confidence=0,
+                search_params=None,
+                reason="Web search is disabled",
+                raw={},
+            )
+
         try:
+            llm = self._ensure_llm()
+
             # Format document summary
             document_summary_str = ""
             if document_summary:
@@ -264,7 +282,7 @@ class WebSearchTool:
             )
             # Use llm_context for usage tracking
             with llm_context(self.MODULE_NAME, user_id, conversation_id):
-                response = await self._llm.with_config(
+                response = await llm.with_config(
                     callbacks=self._callbacks
                 ).ainvoke(prompt.messages)
 

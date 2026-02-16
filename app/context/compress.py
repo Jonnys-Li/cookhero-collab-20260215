@@ -107,8 +107,13 @@ class ContextCompressor:
         self.history_text_max_len = history_text_max_len
 
         self._provider = provider or LLMProvider(settings.llm)
-        # Use tracked invoker for usage statistics
-        self._llm = self._provider.create_invoker(llm_type, temperature=0.3)
+        self._llm = None
+
+    def _get_llm(self):
+        if self._llm is None:
+            # Use tracked invoker for usage statistics
+            self._llm = self._provider.create_invoker(self._llm_type, temperature=0.3)
+        return self._llm
 
     async def maybe_compress(
         self,
@@ -261,9 +266,10 @@ class ContextCompressor:
             )
 
         try:
+            llm = self._get_llm()
             # Use llm_context for usage tracking
             with llm_context(self.MODULE_NAME, user_id, conversation_id):
-                response = await self._llm.ainvoke(
+                response = await llm.ainvoke(
                     [
                         SystemMessage(content=COMPRESSION_SYSTEM_PROMPT),
                         HumanMessage(content=user_prompt),
