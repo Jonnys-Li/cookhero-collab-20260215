@@ -6,7 +6,7 @@ services:
     autoDeploy: true
     rootDir: .
     buildCommand: pip install -r requirements.txt
-    startCommand: python start_render.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
@@ -17,6 +17,14 @@ services:
         value: "false"
       - key: CORS_ALLOW_ORIGINS
         value: "https://frontend-one-gray-39.vercel.app,http://localhost:5173"
+      - key: CORS_ALLOW_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
+      - key: RAG_INIT_ON_STARTUP
+        value: "false"
+      - key: MCP_STARTUP_TIMEOUT_SECONDS
+        value: "15"
+      - key: METADATA_CACHE_TIMEOUT_SECONDS
+        value: "20"
       - key: OPENAI_IMAGE_API_KEY
         sync: false
       - key: LLM_API_KEY
@@ -25,7 +33,7 @@ services:
         sync: false
       - key: VISION_API_KEY
         sync: false
-      - key: RAG_INIT_ON_STARTUP
-        value: "false"
-      - key: MCP_STARTUP_TIMEOUT_SECONDS
-        value: "10"
+      - key: WEB_SEARCH_API_KEY
+        sync: false
+      - key: AMAP_API_KEY
+        sync: false
