@@ -1,6 +1,8 @@
 # app/main.py
+import asyncio
 from contextlib import asynccontextmanager
 import os
+import secrets
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -57,18 +59,54 @@ def _load_cors_origins() -> list[str]:
     ]
 
 
+async def _run_non_blocking_startup_tasks() -> None:
+    """Run non-critical startup tasks in background to avoid blocking port bind."""
+    from app.agent import setup_mcp_servers
+
+    mcp_timeout = float(os.getenv("MCP_STARTUP_TIMEOUT_SECONDS", "15"))
+    metadata_timeout = float(os.getenv("METADATA_CACHE_TIMEOUT_SECONDS", "20"))
+
+    logger.info("Registering MCP servers in background...")
+    try:
+        await asyncio.wait_for(setup_mcp_servers(), timeout=mcp_timeout)
+        logger.info("MCP servers registered.")
+    except asyncio.TimeoutError:
+        logger.warning("MCP registration timed out after %.1fs; continuing.", mcp_timeout)
+    except Exception as e:
+        logger.warning(f"Failed to register MCP servers: {e}")
+
+    logger.info("Initializing metadata cache in background...")
+    try:
+        await asyncio.wait_for(
+            DocumentRepository.init_all_metadata_cache(),
+            timeout=metadata_timeout,
+        )
+        logger.info("Metadata cache initialized.")
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Metadata cache initialization timed out after %.1fs; continuing.",
+            metadata_timeout,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to initialize metadata cache: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
+    background_startup_task: asyncio.Task | None = None
+
     # Startup
 
     # Security check: Validate JWT secret key
     if not settings.JWT_SECRET_KEY:
-        logger.error("SECURITY ERROR: JWT_SECRET_KEY environment variable is not set!")
-        logger.error(
-            "Please set JWT_SECRET_KEY in your .env file or environment variables."
+        generated_secret = secrets.token_urlsafe(48)
+        settings.JWT_SECRET_KEY = generated_secret
+        auth_service.secret_key = generated_secret
+        logger.warning(
+            "JWT_SECRET_KEY is not set. Generated an ephemeral key for this process. "
+            "Set JWT_SECRET_KEY in Render env for stable login sessions."
         )
-        raise RuntimeError("JWT_SECRET_KEY must be configured for security")
 
     logger.info("Initializing database...")
     await init_db()
@@ -81,18 +119,8 @@ async def lifespan(app: FastAPI):
     setup_agent_module()
     logger.info("Agent module initialized.")
 
-    # Register MCP servers (async)
-    logger.info("Registering MCP servers...")
-    try:
-        await setup_mcp_servers()
-        logger.info("MCP servers registered.")
-    except Exception as e:
-        logger.warning(f"Failed to register MCP servers: {e}")
-
-    # Initialize metadata cache (load all global + user metadata at startup)
-    logger.info("Initializing metadata cache...")
-    await DocumentRepository.init_all_metadata_cache()
-    logger.info("Metadata cache initialized.")
+    # Non-critical tasks run in background so server can bind port quickly on cloud.
+    background_startup_task = asyncio.create_task(_run_non_blocking_startup_tasks())
 
     # Keep startup lightweight for cloud deploys.
     # Heavy RAG initialization is deferred until first retrieval request by default.
@@ -112,6 +140,9 @@ async def lifespan(app: FastAPI):
 
     yield
     # Shutdown
+    if background_startup_task and not background_startup_task.done():
+        background_startup_task.cancel()
+
     logger.info("Closing database connections...")
     await close_db()
     logger.info("Database connections closed.")
