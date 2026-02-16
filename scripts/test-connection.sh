@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # CookHero 前后端连接测试脚本
 # 用于验证前端和后端的 API 连接是否正常
 
-set -e
+set -euo pipefail
 
 # 颜色定义
 RED='\033[0;31m'
@@ -12,8 +12,10 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # 默认后端 URL（可以被命令行参数覆盖）
-BACKEND_URL="${1:-https://cookhero-backend.onrender.com}"
+BACKEND_URL="${1:-https://cookhero-collab-20260215.onrender.com}"
+FRONTEND_URL="${2:-https://frontend-one-gray-39.vercel.app}"
 API_BASE="${BACKEND_URL}/api/v1"
+TOKEN=""
 
 echo "========================================="
 echo "CookHero 连接测试"
@@ -22,7 +24,7 @@ echo ""
 echo "测试目标: ${API_BASE}"
 echo ""
 
-# 测试函数
+# 测试函数（API_BASE 前缀）
 test_endpoint() {
     local name=$1
     local endpoint=$2
@@ -41,21 +43,42 @@ test_endpoint() {
     fi
 }
 
-# 1. 测试根路径
+# 测试函数（完整 URL）
+test_full_url() {
+    local name=$1
+    local full_url=$2
+    local expected_code=${3:-200}
+
+    echo -n "测试 ${name}... "
+
+    local status_code
+    status_code=$(curl -s -o /dev/null -w "%{http_code}" "${full_url}")
+
+    if [ "$status_code" = "$expected_code" ]; then
+        echo -e "${GREEN}✓ PASS${NC} (HTTP ${status_code})"
+        return 0
+    else
+        echo -e "${RED}✗ FAIL${NC} (HTTP ${status_code}, expected ${expected_code})"
+        return 1
+    fi
+}
+
+# 1. 测试基础连通性
 echo "--- 基础连接测试 ---"
-test_endpoint "根路径健康检查" "/" "200"
+test_full_url "后端根路径" "${BACKEND_URL}/" "200"
+test_endpoint "API 鉴权闸门" "/health" "401"
 echo ""
 
 # 2. 测试 API 文档可访问性
 echo "--- API 文档测试 ---"
-test_endpoint "Swagger 文档" "/docs" "200"
+test_full_url "Swagger 文档" "${BACKEND_URL}/docs" "200"
 echo ""
 
 # 3. 测试 API 端点
 echo "--- API 端点测试 ---"
 test_endpoint "登录端点 (POST)" "/auth/login" "405"  # Method not allowed for GET
 test_endpoint "对话列表 (未授权)" "/conversation" "401"
-test_endpoint "用户信息 (未授权)" "/user/me" "401"
+test_endpoint "用户信息 (未授权)" "/user/profile" "401"
 echo ""
 
 # 4. 测试登录功能
@@ -77,7 +100,7 @@ echo ""
 if [ -n "$TOKEN" ]; then
     echo "--- 认证请求测试 ---"
     echo -n "测试获取用户信息... "
-    user_response=$(curl -s -X GET "${API_BASE}/user/me" \
+    user_response=$(curl -s -X GET "${API_BASE}/user/profile" \
         -H "Authorization: Bearer ${TOKEN}")
 
     if echo "$user_response" | grep -q "username"; then
@@ -92,7 +115,7 @@ fi
 echo "--- CORS 配置测试 ---"
 echo -n "检查 CORS 响应头... "
 cors_headers=$(curl -s -I -X OPTIONS "${API_BASE}/auth/login" \
-    -H "Origin: https://frontend-one-gray-39.vercel.app" \
+    -H "Origin: ${FRONTEND_URL}" \
     -H "Access-Control-Request-Method: POST" \
     2>&1 | grep -i "access-control-allow-origin" || true)
 
@@ -112,13 +135,16 @@ echo ""
 echo "如果所有测试都通过，说明后端 API 工作正常。"
 echo ""
 echo "下一步："
-echo "1. 在 Vercel 中配置环境变量:"
-echo "   VITE_API_BASE=${API_BASE}"
+echo "1. Vercel 生产环境推荐保留:"
+echo "   VITE_API_BASE=/api/v1"
 echo ""
-echo "2. 在前端检查 API 配置:"
+echo "2. 确认 frontend/vercel.json 已将 /api/v1/* 转发到 Render 后端。"
+echo ""
+echo "3. 在前端检查 API 配置:"
 echo "   打开浏览器控制台，执行: console.log(import.meta.env.VITE_API_BASE)"
-echo "   应该显示: ${API_BASE}"
+echo "   生产环境应显示: /api/v1"
 echo ""
-echo "3. 如果遇到 CORS 错误，检查后端环境变量:"
-echo "   CORS_ALLOW_ORIGINS=https://frontend-one-gray-39.vercel.app"
+echo "4. 如果遇到 CORS 错误，检查后端环境变量:"
+echo "   CORS_ALLOW_ORIGINS=${FRONTEND_URL},http://localhost:5173"
+echo "   CORS_ALLOW_ORIGIN_REGEX=^https://.*\\.vercel\\.app$"
 echo ""

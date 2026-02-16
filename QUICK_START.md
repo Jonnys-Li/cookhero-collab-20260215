@@ -1,84 +1,112 @@
-# CookHero 部署快速参考
+# CookHero 快速部署参考（阶段二）
 
-## 🚀 快速部署 (5 分钟)
+## 目标
 
-### 1️⃣ Render 后端部署
+在 5-10 分钟内确认生产链路可持续工作：
 
-直接推送代码到 GitHub，然后在 Render 创建 Web Service：
+- Git push 到 `main` 可触发 Vercel 自动部署
+- 前端走 `/api/v1` 同域代理访问 Render
+- 烟测脚本可验证核心登录后链路
 
-```
-https://dashboard.render.com/new/web-service
-```
+## 1. 一次性配置（仅需做一次）
 
-**关键配置**：
-- Runtime: Python 3
-- Build Command: `pip install -r requirements.txt`
-- Start Command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+### 1.1 Vercel 项目
 
-**环境变量** (复制粘贴到 Render)：
+确认以下配置:
+
+- Git Repository: `Jonnys-Li/cookhero-collab-20260215`
+- Production Branch: `main`
+- Root Directory: `frontend`
+- Install Command: `npm ci`
+- Build Command: `npm run build`
+- Output Directory: `dist`
+- Env (Production + Preview):
+- 若无法绑定仓库，先安装并授权 Vercel GitHub App: `https://github.com/apps/vercel`
+
 ```bash
-PYTHON_VERSION=3.12.7
-JWT_SECRET_KEY=cookhero_jwt_secret_key_2024_secure_random_string
-RATE_LIMIT_ENABLED=false
+VITE_API_BASE=/api/v1
+```
+
+### 1.2 Render 后端
+
+确认关键变量:
+
+```bash
 CORS_ALLOW_ORIGINS=https://frontend-one-gray-39.vercel.app,http://localhost:5173
+CORS_ALLOW_ORIGIN_REGEX=^https://.*\.vercel\.app$
+JWT_SECRET_KEY=<稳定强随机值>
 ```
 
-**API 密钥** (在 Render 中手动添加)：
-```bash
-LLM_API_KEY=<你的密钥>
-FAST_LLM_API_KEY=<你的密钥>
-VISION_API_KEY=<你的密钥>
-```
+## 2. 标准发布
 
-### 2️⃣ Vercel 前端配置
+1. 合并代码到 `main`
+2. 等待 Vercel 自动部署
+3. 执行快速验证
 
-1. 打开 [Vercel Dashboard](https://vercel.com/dashboard)
-2. 进入项目 Settings → Environment Variables
-3. 添加环境变量：
-
-| Key | Value | Environments |
-|-----|-------|--------------|
-| `VITE_API_BASE` | `https://[你的后端URL].onrender.com/api/v1` | Production, Preview |
-
-4. 保存后重新部署
-
-### 3️⃣ 验证连接
+## 3. 快速验证命令
 
 ```bash
-# 测试后端
-curl https://[你的后端URL].onrender.com/
+# 前端代理是否生效（应返回 JSON 401，而不是 HTML）
+curl -i https://frontend-one-gray-39.vercel.app/api/v1/health
 
-# 应返回: {"message":"Welcome to CookHero API!"}
+# 登录路由是否命中后端（GET 应返回 405）
+curl -i https://frontend-one-gray-39.vercel.app/api/v1/auth/login
 
-# 运行完整测试
-bash scripts/test-connection.sh https://[你的后端URL].onrender.com
+# 后端根路径是否可用（应返回 200）
+curl -i https://cookhero-collab-20260215.onrender.com/
 ```
 
-## 📋 配置清单
+## 4. 脚本验证
 
-### 已完成的配置 ✅
+### 4.1 后端连通脚本
 
-- [x] 修复 `requirements.txt` - 所有依赖添加版本号
-- [x] 更新 `render.yaml` - 后端部署配置
-- [x] 更新 `.env.example` - 前端环境变量说明
-- [x] 创建 `DEPLOYMENT_GUIDE.md` - 完整部署指南
-- [x] 创建 `scripts/test-connection.sh` - 连接测试脚本
+```bash
+bash scripts/test-connection.sh \
+  https://cookhero-collab-20260215.onrender.com \
+  https://frontend-one-gray-39.vercel.app
+```
 
-### 需要你完成的操作 ⚠️
+### 4.2 生产烟测脚本
 
-- [ ] 在 Render 上创建 Web Service 并配置环境变量
-- [ ] 在 Vercel 上配置 `VITE_API_BASE` 环境变量
-- [ ] 触发 Vercel 重新部署
-- [ ] 运行测试脚本验证连接
+需要准备 smoke 账号:
 
-## 🔍 故障排查
+```bash
+FRONTEND_URL=https://frontend-one-gray-39.vercel.app \
+BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
+SMOKE_USERNAME=<smoke_user> \
+SMOKE_PASSWORD=<smoke_password> \
+./scripts/smoke-prod.sh
+```
 
-| 问题 | 解决方案 |
-|------|----------|
-| CORS 错误 | 检查 `CORS_ALLOW_ORIGINS` 是否包含前端 URL |
-| 401 错误 | 检查 JWT token 是否正确发送 |
-| 连接失败 | 在浏览器控制台检查 `import.meta.env.VITE_API_BASE` 值 |
+## 5. GitHub Actions 监控
 
-## 📞 需要帮助？
+工作流: `.github/workflows/prod-smoke.yml`
 
-查看完整指南：[DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)
+触发方式:
+
+- `push` 到 `main`
+- 手动触发 `workflow_dispatch`
+- 定时（每 30 分钟）
+
+需要配置 Secrets:
+
+- `PROD_FRONTEND_URL`
+- `PROD_BACKEND_URL`
+- `SMOKE_USERNAME`
+- `SMOKE_PASSWORD`
+
+## 6. 应急发布
+
+仅当 Git 自动部署异常时使用:
+
+```bash
+cd frontend
+vercel --prod --yes
+```
+
+发布后必须补跑烟测。
+
+## 7. 详细文档
+
+- 完整部署说明: `DEPLOYMENT_GUIDE.md`
+- 运维执行手册: `docs/OPS_RUNBOOK.md`
