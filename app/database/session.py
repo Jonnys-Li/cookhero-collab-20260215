@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.exc import OperationalError
 
 from app.config import settings
 from app.database.models import Base
@@ -113,8 +114,27 @@ async def close_background_db() -> None:
 
 async def init_db() -> None:
     """Initialize database schema (create tables if not exist)."""
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except OperationalError as exc:
+        err_text = str(exc).lower()
+        is_sqlite_dup_index = (
+            settings.database.postgres.host == "sqlite"
+            and "index" in err_text
+            and "already exists" in err_text
+            and "ix_diet_log_items_log_id" in err_text
+        )
+        if not is_sqlite_dup_index:
+            raise
+
+        logger.warning(
+            "Detected legacy duplicate SQLite index 'ix_diet_log_items_log_id' during init. "
+            "Repairing index and retrying schema initialization."
+        )
+        async with _engine.begin() as conn:
+            await conn.exec_driver_sql("DROP INDEX IF EXISTS ix_diet_log_items_log_id")
+            await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables initialized.")
 
 
