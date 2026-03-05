@@ -125,6 +125,25 @@ class LogFromTextRequest(BaseModel):
     meal_type: Optional[str] = Field(None, description="餐次类型（可自动推断）")
 
 
+class RecognizeMealFromImageRequest(BaseModel):
+    """Request for recognizing meal dishes from images."""
+
+    images: List[ImageData] = Field(..., min_length=1, max_length=4)
+    context_text: Optional[str] = Field(
+        None,
+        max_length=1000,
+        description="可选补充描述（如烹饪方式、分量）",
+    )
+
+
+class RecognizeMealFromImageResponse(BaseModel):
+    """Response for meal recognition without side effects."""
+
+    dishes: List[DishSchema] = Field(default_factory=list)
+    message: str
+    source: str = DataSource.AI_IMAGE.value
+
+
 class UpdateLogRequest(BaseModel):
     """Request for updating a diet log."""
 
@@ -310,6 +329,34 @@ async def mark_meal_eaten(
         raise HTTPException(status_code=404, detail="餐次不存在或无权访问")
 
     return log
+
+
+@router.post(
+    "/diet/meals/recognize-image",
+    response_model=RecognizeMealFromImageResponse,
+)
+async def recognize_meal_from_image(
+    payload: RecognizeMealFromImageRequest,
+    request: Request,
+) -> RecognizeMealFromImageResponse:
+    """
+    Recognize meal dishes from photos and return parsed dishes only.
+
+    This endpoint does not create or update any meal/log record.
+    """
+    user_id = get_user_id(request)
+    images = [img.model_dump() for img in payload.images]
+
+    try:
+        result = await diet_service.recognize_meal_from_images(
+            user_id=user_id,
+            images=images,
+            context_text=payload.context_text,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return RecognizeMealFromImageResponse(**result)
 
 
 # ==================== Log Endpoints ====================

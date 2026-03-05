@@ -15,6 +15,8 @@ import type {
   UpdateMealRequest,
   CreateLogRequest,
   LogFromTextRequest,
+  RecognizeMealFromImageRequest,
+  RecognizeMealFromImageResponse,
   MarkMealEatenRequest,
   UpdateLogRequest,
   UpdatePreferenceRequest,
@@ -100,6 +102,20 @@ export async function markMealEaten(
   data: MarkMealEatenRequest
 ): Promise<DietLog> {
   return apiPost<DietLog>(`${DIET_BASE}/meals/${mealId}/mark-eaten`, data, token);
+}
+
+/**
+ * Recognize meal dishes from image(s) without saving
+ */
+export async function recognizeMealFromImage(
+  token: string,
+  data: RecognizeMealFromImageRequest
+): Promise<RecognizeMealFromImageResponse> {
+  return apiPost<RecognizeMealFromImageResponse>(
+    `${DIET_BASE}/meals/recognize-image`,
+    data,
+    token
+  );
 }
 
 // ==================== Log APIs ====================

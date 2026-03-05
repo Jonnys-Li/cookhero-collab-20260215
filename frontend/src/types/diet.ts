@@ -172,6 +172,17 @@ export interface LogFromTextRequest {
   meal_type?: string;
 }
 
+export interface RecognizeMealFromImageRequest {
+  images: ImageData[];
+  context_text?: string;
+}
+
+export interface RecognizeMealFromImageResponse {
+  dishes: Dish[];
+  message: string;
+  source: string;
+}
+
 export interface MarkMealEatenRequest {
   log_date?: string;
 }

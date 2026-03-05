@@ -5,10 +5,11 @@
 提供饮食计划和记录的业务逻辑处理。
 """
 
+import json
 import logging
 from copy import deepcopy
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from app.diet.database.repository import diet_repository, DietRepository
 from app.diet.database.models import (
@@ -262,33 +263,52 @@ class DietService:
         ]
         return self._build_log_dict(items_dict)
 
-    async def log_from_text(
+    @staticmethod
+    def _parse_ai_json(content: str) -> dict:
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0]
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0]
+        return json.loads(content.strip())
+
+    @staticmethod
+    def _normalize_parsed_items(items: Any) -> List[dict]:
+        if not isinstance(items, list):
+            return []
+
+        normalized: List[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            food_name = str(item.get("food_name") or "").strip()
+            if not food_name:
+                continue
+
+            normalized.append(
+                {
+                    "food_name": food_name,
+                    "weight_g": item.get("weight_g"),
+                    "unit": item.get("unit"),
+                    "calories": item.get("calories"),
+                    "protein": item.get("protein"),
+                    "fat": item.get("fat"),
+                    "carbs": item.get("carbs"),
+                }
+            )
+        return normalized
+
+    async def _parse_diet_input_with_ai(
         self,
         user_id: str,
-        text: str,
-        log_date: Optional[date] = None,
-        meal_type: Optional[str] = None,
+        text: str = "",
         images: Optional[list] = None,
     ) -> dict:
-        """从文字或图片描述记录饮食（AI 解析）
-
-        示例输入：
-        - "今天中午吃了牛肉面和一个苹果"
-        - "早餐：两个鸡蛋、一杯牛奶"
-        """
-        import json
         from app.config import settings
         from app.llm.provider import LLMProvider
 
         provider = LLMProvider(settings.llm)
         invoker = provider.create_invoker(llm_type="fast")
-
-        def parse_ai_json(content: str) -> dict:
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            return json.loads(content.strip())
 
         parsed = None
         used_vision = False
@@ -311,39 +331,124 @@ class DietService:
                         vision_prompt = DIET_LOG_IMAGE_PROMPT_TEMPLATE.format(
                             extra_text=extra_text
                         )
-
                         response = await vision_provider.analyze(
                             text=vision_prompt,
                             images=image_inputs,
                             user_id=user_id,
                             conversation_id=None,
                         )
-                        parsed = parse_ai_json(response)
+                        parsed = self._parse_ai_json(str(response))
                         used_vision = True
-            except Exception as e:
-                logger.warning(f"Failed to parse diet images: {e}")
+            except Exception as exc:
+                logger.warning("Failed to parse diet images: %s", exc)
 
-        # AI 解析食物
-        prompt = DIET_LOG_TEXT_PROMPT_TEMPLATE.format(text=text)
+        if parsed is None and text.strip():
+            prompt = DIET_LOG_TEXT_PROMPT_TEMPLATE.format(text=text)
+            response = await invoker.ainvoke(
+                [
+                    {"role": "system", "content": DIET_LOG_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ]
+            )
+            parsed = self._parse_ai_json(str(response.content))
+
+        if not isinstance(parsed, dict):
+            return {
+                "meal_type": None,
+                "items": [],
+                "used_vision": used_vision,
+            }
+
+        return {
+            "meal_type": parsed.get("meal_type"),
+            "items": self._normalize_parsed_items(parsed.get("items", [])),
+            "used_vision": used_vision,
+        }
+
+    async def recognize_meal_from_images(
+        self,
+        user_id: str,
+        images: list,
+        context_text: Optional[str] = None,
+    ) -> dict:
+        from app.vision.provider import vision_provider
+
+        if not vision_provider.is_enabled:
+            raise RuntimeError(
+                "当前未开启拍照识别，请先配置 VISION_API_KEY 或可用的 LLM_API_KEY"
+            )
 
         try:
-            if parsed is None:
-                response = await invoker.ainvoke(
-                    [
-                        {
-                            "role": "system",
-                            "content": DIET_LOG_SYSTEM_PROMPT,
-                        },
-                        {"role": "user", "content": prompt},
-                    ]
-                )
-                parsed = parse_ai_json(response.content)
-
-            # 使用解析结果
-            actual_meal_type = (
-                meal_type or parsed.get("meal_type") or MealType.SNACK.value
+            parsed = await self._parse_diet_input_with_ai(
+                user_id=user_id,
+                text=context_text or "",
+                images=images,
             )
-            items = parsed.get("items", [])
+        except Exception as exc:
+            logger.error("Failed to recognize meal from images: %s", exc)
+            return {
+                "dishes": [],
+                "message": "AI 识别失败，请手动补充菜品信息",
+                "source": DataSource.AI_IMAGE.value,
+            }
+
+        dishes = []
+        for item in parsed.get("items", []):
+            dish_name = str(item.get("food_name") or "").strip()
+            if not dish_name:
+                continue
+            dishes.append(
+                {
+                    "name": dish_name,
+                    "weight_g": item.get("weight_g"),
+                    "unit": item.get("unit"),
+                    "calories": item.get("calories"),
+                    "protein": item.get("protein"),
+                    "fat": item.get("fat"),
+                    "carbs": item.get("carbs"),
+                }
+            )
+
+        if not dishes:
+            return {
+                "dishes": [],
+                "message": "未识别到清晰食物，请手动补充",
+                "source": DataSource.AI_IMAGE.value,
+            }
+
+        return {
+            "dishes": dishes,
+            "message": "识别完成",
+            "source": DataSource.AI_IMAGE.value,
+        }
+
+    async def log_from_text(
+        self,
+        user_id: str,
+        text: str,
+        log_date: Optional[date] = None,
+        meal_type: Optional[str] = None,
+        images: Optional[list] = None,
+    ) -> dict:
+        """从文字或图片描述记录饮食（AI 解析）
+
+        示例输入：
+        - "今天中午吃了牛肉面和一个苹果"
+        - "早餐：两个鸡蛋、一杯牛奶"
+        """
+        try:
+            parsed_result = await self._parse_diet_input_with_ai(
+                user_id=user_id,
+                text=text,
+                images=images,
+            )
+            actual_meal_type = (
+                meal_type
+                or parsed_result.get("meal_type")
+                or MealType.SNACK.value
+            )
+            items = parsed_result.get("items", [])
+            used_vision = bool(parsed_result.get("used_vision"))
 
             # 标记来源为 AI 解析
             for item in items:

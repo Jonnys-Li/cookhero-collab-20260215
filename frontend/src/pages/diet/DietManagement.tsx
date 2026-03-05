@@ -3,7 +3,7 @@
  * Weekly diet plan view with meal planning and logging
  */
 
-import { useCallback, useEffect, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
   Calendar,
   ChevronLeft,
@@ -22,6 +22,7 @@ import {
   Beef,
   Croissant,
   Droplet,
+  Camera,
 } from 'lucide-react';
 import { useAuth } from '../../contexts';
 import {
@@ -32,11 +33,13 @@ import {
   markMealEaten,
   getLogsByDate,
   createLogFromText,
+  recognizeMealFromImage,
   updateLog,
   deleteLog,
   getWeeklySummary,
 } from '../../services/api/diet';
 import type {
+  Dish,
   DietPlan,
   DietPlanMeal,
   DietLog,
@@ -350,11 +353,14 @@ function LogCard({ logs, mealType, date, onAddLog, onEditLog, onDeleteLog }: Log
 /**
  * Add/Edit Meal Modal
  */
+type MealDishInput = Dish;
+
 interface MealModalProps {
   isOpen: boolean;
   onClose: () => void;
+  token?: string | null;
   onSave: (data: {
-    dishes: Array<{ name: string; calories?: number; protein?: number; fat?: number; carbs?: number }>;
+    dishes: MealDishInput[];
     notes?: string;
   }) => Promise<void>;
   initialData?: DietPlanMeal;
@@ -362,21 +368,119 @@ interface MealModalProps {
   date: Date;
 }
 
-function MealModal({ isOpen, onClose, onSave, initialData, mealType, date }: MealModalProps) {
-  const [dishes, setDishes] = useState<Array<{ name: string; calories?: number }>>([{ name: '' }]);
+function MealModal({
+  isOpen,
+  onClose,
+  token,
+  onSave,
+  initialData,
+  mealType,
+  date,
+}: MealModalProps) {
+  const [dishes, setDishes] = useState<MealDishInput[]>([{ name: '' }]);
   const [notes, setNotes] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isRecognizing, setIsRecognizing] = useState(false);
+  const [recognizeMessage, setRecognizeMessage] = useState<string | null>(null);
+  const [recognizeError, setRecognizeError] = useState<string | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const dayLabel = DAY_LABELS[getDayIndex(date)];
 
   useEffect(() => {
     if (initialData?.dishes) {
-      setDishes(initialData.dishes.map(d => ({ name: d.name, calories: d.calories })));
+      setDishes(
+        initialData.dishes.map(d => ({
+          name: d.name,
+          weight_g: d.weight_g,
+          unit: d.unit,
+          calories: d.calories,
+          protein: d.protein,
+          fat: d.fat,
+          carbs: d.carbs,
+        }))
+      );
       setNotes(initialData.notes || '');
     } else {
       setDishes([{ name: '' }]);
       setNotes('');
     }
+    setRecognizeMessage(null);
+    setRecognizeError(null);
   }, [initialData, isOpen]);
+
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const handleOpenImagePicker = () => {
+    if (isRecognizing || isSaving) return;
+    imageInputRef.current?.click();
+  };
+
+  const handleRecognizeImage = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+
+    if (!token) {
+      setRecognizeError('登录状态已失效，请重新登录后再试');
+      setRecognizeMessage(null);
+      return;
+    }
+
+    const selectedFiles = files.slice(0, 4);
+    setIsRecognizing(true);
+    setRecognizeError(null);
+    setRecognizeMessage(null);
+
+    try {
+      const images = await Promise.all(
+        selectedFiles.map(async file => {
+          const dataUrl = await readFileAsDataUrl(file);
+          const base64 = dataUrl.split(',')[1] || '';
+          return {
+            data: base64,
+            mime_type: file.type || 'image/jpeg',
+          };
+        })
+      );
+
+      const response = await recognizeMealFromImage(token, {
+        images,
+        context_text: notes.trim() || undefined,
+      });
+
+      const recognizedDishes: MealDishInput[] = (response.dishes || [])
+        .map(dish => ({
+          name: (dish.name || '').trim(),
+          calories: dish.calories,
+          protein: dish.protein,
+          fat: dish.fat,
+          carbs: dish.carbs,
+          weight_g: dish.weight_g,
+          unit: dish.unit,
+        }))
+        .filter(dish => dish.name);
+
+      if (!recognizedDishes.length) {
+        setRecognizeMessage(response.message || '未识别到清晰食物，请手动补充');
+        return;
+      }
+
+      setDishes(prev => [...prev, ...recognizedDishes]);
+      setRecognizeMessage(`识别完成，已追加 ${recognizedDishes.length} 个菜品`);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'AI 识别失败，请稍后重试';
+      setRecognizeError(message);
+    } finally {
+      setIsRecognizing(false);
+    }
+  };
 
   const handleSave = async () => {
     const validDishes = dishes.filter(d => d.name.trim());
@@ -412,7 +516,37 @@ function MealModal({ isOpen, onClose, onSave, initialData, mealType, date }: Mea
 
         {/* Dishes */}
         <div className="space-y-3 mb-4">
-          <label className="text-sm font-medium text-gray-700 dark:text-gray-300">菜品列表</label>
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">菜品列表</label>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              onChange={handleRecognizeImage}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={handleOpenImagePicker}
+              disabled={isRecognizing || isSaving}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 px-2.5 py-1 text-xs text-blue-600 hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-700 dark:text-blue-300 dark:hover:bg-blue-900/20"
+            >
+              {isRecognizing ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Camera className="h-3.5 w-3.5" />
+              )}
+              AI拍照识别
+            </button>
+          </div>
+          {recognizeError && (
+            <p className="text-xs text-red-500">{recognizeError}</p>
+          )}
+          {!recognizeError && recognizeMessage && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">{recognizeMessage}</p>
+          )}
           {dishes.map((dish, idx) => (
             <div key={idx} className="flex gap-2">
               <input
@@ -428,10 +562,10 @@ function MealModal({ isOpen, onClose, onSave, initialData, mealType, date }: Mea
               />
               <input
                 type="number"
-                value={dish.calories || ''}
+                value={dish.calories ?? ''}
                 onChange={e => {
                   const newDishes = [...dishes];
-                  newDishes[idx].calories = e.target.value ? parseInt(e.target.value) : undefined;
+                  newDishes[idx].calories = e.target.value ? Number(e.target.value) : undefined;
                   setDishes(newDishes);
                 }}
                 placeholder="kcal"
@@ -1073,7 +1207,15 @@ export default function DietManagementPage() {
 
   // Handle save meal
   const handleSaveMeal = async (data: {
-    dishes: Array<{ name: string; calories?: number }>;
+    dishes: Array<{
+      name: string;
+      weight_g?: number;
+      unit?: string;
+      calories?: number;
+      protein?: number;
+      fat?: number;
+      carbs?: number;
+    }>;
     notes?: string;
   }) => {
     if (!token || !mealModalData) return;
@@ -1450,6 +1592,7 @@ export default function DietManagementPage() {
           setMealModalOpen(false);
           setMealModalData(null);
         }}
+        token={token}
         onSave={handleSaveMeal}
         initialData={mealModalData?.meal}
         mealType={mealModalData?.mealType || 'lunch'}
