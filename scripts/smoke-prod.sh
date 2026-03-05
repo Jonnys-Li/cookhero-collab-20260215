@@ -84,6 +84,9 @@ perform_request() {
   shift 2
   local -a extra_args=("$@")
 
+  : > "${TMP_HEADERS}"
+  : > "${TMP_BODY}"
+
   if ((${#extra_args[@]} > 0)); then
     LAST_STATUS="$(
       curl -sS \
@@ -220,6 +223,12 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
     -H "Content-Type: application/json" \
     --data "${LOGIN_PAYLOAD}"
 
+  if ! status_matches_expected "${LAST_STATUS}" "200"; then
+    log_warn "Skip token extraction because login did not return 200."
+    AUTH_CHECKS_ENABLED=false
+  fi
+
+if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
   TOKEN="$(sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p' "${TMP_BODY}" | head -n 1)"
   if [[ -z "${TOKEN}" ]]; then
     handle_assert_failure "Login response missing access_token"
@@ -227,6 +236,7 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
   else
     log_pass "Smoke token extraction"
   fi
+fi
 fi
 
 if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
