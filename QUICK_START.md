@@ -68,13 +68,22 @@ bash scripts/test-connection.sh \
 
 ### 4.2 生产烟测脚本
 
-需要准备 smoke 账号:
+默认模式为“演示稳定模式”（失败告警但不退出 1，适合课堂演示）:
+
+```bash
+FRONTEND_URL=https://frontend-one-gray-39.vercel.app \
+BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
+./scripts/smoke-prod.sh
+```
+
+如需严格校验（会真实失败，建议发布前手工执行）:
 
 ```bash
 FRONTEND_URL=https://frontend-one-gray-39.vercel.app \
 BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
 SMOKE_USERNAME=<smoke_user> \
 SMOKE_PASSWORD=<smoke_password> \
+SMOKE_STRICT=true \
 ./scripts/smoke-prod.sh
 ```
 
@@ -92,8 +101,8 @@ SMOKE_PASSWORD=<smoke_password> \
 
 - `PROD_FRONTEND_URL`
 - `PROD_BACKEND_URL`
-- `SMOKE_USERNAME`
-- `SMOKE_PASSWORD`
+- `SMOKE_USERNAME`（严格模式可选）
+- `SMOKE_PASSWORD`（严格模式可选）
 
 ## 6. 应急发布
 

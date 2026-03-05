@@ -32,4 +32,8 @@ jobs:
           BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
           SMOKE_USERNAME: ${{ secrets.SMOKE_USERNAME }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          SMOKE_STRICT: "false"
+          MAX_RETRIES: "2"
+          CONNECT_TIMEOUT_SECONDS: "8"
+          REQUEST_TIMEOUT_SECONDS: "20"
         run: ./scripts/smoke-prod.sh

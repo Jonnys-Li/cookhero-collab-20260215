@@ -138,8 +138,12 @@ FRONTEND_URL=https://frontend-one-gray-39.vercel.app \
 BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
 SMOKE_USERNAME=<smoke_user> \
 SMOKE_PASSWORD=<smoke_password> \
+SMOKE_STRICT=true \
 ./scripts/smoke-prod.sh
 ```
+
+> 说明: `scripts/smoke-prod.sh` 默认是演示稳定模式（`SMOKE_STRICT=false`，失败只告警不阻断 CI）。  
+> 发布前建议手工跑一次 `SMOKE_STRICT=true` 的严格模式。
 
 ## 8. 监控策略（本阶段）
 

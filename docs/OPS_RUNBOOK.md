@@ -47,7 +47,9 @@ vercel --prod --yes
 
 执行后验证:
 1. `GET https://frontend-one-gray-39.vercel.app/api/v1/health` 返回 JSON `401`。
-2. 运行 `scripts/smoke-prod.sh` 或等待下一次 GitHub 定时烟测结果。
+2. 运行 `scripts/smoke-prod.sh`（默认演示稳定模式）或等待下一次 GitHub 定时烟测结果。
+3. 发布前手工补跑一次严格模式:
+   - `SMOKE_STRICT=true SMOKE_USERNAME=<smoke_user> SMOKE_PASSWORD=<smoke_password> ./scripts/smoke-prod.sh`
 
 ## 5. 手工烟测清单（10 分钟）
 
@@ -69,6 +71,7 @@ vercel --prod --yes
 监控来源:
 - GitHub Actions 工作流: `.github/workflows/prod-smoke.yml`
 - 触发方式: `push main`、`workflow_dispatch`、每 30 分钟定时
+- 默认运行模式: 演示稳定模式（`SMOKE_STRICT=false`，fail-open）
 
 故障分级:
 - 单次失败: 记录失败端点与状态码，人工复查一次。
@@ -92,8 +95,8 @@ vercel --prod --yes
 
 - `PROD_FRONTEND_URL`
 - `PROD_BACKEND_URL`
-- `SMOKE_USERNAME`
-- `SMOKE_PASSWORD`
+- `SMOKE_USERNAME`（仅严格模式必需）
+- `SMOKE_PASSWORD`（仅严格模式必需）
 
 推荐值:
 
