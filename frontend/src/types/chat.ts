@@ -168,6 +168,92 @@ export interface SmartRecommendationAction {
   session_id?: string;
 }
 
+export interface PlanModeWizardStep {
+  id: string;
+  title: string;
+  hint?: string;
+}
+
+export interface PlanModeOption {
+  value: string;
+  label: string;
+}
+
+export interface MealPlanPlanModeAction {
+  action_id: string;
+  action_type: 'meal_plan_planmode_card';
+  title: string;
+  description?: string;
+  timeout_seconds?: number;
+  timeout_mode?: 'timeout_suggest_only';
+  default_timeout_suggestion?: string;
+  steps: PlanModeWizardStep[];
+  goal_options: PlanModeOption[];
+  food_type_options: PlanModeOption[];
+  restriction_options: PlanModeOption[];
+  relax_mode_options: PlanModeOption[];
+  weekly_intensity_options: PlanModeOption[];
+  training_focus_options: PlanModeOption[];
+  defaults?: {
+    goal?: string;
+    weekly_intensity?: string;
+    training_focus?: string;
+    cook_time_minutes?: number;
+    training_minutes_per_day?: number;
+    training_days_per_week?: number;
+  };
+  source?: string;
+  session_id?: string;
+}
+
+export interface WeekPlanPreviewMeal {
+  meal_type: string;
+  dish_name: string;
+  calories?: number;
+  description?: string;
+  candidates?: Array<{
+    dish_name: string;
+    calories?: number;
+    description?: string;
+  }>;
+}
+
+export interface WeekPlanPreviewDay {
+  date: string;
+  weekday: string;
+  meals: WeekPlanPreviewMeal[];
+}
+
+export interface WeekPlanMealInput {
+  plan_date: string;
+  meal_type: string;
+  dishes: Array<Record<string, unknown>>;
+  notes?: string;
+}
+
+export interface WeekTrainingItem {
+  date: string;
+  title: string;
+  description: string;
+}
+
+export interface MealPlanPreviewAction {
+  action_id: string;
+  action_type: 'meal_plan_preview_card';
+  title: string;
+  description?: string;
+  weekly_intensity: string;
+  weekly_intensity_label: string;
+  weekly_hint?: string;
+  preview_days: WeekPlanPreviewDay[];
+  planned_meals: WeekPlanMealInput[];
+  relax_suggestions: string[];
+  training_plan: WeekTrainingItem[];
+  llm_supplement?: string | null;
+  source?: string;
+  session_id?: string;
+}
+
 export interface ApplyEmotionBudgetAdjustRequest {
   session_id: string;
   action_id: string;
@@ -190,7 +276,12 @@ export interface ApplyEmotionBudgetAdjustResponse {
 export interface ApplySmartActionRequest {
   session_id: string;
   action_id: string;
-  action_kind: 'apply_budget_adjust' | 'apply_next_meal_plan' | 'fetch_weekly_progress';
+  action_kind:
+    | 'apply_budget_adjust'
+    | 'apply_next_meal_plan'
+    | 'fetch_weekly_progress'
+    | 'submit_plan_profile'
+    | 'apply_week_plan';
   mode: 'user_select' | 'timeout_suggest_only';
   payload?: Record<string, unknown>;
   reason?: string;

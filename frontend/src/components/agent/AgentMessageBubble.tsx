@@ -8,6 +8,8 @@ import { Clock, Loader2, BookOpen, Globe, ExternalLink } from 'lucide-react';
 import type {
   CollabTimelineAction,
   EmotionBudgetUIAction,
+  MealPlanPlanModeAction,
+  MealPlanPreviewAction,
   Message,
   SmartRecommendationAction,
   Source,
@@ -17,6 +19,8 @@ import { AgentThinkingBlock, type TraceStep } from './AgentThinkingBlock';
 import { EmotionBudgetAdjustCard } from './EmotionBudgetAdjustCard';
 import { AgentCollabTimelineCard } from './AgentCollabTimelineCard';
 import { SmartRecommendationCard } from './SmartRecommendationCard';
+import { PlanModeMealWizardCard } from './PlanModeMealWizardCard';
+import { WeekPlanPreviewCard } from './WeekPlanPreviewCard';
 import { CopyButton } from '../common';
 
 export interface AgentMessageBubbleProps {
@@ -141,6 +145,32 @@ function parseSmartRecommendationAction(trace: TraceStep[]): SmartRecommendation
     if (payload.action_type !== 'smart_recommendation_card') continue;
     if (!payload.action_id) continue;
     return payload as unknown as SmartRecommendationAction;
+  }
+  return null;
+}
+
+function parsePlanModeAction(trace: TraceStep[]): MealPlanPlanModeAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'ui_action') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'meal_plan_planmode_card') continue;
+    if (!payload.action_id) continue;
+    return payload as unknown as MealPlanPlanModeAction;
+  }
+  return null;
+}
+
+function parseWeekPlanPreviewAction(trace: TraceStep[]): MealPlanPreviewAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'ui_action') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'meal_plan_preview_card') continue;
+    if (!payload.action_id) continue;
+    return payload as unknown as MealPlanPreviewAction;
   }
   return null;
 }
@@ -282,6 +312,8 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
   const emotionBudgetAction = parseEmotionBudgetAction(traceData);
   const collabTimelineAction = parseCollabTimelineAction(traceData);
   const smartRecommendationAction = parseSmartRecommendationAction(traceData);
+  const planModeAction = parsePlanModeAction(traceData);
+  const weekPlanPreviewAction = parseWeekPlanPreviewAction(traceData);
   const hasTrace = mainTrace.length > 0;
   const isThinkingPhase = !isUser && !!message.isStreaming && !hasText;
   const showThinkingBlock = !isUser && (hasTrace || isThinkingPhase);
@@ -428,6 +460,20 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
                 action={smartRecommendationAction}
                 trace={traceData}
                 sessionId={message.agent_session_id || smartRecommendationAction.session_id}
+              />
+            )}
+            {!isUser && !message.isStreaming && planModeAction && (
+              <PlanModeMealWizardCard
+                action={planModeAction}
+                trace={traceData}
+                sessionId={message.agent_session_id || planModeAction.session_id}
+              />
+            )}
+            {!isUser && !message.isStreaming && weekPlanPreviewAction && (
+              <WeekPlanPreviewCard
+                action={weekPlanPreviewAction}
+                trace={traceData}
+                sessionId={message.agent_session_id || weekPlanPreviewAction.session_id}
               />
             )}
           </div>

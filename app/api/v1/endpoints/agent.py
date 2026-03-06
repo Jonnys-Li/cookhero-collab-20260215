@@ -10,6 +10,8 @@ import asyncio
 import base64
 import json
 import logging
+import re
+import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -231,7 +233,15 @@ class ApplySmartActionRequest(BaseModel):
     action_id: str
     action_kind: str = Field(
         ...,
-        pattern="^(apply_budget_adjust|apply_next_meal_plan|fetch_weekly_progress)$",
+        pattern=(
+            "^("
+            "apply_budget_adjust|"
+            "apply_next_meal_plan|"
+            "fetch_weekly_progress|"
+            "submit_plan_profile|"
+            "apply_week_plan"
+            ")$"
+        ),
     )
     mode: str = Field(..., pattern="^(user_select|timeout_suggest_only)$")
     payload: Optional[Dict[str, Any]] = None
@@ -304,6 +314,11 @@ async def _find_smart_ui_action(
     session_id: str,
     action_id: str,
 ) -> Optional[dict[str, Any]]:
+    allowed_action_types = {
+        "smart_recommendation_card",
+        "meal_plan_planmode_card",
+        "meal_plan_preview_card",
+    }
     messages = await agent_service.repository.get_messages(session_id, limit=200)
     for msg in reversed(messages):
         if msg.role != "assistant" or not msg.trace:
@@ -317,7 +332,7 @@ async def _find_smart_ui_action(
             content = _extract_trace_content(step.get("content"))
             if not content:
                 continue
-            if content.get("action_type") != "smart_recommendation_card":
+            if content.get("action_type") not in allowed_action_types:
                 continue
             if content.get("action_id") != action_id:
                 continue
@@ -695,6 +710,618 @@ def _infer_default_next_meal() -> tuple[date, str]:
     return now.date() + timedelta(days=1), "breakfast"
 
 
+MEAL_TYPE_VALUES = {"breakfast", "lunch", "dinner", "snack"}
+PLAN_INTENSITY_VALUES = {"conservative", "balanced", "aggressive"}
+TRAINING_FOCUS_VALUES = {"low_impact", "strength", "cardio", "mobility"}
+PLAN_GOAL_VALUES = {"fat_loss", "muscle_gain", "maintenance", "recovery"}
+CUSTOM_SPLIT_PATTERN = re.compile(r"[,，、;\n]+")
+PLAN_MODE_TEXT_LIMIT = 200
+
+PLAN_LIBRARY: dict[str, dict[str, list[dict[str, Any]]]] = {
+    "fat_loss": {
+        "breakfast": [
+            {"dish_name": "希腊酸奶莓果燕麦杯", "calories": 340, "description": "高蛋白+高纤维，控饿更稳。"},
+            {"dish_name": "番茄鸡蛋全麦卷", "calories": 360, "description": "主食适量，减少上午暴食。"},
+            {"dish_name": "豆浆鸡蛋蔬菜碗", "calories": 320, "description": "清爽低负担，准备时间短。"},
+        ],
+        "lunch": [
+            {"dish_name": "清炒虾仁西兰花饭", "calories": 470, "description": "蛋白和蔬菜占比高，油脂可控。"},
+            {"dish_name": "鸡胸藜麦时蔬碗", "calories": 450, "description": "稳定能量输出，下午不困乏。"},
+            {"dish_name": "豆腐牛肉双拼便当", "calories": 490, "description": "兼顾口味与饱腹，避免补偿性进食。"},
+        ],
+        "dinner": [
+            {"dish_name": "蒸鱼豆腐青菜盘", "calories": 430, "description": "晚餐轻负担，减少夜间波动。"},
+            {"dish_name": "番茄鸡胸意面小份", "calories": 460, "description": "控制份量的安抚型主食。"},
+            {"dish_name": "菌菇牛肉生菜碗", "calories": 440, "description": "高饱腹低负担，方便批量备餐。"},
+        ],
+        "snack": [
+            {"dish_name": "无糖酸奶坚果小份", "calories": 180, "description": "补充蛋白和健康脂肪。"},
+            {"dish_name": "香蕉花生酱半份吐司", "calories": 210, "description": "快速补能，避免晚间冲动加餐。"},
+        ],
+    },
+    "muscle_gain": {
+        "breakfast": [
+            {"dish_name": "牛奶燕麦蛋白碗", "calories": 430, "description": "提高蛋白与碳水储备。"},
+            {"dish_name": "鸡蛋鸡胸全麦三明治", "calories": 460, "description": "训练日前后的稳态早餐。"},
+            {"dish_name": "豆乳香蕉花生酱杯", "calories": 420, "description": "补能且易执行。"},
+        ],
+        "lunch": [
+            {"dish_name": "牛肉藜麦能量碗", "calories": 620, "description": "兼顾蛋白与碳水供能。"},
+            {"dish_name": "鸡腿饭配时蔬", "calories": 650, "description": "增肌阶段维持足够摄入。"},
+            {"dish_name": "三文鱼土豆沙拉", "calories": 610, "description": "优质脂肪辅助恢复。"},
+        ],
+        "dinner": [
+            {"dish_name": "鸡胸意面双蛋白餐", "calories": 580, "description": "晚餐补充恢复所需营养。"},
+            {"dish_name": "牛肉豆腐炖菜配饭", "calories": 600, "description": "口味友好，避免增肌期单调。"},
+            {"dish_name": "虾仁杂粮饭", "calories": 560, "description": "高蛋白+复合碳水。"},
+        ],
+        "snack": [
+            {"dish_name": "蛋白酸奶水果杯", "calories": 240, "description": "训练后快速补给。"},
+            {"dish_name": "牛奶坚果能量棒", "calories": 260, "description": "提高全天总摄入。"},
+        ],
+    },
+    "maintenance": {
+        "breakfast": [
+            {"dish_name": "全麦三明治配酸奶", "calories": 380, "description": "平衡主食与蛋白。"},
+            {"dish_name": "豆浆鸡蛋杂蔬碗", "calories": 360, "description": "简单稳定，适合工作日。"},
+            {"dish_name": "燕麦水果坚果杯", "calories": 390, "description": "高纤维，维持饱腹感。"},
+        ],
+        "lunch": [
+            {"dish_name": "鸡腿蔬菜便当", "calories": 520, "description": "口味和营养均衡。"},
+            {"dish_name": "豆腐牛肉双拼饭", "calories": 540, "description": "兼顾饱腹与可执行性。"},
+            {"dish_name": "虾仁蔬菜荞麦面", "calories": 500, "description": "减少油炸高糖选择。"},
+        ],
+        "dinner": [
+            {"dish_name": "蒸鱼时蔬杂粮饭", "calories": 480, "description": "晚餐不过量，睡眠更稳。"},
+            {"dish_name": "鸡胸蘑菇烩饭小份", "calories": 500, "description": "保留满足感，避免报复进食。"},
+            {"dish_name": "番茄牛肉蔬菜汤面", "calories": 470, "description": "温和舒适，易坚持。"},
+        ],
+        "snack": [
+            {"dish_name": "酸奶+莓果", "calories": 170, "description": "低负担补给。"},
+            {"dish_name": "苹果+奶酪小份", "calories": 190, "description": "维持稳定血糖。"},
+        ],
+    },
+    "recovery": {
+        "breakfast": [
+            {"dish_name": "温热燕麦牛奶杯", "calories": 360, "description": "温和安抚，减少早晨压力。"},
+            {"dish_name": "鸡蛋豆腐粥配青菜", "calories": 340, "description": "消化友好，执行门槛低。"},
+            {"dish_name": "酸奶香蕉燕麦杯", "calories": 350, "description": "舒缓型能量补给。"},
+        ],
+        "lunch": [
+            {"dish_name": "番茄鸡胸汤饭", "calories": 480, "description": "暖胃轻负担，情绪期更友好。"},
+            {"dish_name": "三文鱼蔬菜碗", "calories": 500, "description": "补充优质脂肪，支持恢复。"},
+            {"dish_name": "豆腐牛肉杂蔬煲", "calories": 490, "description": "口味温和，减少内疚感。"},
+        ],
+        "dinner": [
+            {"dish_name": "菌菇鸡汤面小份", "calories": 430, "description": "舒缓型晚餐，避免惩罚性节食。"},
+            {"dish_name": "虾仁豆腐蔬菜锅", "calories": 420, "description": "高蛋白且温和。"},
+            {"dish_name": "南瓜鸡肉杂粮饭", "calories": 450, "description": "稳定能量，有满足感。"},
+        ],
+        "snack": [
+            {"dish_name": "温牛奶+全麦饼干小份", "calories": 190, "description": "夜间压力时的低负担选择。"},
+            {"dish_name": "坚果酸奶杯", "calories": 200, "description": "补充营养且不负担。"},
+        ],
+    },
+}
+
+RELAX_MODE_MAP = {
+    "breathing": "3 轮方块呼吸（吸4秒-停4秒-呼4秒-停4秒）。",
+    "walk": "餐后慢走 10 分钟，放松肩颈和下颌。",
+    "journaling": "用 3 句话记录情绪触发点与可替代行动。",
+    "music": "听 10 分钟舒缓音乐，避免持续刷短视频。",
+}
+
+TRAINING_FOCUS_MAP = {
+    "low_impact": "低冲击恢复训练",
+    "strength": "基础力量训练",
+    "cardio": "有氧耐力训练",
+    "mobility": "灵活性与拉伸训练",
+}
+
+INTENSITY_LABEL_MAP = {
+    "conservative": "保守",
+    "balanced": "平衡",
+    "aggressive": "积极",
+}
+
+INTENSITY_CALORIE_DELTA = {
+    "conservative": 80,
+    "balanced": 0,
+    "aggressive": -80,
+}
+
+INTENSITY_WEEKLY_HINT = {
+    "conservative": "下周以稳态恢复为主，优先降低波动。",
+    "balanced": "下周保持稳态推进，兼顾执行感和灵活度。",
+    "aggressive": "下周以积极纠偏为主，请注意恢复与睡眠。",
+}
+
+
+def _normalize_text(value: Any, max_length: int = PLAN_MODE_TEXT_LIMIT) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if len(text) > max_length:
+        return text[:max_length]
+    return text
+
+
+def _normalize_text_list(
+    value: Any,
+    *,
+    max_items: int = 8,
+    item_max_length: int = 40,
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _normalize_text(item, max_length=item_max_length)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if len(result) >= max_items:
+            break
+    return result
+
+
+def _split_custom_text(value: Any, *, item_max_length: int = 40) -> list[str]:
+    text = _normalize_text(value, max_length=PLAN_MODE_TEXT_LIMIT)
+    if not text:
+        return []
+    items = [part.strip() for part in CUSTOM_SPLIT_PATTERN.split(text) if part.strip()]
+    dedup: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = _normalize_text(item, max_length=item_max_length)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        dedup.append(normalized)
+    return dedup
+
+
+def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(parsed, maximum))
+
+
+def _get_week_start(target_date: date) -> date:
+    return target_date - timedelta(days=target_date.weekday())
+
+
+def _build_plan_profile(action_data: dict[str, Any]) -> dict[str, Any]:
+    goal = str(action_data.get("goal") or "fat_loss").strip().lower()
+    if goal not in PLAN_GOAL_VALUES:
+        goal = "fat_loss"
+
+    weekly_intensity = str(action_data.get("weekly_intensity") or "balanced").strip().lower()
+    if weekly_intensity not in PLAN_INTENSITY_VALUES:
+        weekly_intensity = "balanced"
+
+    training_focus = str(action_data.get("training_focus") or "low_impact").strip().lower()
+    if training_focus not in TRAINING_FOCUS_VALUES:
+        training_focus = "low_impact"
+
+    food_types = _normalize_text_list(action_data.get("food_types"))
+    restrictions = _normalize_text_list(action_data.get("restrictions"))
+    allergies = _normalize_text_list(action_data.get("allergies"))
+    relax_modes = _normalize_text_list(action_data.get("relax_modes"))
+    food_types.extend(_split_custom_text(action_data.get("food_type_custom")))
+    restrictions.extend(_split_custom_text(action_data.get("restriction_custom")))
+    allergies.extend(_split_custom_text(action_data.get("allergy_custom")))
+    relax_modes.extend(_split_custom_text(action_data.get("relax_custom")))
+
+    return {
+        "goal": goal,
+        "food_types": _normalize_text_list(food_types),
+        "restrictions": _normalize_text_list(restrictions),
+        "allergies": _normalize_text_list(allergies),
+        "relax_modes": _normalize_text_list(relax_modes),
+        "weekly_intensity": weekly_intensity,
+        "training_focus": training_focus,
+        "training_minutes_per_day": _clamp_int(
+            action_data.get("training_minutes_per_day"),
+            default=25,
+            minimum=10,
+            maximum=120,
+        ),
+        "training_days_per_week": _clamp_int(
+            action_data.get("training_days_per_week"),
+            default=3,
+            minimum=1,
+            maximum=7,
+        ),
+        "cook_time_minutes": _clamp_int(
+            action_data.get("cook_time_minutes"),
+            default=30,
+            minimum=10,
+            maximum=180,
+        ),
+        "special_days": _normalize_text(action_data.get("special_days")),
+        "training_custom": _normalize_text(action_data.get("training_custom")),
+    }
+
+
+def _build_relax_suggestions(relax_modes: list[str]) -> list[str]:
+    suggestions: list[str] = []
+    for mode in relax_modes:
+        hint = RELAX_MODE_MAP.get(mode)
+        if hint and hint not in suggestions:
+            suggestions.append(hint)
+    if not suggestions:
+        suggestions.extend(
+            [
+                RELAX_MODE_MAP["breathing"],
+                RELAX_MODE_MAP["walk"],
+            ]
+        )
+    return suggestions[:3]
+
+
+def _build_training_plan(
+    *,
+    week_start: date,
+    weekly_intensity: str,
+    training_focus: str,
+    training_minutes_per_day: int,
+    training_days_per_week: int,
+    training_custom: str,
+) -> list[dict[str, Any]]:
+    focus_label = TRAINING_FOCUS_MAP.get(training_focus, TRAINING_FOCUS_MAP["low_impact"])
+    rest_hint = "主动恢复（散步+拉伸）"
+    days: list[dict[str, Any]] = []
+    for day_index in range(7):
+        target_date = week_start + timedelta(days=day_index)
+        if day_index < training_days_per_week:
+            title = f"{focus_label} Day {day_index + 1}"
+            description = f"{training_minutes_per_day} 分钟，强度档：{INTENSITY_LABEL_MAP.get(weekly_intensity, '平衡')}"
+            if training_custom:
+                description = f"{description}；个性化备注：{training_custom}"
+        else:
+            title = "恢复日"
+            description = rest_hint
+        days.append(
+            {
+                "date": target_date.isoformat(),
+                "title": title,
+                "description": description,
+            }
+        )
+    return days
+
+
+def _adjust_calories(base_calories: int, weekly_intensity: str) -> int:
+    delta = INTENSITY_CALORIE_DELTA.get(weekly_intensity, 0)
+    return max(120, base_calories + delta)
+
+
+def _build_meal_candidates(
+    *,
+    goal: str,
+    meal_type: str,
+    day_index: int,
+    weekly_intensity: str,
+    limit: int = 3,
+) -> list[dict[str, Any]]:
+    goal_library = PLAN_LIBRARY.get(goal) or PLAN_LIBRARY["fat_loss"]
+    meal_options = goal_library.get(meal_type) or PLAN_LIBRARY["maintenance"][meal_type]
+    max_candidates = max(1, min(limit, len(meal_options)))
+    candidates: list[dict[str, Any]] = []
+    for offset in range(max_candidates):
+        template = meal_options[(day_index + offset) % len(meal_options)]
+        calories = _adjust_calories(int(template.get("calories") or 420), weekly_intensity)
+        candidates.append(
+            {
+                "dish_name": str(template.get("dish_name") or "个性化推荐餐"),
+                "calories": calories,
+                "description": template.get("description") or "",
+            }
+        )
+    return candidates
+
+
+def _build_week_plan_preview(profile: dict[str, Any]) -> dict[str, Any]:
+    today = date.today()
+    week_start = _get_week_start(today)
+    goal = str(profile.get("goal") or "fat_loss")
+    weekly_intensity = str(profile.get("weekly_intensity") or "balanced")
+    relax_modes = profile.get("relax_modes") if isinstance(profile.get("relax_modes"), list) else []
+
+    preview_days: list[dict[str, Any]] = []
+    planned_meals: list[dict[str, Any]] = []
+
+    for day_index in range(7):
+        target_date = week_start + timedelta(days=day_index)
+        meal_blocks: list[dict[str, Any]] = []
+        for meal_type in ("breakfast", "lunch", "dinner"):
+            candidates = _build_meal_candidates(
+                goal=goal,
+                meal_type=meal_type,
+                day_index=day_index,
+                weekly_intensity=weekly_intensity,
+            )
+            default_candidate = candidates[0]
+            dishes = [
+                {
+                    "name": default_candidate["dish_name"],
+                    "calories": default_candidate["calories"],
+                }
+            ]
+            meal_blocks.append(
+                {
+                    "meal_type": meal_type,
+                    "dish_name": dishes[0]["name"],
+                    "calories": default_candidate["calories"],
+                    "description": default_candidate.get("description") or "",
+                    "candidates": candidates,
+                }
+            )
+            planned_meals.append(
+                {
+                    "plan_date": target_date.isoformat(),
+                    "meal_type": meal_type,
+                    "dishes": dishes,
+                    "notes": "由 PlanMode 个性化推荐卡生成",
+                }
+            )
+        preview_days.append(
+            {
+                "date": target_date.isoformat(),
+                "weekday": target_date.strftime("%A"),
+                "meals": meal_blocks,
+            }
+        )
+
+    training_plan = _build_training_plan(
+        week_start=week_start,
+        weekly_intensity=weekly_intensity,
+        training_focus=str(profile.get("training_focus") or "low_impact"),
+        training_minutes_per_day=int(profile.get("training_minutes_per_day") or 25),
+        training_days_per_week=int(profile.get("training_days_per_week") or 3),
+        training_custom=_normalize_text(profile.get("training_custom")),
+    )
+
+    return {
+        "week_start_date": week_start.isoformat(),
+        "weekly_intensity": weekly_intensity,
+        "weekly_intensity_label": INTENSITY_LABEL_MAP.get(weekly_intensity, "平衡"),
+        "weekly_hint": INTENSITY_WEEKLY_HINT.get(
+            weekly_intensity,
+            INTENSITY_WEEKLY_HINT["balanced"],
+        ),
+        "preview_days": preview_days,
+        "planned_meals": planned_meals,
+        "relax_suggestions": _build_relax_suggestions(relax_modes),
+        "training_plan": training_plan,
+    }
+
+
+async def _try_generate_plan_llm_supplement(profile: dict[str, Any]) -> Optional[str]:
+    try:
+        from app.config import settings as app_settings
+        from app.llm.provider import LLMProvider
+        from langchain_core.messages import HumanMessage, SystemMessage
+    except Exception:
+        return None
+
+    prompt = (
+        "请基于以下用户偏好，给出 1~2 句温和且可执行的周计划提醒，"
+        "不要输出列表：\n"
+        f"目标={profile.get('goal')}; "
+        f"强度={profile.get('weekly_intensity')}; "
+        f"食物类型={','.join(profile.get('food_types') or [])}; "
+        f"限制={','.join(profile.get('restrictions') or [])}; "
+        f"训练偏好={profile.get('training_focus')}"
+    )
+    try:
+        provider = LLMProvider(app_settings.llm)
+        invoker = provider.create_invoker("fast", temperature=0.3, streaming=False)
+        response = await asyncio.wait_for(
+            invoker.ainvoke(
+                [
+                    SystemMessage(
+                        content="你是饮食与训练教练，请输出简短且鼓励性的中文建议。"
+                    ),
+                    HumanMessage(content=prompt),
+                ]
+            ),
+            timeout=6.0,
+        )
+        content = getattr(response, "content", "")
+        text = _normalize_text(content, max_length=180)
+        return text or None
+    except Exception:
+        return None
+
+
+async def _persist_planmode_profile(
+    *,
+    user_id: str,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    common_foods = _normalize_text_list(profile.get("food_types"))
+    avoided_foods = _normalize_text_list(profile.get("restrictions"))
+
+    diet_tags = _normalize_text_list(
+        [
+            profile.get("goal"),
+            f"intensity:{profile.get('weekly_intensity')}",
+            f"training:{profile.get('training_focus')}",
+            *(_normalize_text_list(profile.get("relax_modes"), max_items=3)),
+        ],
+        max_items=8,
+        item_max_length=50,
+    )
+
+    planmode_profile = {
+        "goal": profile.get("goal"),
+        "allergies": _normalize_text_list(profile.get("allergies")),
+        "relax_modes": _normalize_text_list(profile.get("relax_modes")),
+        "weekly_intensity": profile.get("weekly_intensity"),
+        "training_focus": profile.get("training_focus"),
+        "training_minutes_per_day": profile.get("training_minutes_per_day"),
+        "training_days_per_week": profile.get("training_days_per_week"),
+        "cook_time_minutes": profile.get("cook_time_minutes"),
+        "special_days": _normalize_text(profile.get("special_days")),
+        "training_custom": _normalize_text(profile.get("training_custom")),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+    return await diet_service.update_user_preference(
+        user_id,
+        common_foods=common_foods,
+        avoided_foods=avoided_foods,
+        diet_tags=diet_tags,
+        stats={"planmode_profile": planmode_profile},
+    )
+
+
+async def _upsert_week_plan_meals(
+    *,
+    user_id: str,
+    planned_meals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not planned_meals:
+        raise HTTPException(status_code=400, detail="planned_meals 不能为空")
+
+    cache_by_week: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
+    created_count = 0
+    updated_count = 0
+    applied_meals: list[dict[str, Any]] = []
+
+    for item in planned_meals:
+        if not isinstance(item, dict):
+            continue
+        plan_date = _parse_iso_date(item.get("plan_date"))
+        meal_type = str(item.get("meal_type") or "").strip().lower()
+        if not plan_date or meal_type not in MEAL_TYPE_VALUES:
+            continue
+        raw_dishes = item.get("dishes")
+        dishes = raw_dishes if isinstance(raw_dishes, list) else []
+        sanitized_dishes: list[dict[str, Any]] = []
+        for dish in dishes:
+            if not isinstance(dish, dict):
+                continue
+            name = _normalize_text(dish.get("name"), max_length=80)
+            if not name:
+                continue
+            calories = dish.get("calories")
+            try:
+                calories_value = int(calories) if calories is not None else None
+            except (TypeError, ValueError):
+                calories_value = None
+            sanitized_dishes.append(
+                {
+                    "name": name,
+                    "calories": calories_value,
+                    "protein": dish.get("protein"),
+                    "fat": dish.get("fat"),
+                    "carbs": dish.get("carbs"),
+                    "weight_g": dish.get("weight_g"),
+                    "unit": dish.get("unit"),
+                }
+            )
+        if not sanitized_dishes:
+            continue
+
+        week_start = _get_week_start(plan_date).isoformat()
+        if week_start not in cache_by_week:
+            plan = await diet_service.get_plan_by_week(user_id, _get_week_start(plan_date))
+            existing_map: dict[tuple[str, str], dict[str, Any]] = {}
+            if plan and isinstance(plan.get("meals"), list):
+                for meal in plan["meals"]:
+                    if not isinstance(meal, dict):
+                        continue
+                    key = (
+                        str(meal.get("plan_date") or ""),
+                        str(meal.get("meal_type") or "").lower(),
+                    )
+                    existing_map[key] = meal
+            cache_by_week[week_start] = existing_map
+
+        existing_map = cache_by_week[week_start]
+        key = (plan_date.isoformat(), meal_type)
+        notes = _normalize_text(item.get("notes")) or "由 PlanMode 个性化推荐卡写入"
+        existing = existing_map.get(key)
+        if existing and existing.get("id"):
+            updated = await diet_service.update_meal(
+                meal_id=str(existing.get("id")),
+                user_id=user_id,
+                plan_date=plan_date,
+                meal_type=meal_type,
+                dishes=sanitized_dishes,
+                notes=notes,
+            )
+            if updated:
+                existing_map[key] = updated
+                applied_meals.append(updated)
+                updated_count += 1
+            continue
+
+        created = await diet_service.add_meal(
+            user_id=user_id,
+            plan_date=plan_date,
+            meal_type=meal_type,
+            dishes=sanitized_dishes,
+            notes=notes,
+        )
+        if created:
+            existing_map[key] = created
+            applied_meals.append(created)
+            created_count += 1
+
+    if not applied_meals:
+        raise HTTPException(status_code=400, detail="未找到可写入的计划餐次")
+
+    return {
+        "created_count": created_count,
+        "updated_count": updated_count,
+        "total_applied": len(applied_meals),
+        "meals": applied_meals,
+    }
+
+
+def _build_weekly_progress_summary(
+    *,
+    weekly_summary: dict[str, Any],
+    deviation: dict[str, Any],
+    intensity_level: str,
+) -> str:
+    analysis = deviation.get("analysis") if isinstance(deviation, dict) else {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    execution_rate = analysis.get("execution_rate")
+    total_deviation = analysis.get("total_deviation")
+    avg_daily = weekly_summary.get("avg_daily_calories") if isinstance(weekly_summary, dict) else None
+    try:
+        execution_rate_value = float(execution_rate) if execution_rate is not None else None
+    except (TypeError, ValueError):
+        execution_rate_value = None
+    try:
+        total_deviation_value = int(total_deviation) if total_deviation is not None else None
+    except (TypeError, ValueError):
+        total_deviation_value = None
+    try:
+        avg_daily_value = float(avg_daily) if avg_daily is not None else None
+    except (TypeError, ValueError):
+        avg_daily_value = None
+    intensity_label = INTENSITY_LABEL_MAP.get(intensity_level, "平衡")
+    base = f"当前为 {intensity_label} 强度。"
+    if execution_rate_value is not None and total_deviation_value is not None:
+        return (
+            f"{base} 本周执行率约 {execution_rate_value:.1f}% ，总偏差 {total_deviation_value} kcal。"
+        )
+    if avg_daily_value is not None:
+        return f"{base} 本周日均摄入约 {avg_daily_value:.0f} kcal。"
+    return f"{base} 已完成周进度分析。"
+
+
 @router.post(
     "/agent/smart-actions/apply",
     response_model=ApplySmartActionResponse,
@@ -717,6 +1344,10 @@ async def apply_smart_action(
     action_payload = await _find_smart_ui_action(payload.session_id, payload.action_id)
     if not action_payload:
         raise HTTPException(status_code=404, detail="未知或已过期的 action_id")
+    action_type = str(action_payload.get("action_type") or "")
+    if payload.action_kind in {"submit_plan_profile", "apply_week_plan"}:
+        if action_type not in {"meal_plan_planmode_card", "meal_plan_preview_card"}:
+            raise HTTPException(status_code=400, detail="该 action_id 不支持 PlanMode 提交")
 
     existing = await _find_existing_smart_action_result(
         payload.session_id,
@@ -753,7 +1384,66 @@ async def apply_smart_action(
         if not isinstance(action_data, dict):
             raise HTTPException(status_code=400, detail="payload 必须是对象")
 
-        if payload.action_kind == "apply_budget_adjust":
+        if payload.action_kind == "submit_plan_profile":
+            profile = _build_plan_profile(action_data)
+            preference = await _persist_planmode_profile(
+                user_id=str(user_id),
+                profile=profile,
+            )
+            preview = _build_week_plan_preview(profile)
+            llm_supplement = await _try_generate_plan_llm_supplement(profile)
+            used_provider = "template+llm" if llm_supplement else "template"
+            preview_action = {
+                "action_id": payload.action_id,
+                "action_type": "meal_plan_preview_card",
+                "title": "你的个性化周计划预览已生成",
+                "description": "可先查看再确认写入；若不确认，本次不会自动写库。",
+                "weekly_intensity": preview["weekly_intensity"],
+                "weekly_intensity_label": preview["weekly_intensity_label"],
+                "weekly_hint": preview["weekly_hint"],
+                "preview_days": preview["preview_days"],
+                "planned_meals": preview["planned_meals"],
+                "relax_suggestions": preview["relax_suggestions"],
+                "training_plan": preview["training_plan"],
+                "llm_supplement": llm_supplement,
+                "source": "planmode_pipeline",
+                "session_id": payload.session_id,
+            }
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": False,
+                "used_provider": used_provider,
+                "message": "偏好已保存，已生成个性化周计划预览。",
+                "result": {
+                    "profile_saved": True,
+                    "preference": preference,
+                    "preview_action": preview_action,
+                    "week_start_date": preview["week_start_date"],
+                },
+            }
+        elif payload.action_kind == "apply_week_plan":
+            planned_meals_raw = action_data.get("planned_meals")
+            if not isinstance(planned_meals_raw, list):
+                raise HTTPException(status_code=400, detail="planned_meals 必须为数组")
+            plan_apply_result = await _upsert_week_plan_meals(
+                user_id=str(user_id),
+                planned_meals=[item for item in planned_meals_raw if isinstance(item, dict)],
+            )
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": True,
+                "used_provider": "local",
+                "message": (
+                    f"已同步本周计划：新增 {plan_apply_result['created_count']} 条，"
+                    f"更新 {plan_apply_result['updated_count']} 条。"
+                ),
+                "result": plan_apply_result,
+            }
+        elif payload.action_kind == "apply_budget_adjust":
             delta_raw = action_data.get("delta_calories", 100)
             try:
                 delta_calories = int(delta_raw)
@@ -832,6 +1522,9 @@ async def apply_smart_action(
             if not week_start:
                 today = date.today()
                 week_start = today - timedelta(days=today.weekday())
+            intensity_level = str(action_data.get("intensity_level") or "balanced").strip().lower()
+            if intensity_level not in PLAN_INTENSITY_VALUES:
+                intensity_level = "balanced"
 
             weekly_summary = await diet_service.get_weekly_summary(
                 str(user_id),
@@ -841,34 +1534,63 @@ async def apply_smart_action(
                 str(user_id),
                 week_start,
             )
+            summary_text = _build_weekly_progress_summary(
+                weekly_summary=weekly_summary,
+                deviation=deviation,
+                intensity_level=intensity_level,
+            )
             response_data = {
                 "action_id": payload.action_id,
                 "action_kind": payload.action_kind,
                 "mode": payload.mode,
                 "applied": False,
                 "used_provider": "local",
-                "message": "周进度查询完成",
+                "message": summary_text,
                 "result": {
                     "weekly_summary": weekly_summary,
                     "deviation": deviation,
+                    "intensity_level": intensity_level,
+                    "summary_text": summary_text,
                 },
             }
         else:
             raise HTTPException(status_code=400, detail="未知 action_kind")
 
+    trace_subagent_name = (
+        "diet_planner"
+        if payload.action_kind in {"submit_plan_profile", "apply_week_plan"}
+        else "emotion_support"
+    )
     trace_step = {
         "iteration": 0,
         "action": "smart_action_result",
         "content": response_data,
         "error": None,
         "source": "subagent",
-        "subagent_name": "emotion_support",
+        "subagent_name": trace_subagent_name,
     }
+    trace_steps = []
+    if payload.action_kind == "submit_plan_profile":
+        result_payload = response_data.get("result")
+        if isinstance(result_payload, dict):
+            preview_action = result_payload.get("preview_action")
+            if isinstance(preview_action, dict):
+                trace_steps.append(
+                    {
+                        "iteration": 0,
+                        "action": "ui_action",
+                        "content": preview_action,
+                        "error": None,
+                        "source": "subagent",
+                        "subagent_name": trace_subagent_name,
+                    }
+                )
+    trace_steps.append(trace_step)
     await agent_service.repository.save_message(
         payload.session_id,
         "assistant",
         response_data["message"],
-        trace=[trace_step],
+        trace=trace_steps,
     )
 
     return ApplySmartActionResponse(**response_data)

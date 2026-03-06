@@ -19,3 +19,5 @@ export type { ToolSelectorProps } from './ToolSelector';
 
 export { AgentCollabTimelineCard } from './AgentCollabTimelineCard';
 export { SmartRecommendationCard } from './SmartRecommendationCard';
+export { PlanModeMealWizardCard } from './PlanModeMealWizardCard';
+export { WeekPlanPreviewCard } from './WeekPlanPreviewCard';

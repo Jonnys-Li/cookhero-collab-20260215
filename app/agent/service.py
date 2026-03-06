@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import date, timedelta
@@ -29,6 +30,25 @@ logger = logging.getLogger(__name__)
 
 # 不截断的字段（用户输入和 LLM 输出）
 EXCLUDE_TRUNCATE_KEYS = {"content"}
+
+MEAL_PLAN_QUERY_PATTERNS = [
+    re.compile(
+        r"(周计划|周菜单|周食谱|一周|7天|七天|备餐|饮食计划|餐食计划|meal\s*plan|mealprep)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(饮食|餐食|备餐|菜单|食谱|训练).*(计划|规划|安排|制定|生成|推荐|方案)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(计划|规划|安排|制定|生成|推荐|方案).*(饮食|餐食|备餐|菜单|食谱|训练)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(怎么吃|吃什么|如何备餐).*(一周|7天|七天|计划|方案)",
+        re.IGNORECASE,
+    ),
+]
 
 
 def _truncate_value(
@@ -195,6 +215,7 @@ class AgentService:
                 context.collab_plan,
                 actual_session_id,
             )
+            planmode_query_triggered = self._is_meal_plan_query(context.current_message)
             if collab_runtime:
                 initial_timeline = self._build_collab_timeline_payload(collab_runtime)
                 trace_steps.append(
@@ -502,31 +523,44 @@ class AgentService:
                         )
                         yield self._format_event("collab_timeline", final_timeline)
 
-                        smart_action = self._build_smart_recommendation_action(
+                    ui_action_payload: Optional[dict[str, Any]] = None
+                    if planmode_query_triggered:
+                        ui_action_payload = self._build_meal_plan_planmode_action(
+                            runtime=collab_runtime,
+                            session_id=actual_session_id,
+                        )
+                    elif collab_runtime:
+                        ui_action_payload = self._build_smart_recommendation_action(
                             collab_runtime
                         )
-                        if smart_action:
-                            trace_steps.append(
-                                {
-                                    "error": None,
-                                    "action": "ui_action",
-                                    "content": smart_action,
-                                    "iteration": 0,
-                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                    "source": "subagent",
-                                    "subagent_name": "emotion_support",
-                                }
-                            )
-                            yield self._format_event(
-                                "ui_action",
-                                {
-                                    **smart_action,
-                                    "iteration": 0,
-                                    "source": "subagent",
-                                    "subagent_name": "emotion_support",
-                                    "session_id": actual_session_id,
-                                },
-                            )
+
+                    if ui_action_payload:
+                        ui_action_subagent = (
+                            "diet_planner"
+                            if planmode_query_triggered
+                            else "emotion_support"
+                        )
+                        trace_steps.append(
+                            {
+                                "error": None,
+                                "action": "ui_action",
+                                "content": ui_action_payload,
+                                "iteration": 0,
+                                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                "source": "subagent",
+                                "subagent_name": ui_action_subagent,
+                            }
+                        )
+                        yield self._format_event(
+                            "ui_action",
+                            {
+                                **ui_action_payload,
+                                "iteration": 0,
+                                "source": "subagent",
+                                "subagent_name": ui_action_subagent,
+                                "session_id": actual_session_id,
+                            },
+                        )
 
                     if not response_content and collab_runtime:
                         fallback_content = self._build_collab_fallback_content(
@@ -882,6 +916,116 @@ class AgentService:
                 lines.append(f"- {label}：⏭️ {reason}")
         lines.append("\n你可以直接在下方推荐卡里选择“立即应用”来落地到饮食管理。")
         return "\n".join(lines)
+
+    def _is_meal_plan_query(self, message: str) -> bool:
+        if not message:
+            return False
+        return any(pattern.search(message) for pattern in MEAL_PLAN_QUERY_PATTERNS)
+
+    def _infer_planmode_default_intensity(
+        self,
+        runtime: Optional[dict[str, Any]],
+    ) -> str:
+        if not isinstance(runtime, dict):
+            return "balanced"
+        weekly_deviation = runtime.get("weekly_deviation")
+        if not isinstance(weekly_deviation, dict):
+            return "balanced"
+        try:
+            total_deviation = int(weekly_deviation.get("total_deviation"))
+        except (TypeError, ValueError):
+            return "balanced"
+        if total_deviation >= 1200:
+            return "conservative"
+        if total_deviation <= 300:
+            return "aggressive"
+        return "balanced"
+
+    def _build_meal_plan_planmode_action(
+        self,
+        *,
+        runtime: Optional[dict[str, Any]],
+        session_id: str,
+    ) -> dict[str, Any]:
+        default_intensity = self._infer_planmode_default_intensity(runtime)
+        return {
+            "action_id": f"meal-plan-planmode-{uuid.uuid4().hex}",
+            "action_type": "meal_plan_planmode_card",
+            "title": "先做 4 步个性化配置，再生成你的周计划",
+            "description": "按步骤选择饮食与训练偏好，生成可预览、可确认写入的一周方案。",
+            "timeout_seconds": 10,
+            "timeout_mode": "timeout_suggest_only",
+            "default_timeout_suggestion": "超时后仅保留建议，不会自动写入饮食数据。",
+            "steps": [
+                {
+                    "id": "goal_food",
+                    "title": "饮食目标与食物类型",
+                    "hint": "选择你的主要目标和偏好的食物类型。",
+                },
+                {
+                    "id": "restriction",
+                    "title": "限制与过敏",
+                    "hint": "填写需要避开的食物或过敏原。",
+                },
+                {
+                    "id": "relax",
+                    "title": "放松场景方式",
+                    "hint": "选择你更容易执行的放松方式。",
+                },
+                {
+                    "id": "weekly_intensity",
+                    "title": "周进度强度与训练偏好",
+                    "hint": "选择下周计划强度和训练偏好。",
+                },
+            ],
+            "goal_options": [
+                {"value": "fat_loss", "label": "减脂"},
+                {"value": "muscle_gain", "label": "增肌"},
+                {"value": "maintenance", "label": "维持体重"},
+                {"value": "recovery", "label": "恢复与减压"},
+            ],
+            "food_type_options": [
+                {"value": "chinese_home", "label": "家常中餐"},
+                {"value": "high_protein", "label": "高蛋白"},
+                {"value": "low_carb", "label": "低碳水"},
+                {"value": "light_meal", "label": "轻食"},
+                {"value": "comfort_food", "label": "安抚型食物"},
+            ],
+            "restriction_options": [
+                {"value": "no_spicy", "label": "少辣"},
+                {"value": "low_fat", "label": "低脂"},
+                {"value": "vegetarian", "label": "素食优先"},
+                {"value": "no_lactose", "label": "低乳糖"},
+                {"value": "low_sodium", "label": "低钠"},
+            ],
+            "relax_mode_options": [
+                {"value": "breathing", "label": "呼吸放松"},
+                {"value": "walk", "label": "散步舒展"},
+                {"value": "journaling", "label": "情绪记录"},
+                {"value": "music", "label": "音乐放松"},
+            ],
+            "weekly_intensity_options": [
+                {"value": "conservative", "label": "保守"},
+                {"value": "balanced", "label": "平衡"},
+                {"value": "aggressive", "label": "积极"},
+            ],
+            "training_focus_options": [
+                {"value": "low_impact", "label": "低冲击"},
+                {"value": "strength", "label": "力量提升"},
+                {"value": "cardio", "label": "有氧耐力"},
+                {"value": "mobility", "label": "灵活拉伸"},
+            ],
+            "defaults": {
+                "goal": "fat_loss",
+                "weekly_intensity": default_intensity,
+                "training_focus": "low_impact",
+                "cook_time_minutes": 30,
+                "training_minutes_per_day": 25,
+                "training_days_per_week": 3,
+            },
+            "source": "planmode_pipeline",
+            "session_id": session_id,
+        }
 
     def _infer_next_meal_plan(self) -> tuple[date, str]:
         now = time.localtime()
