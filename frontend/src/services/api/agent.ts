@@ -16,6 +16,8 @@ import type {
   SubagentToggleRequest,
   CreateSubagentRequest,
   UpdateSubagentRequest,
+  ApplyEmotionBudgetAdjustRequest,
+  ApplyEmotionBudgetAdjustResponse,
 } from '../../types';
 
 /**
@@ -208,6 +210,27 @@ export async function agentChat(
       ...request,
       stream: false,
     }),
+  });
+
+  if (!response.ok) {
+    const msg = await parseErrorResponse(response);
+    throw new Error(msg || `HTTP error! status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Apply emotion-support budget adjustment action from chat card
+ */
+export async function applyEmotionBudgetAdjust(
+  request: ApplyEmotionBudgetAdjustRequest,
+  token?: string
+): Promise<ApplyEmotionBudgetAdjustResponse> {
+  const response = await fetch(`${API_BASE}/agent/emotion-actions/apply-budget-adjust`, {
+    method: 'POST',
+    headers: createJsonHeaders(token),
+    body: JSON.stringify(request),
   });
 
   if (!response.ok) {

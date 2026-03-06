@@ -151,6 +151,27 @@ function transformEventToTraceStep(event: any, fallbackIteration: number): Trace
         source: event.source || 'agent',
         subagent_name: event.subagent_name,
       };
+    case 'ui_action': {
+      const {
+        iteration,
+        source,
+        subagent_name,
+        ...actionPayload
+      } = event || {};
+      if (event?.session_id && !actionPayload.session_id) {
+        actionPayload.session_id = event.session_id;
+      }
+      return {
+        error: null,
+        action: 'ui_action',
+        content: actionPayload || null,
+        iteration: iteration ?? fallbackIteration,
+        timestamp: new Date().toISOString(),
+        tool_calls: undefined,
+        source: source || 'subagent',
+        subagent_name,
+      };
+    }
     default:
       return null;
   }
@@ -268,6 +289,7 @@ export function useAgent(token?: string) {
           content: msg.content,
           timestamp: new Date(msg.created_at),
           trace: msg.trace,
+          agent_session_id: msg.session_id,
         };
 
         // Extract image URLs from trace for user messages
@@ -339,6 +361,8 @@ export function useAgent(token?: string) {
 
     let streamingSessionId = sessionId ?? `temp-${assistantMessageId}`;
     const isTempSession = !sessionId;
+    userMessage.agent_session_id = streamingSessionId;
+    assistantMessage.agent_session_id = streamingSessionId;
 
     const currentMessages = messages;
     const initialMessages = [...currentMessages, userMessage, assistantMessage];
@@ -415,7 +439,8 @@ export function useAgent(token?: string) {
         switch (event.type) {
           case 'tool_call':
           case 'tool_result':
-          case 'trace': {
+          case 'trace':
+          case 'ui_action': {
             // Transform SSE event to TraceStep format
             const traceStep = transformEventToTraceStep(event, 0);
             if (traceStep) {
@@ -476,6 +501,7 @@ export function useAgent(token?: string) {
                 thinkingEndTime: answerStartTime || answerEndTime,
                 answerStartTime: answerStartTime,
                 answerEndTime: answerEndTime,
+                agent_session_id: event.session_id || streamingSessionId,
               };
 
               // Save the original session ID before potential switch
@@ -524,6 +550,8 @@ export function useAgent(token?: string) {
                 ? cached.messages.map(msg =>
                     msg.id === assistantMessageId
                       ? { ...msg, ...timingData }
+                      : event.session_id
+                        ? { ...msg, agent_session_id: event.session_id }
                       : msg
                   )
                 : [];

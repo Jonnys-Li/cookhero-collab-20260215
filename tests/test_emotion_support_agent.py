@@ -109,6 +109,7 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
                 "web_search",
                 "mcp_city_weather",
                 "mcp_fun_music",
+                "mcp_diet_auto_adjust_get_today_budget",
                 "mcp_internal_sql",
             ]
         ),
@@ -125,6 +126,7 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
                 "web_search",
                 "mcp_city_weather",
                 "mcp_fun_music",
+                "mcp_diet_auto_adjust_get_today_budget",
             }
             else None
         ),
@@ -134,6 +136,7 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
     tools = subagent._build_tool_whitelist("u1")
     assert "mcp_city_weather" in tools
     assert "mcp_fun_music" in tools
+    assert "mcp_diet_auto_adjust_get_today_budget" in tools
     assert "mcp_internal_sql" not in tools
 
 
@@ -265,6 +268,118 @@ def test_agent_chat_no_mcp_available_graceful_degrade(monkeypatch):
 
     assert result.success is True
     assert captured["tools"] == ["datetime", "diet_analysis", "web_search"]
+
+
+def test_emotion_subagent_trigger_emits_budget_ui_action(monkeypatch):
+    captured = {"tools": []}
+    events = []
+
+    async def fake_run_with_tools(
+        self,
+        task,
+        user_id=None,
+        background=None,
+        event_handler=None,
+        tool_names_override=None,
+    ):
+        captured["tools"] = list(tool_names_override or [])
+        return ToolResult(success=True, data={"result": "ok", "iterations": 1})
+
+    async def fake_get_today_budget(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {
+            "message": "ok",
+            "used_provider": "mcp",
+            "budget": {
+                "effective_goal": 1950,
+                "remaining_adjustment_cap": 50,
+            },
+        }
+
+    async def handle_event(step):
+        events.append(step)
+
+    monkeypatch.setattr(EmotionSupportSubagent, "run_with_tools", fake_run_with_tools)
+    monkeypatch.setattr(
+        "app.agent.subagents.builtin.emotion_support.emotion_budget_service.get_today_budget",
+        fake_get_today_budget,
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "list_tools",
+        classmethod(
+            lambda cls, user_id=None: [
+                "datetime",
+                "diet_analysis",
+                "web_search",
+                "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_diet_auto_adjust_auto_adjust_today_budget",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "get_tool",
+        classmethod(lambda cls, name, user_id=None: object()),
+    )
+
+    subagent = EmotionSupportSubagent(EmotionSupportSubagent.get_default_config())
+    result = run(
+        subagent.execute(
+            "我今天吃多了，很内疚也很焦虑。",
+            user_id="u1",
+            event_handler=handle_event,
+        )
+    )
+
+    assert result.success is True
+    assert "diet_analysis" not in captured["tools"]
+    ui_events = [event for event in events if event.action == "ui_action"]
+    assert ui_events
+    content = ui_events[0].content
+    assert content["action_type"] == "emotion_budget_adjust"
+    assert content["default_delta_calories"] == 100
+    assert content["timeout_seconds"] == 10
+
+
+def test_emotion_subagent_non_trigger_does_not_emit_ui_action(monkeypatch):
+    events = []
+
+    async def fake_run_with_tools(
+        self,
+        task,
+        user_id=None,
+        background=None,
+        event_handler=None,
+        tool_names_override=None,
+    ):
+        return ToolResult(success=True, data={"result": "ok", "iterations": 1})
+
+    async def handle_event(step):
+        events.append(step)
+
+    monkeypatch.setattr(EmotionSupportSubagent, "run_with_tools", fake_run_with_tools)
+    monkeypatch.setattr(
+        AgentHub,
+        "list_tools",
+        classmethod(lambda cls, user_id=None: ["datetime", "diet_analysis", "web_search"]),
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "get_tool",
+        classmethod(lambda cls, name, user_id=None: object()),
+    )
+
+    subagent = EmotionSupportSubagent(EmotionSupportSubagent.get_default_config())
+    run(
+        subagent.execute(
+            "今天菜谱怎么安排更省时间？",
+            user_id="u1",
+            event_handler=handle_event,
+        )
+    )
+
+    assert all(event.action != "ui_action" for event in events)
 
 
 def test_manual_trigger_mode_prompt_hint():

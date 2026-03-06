@@ -89,6 +89,58 @@ export interface AgentChatRequest {
   selected_tools?: string[];  // User-selected tools
 }
 
+export type EmotionBudgetApplyMode = 'user_select' | 'auto_timeout';
+
+export interface EmotionBudgetOption {
+  label: string;
+  delta_calories: 50 | 100 | 150;
+  recommended?: boolean;
+}
+
+export interface EmotionBudgetUIAction {
+  action_id: string;
+  action_type: 'emotion_budget_adjust';
+  title: string;
+  description?: string;
+  emotion_level?: 'low' | 'medium' | 'high';
+  options: EmotionBudgetOption[];
+  default_delta_calories: 50 | 100 | 150;
+  timeout_seconds: number;
+  auto_apply_on_timeout: boolean;
+  can_apply?: boolean;
+  unavailable_reason?: string | null;
+  budget_snapshot?: {
+    base_goal?: number;
+    today_adjustment?: number;
+    effective_goal?: number;
+    remaining_adjustment_cap?: number;
+    adjustment_cap?: number;
+    date?: string;
+  } | null;
+  budget_provider?: string | null;
+  source?: string;
+  session_id?: string;
+}
+
+export interface ApplyEmotionBudgetAdjustRequest {
+  session_id: string;
+  action_id: string;
+  delta_calories: 50 | 100 | 150;
+  mode: EmotionBudgetApplyMode;
+  reason?: string;
+}
+
+export interface ApplyEmotionBudgetAdjustResponse {
+  action_id: string;
+  requested: number;
+  applied?: number | null;
+  capped: boolean;
+  effective_goal?: number | null;
+  used_provider: string;
+  mode: EmotionBudgetApplyMode;
+  message: string;
+}
+
 export interface ToolSchema {
   name: string;
   description: string;

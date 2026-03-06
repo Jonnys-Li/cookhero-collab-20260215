@@ -27,7 +27,7 @@ export interface ConversationRequest {
 }
 
 export interface SSEEvent {
-  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done' | 'session' | 'tool_call' | 'tool_result' | 'trace' | 'skill_load' | 'error';
+  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done' | 'session' | 'tool_call' | 'tool_result' | 'trace' | 'ui_action' | 'skill_load' | 'error';
   content?: string;
   data?: VisionInfo | IntentInfo | Source[] | string;
   conversation_id?: string;
@@ -47,6 +47,13 @@ export interface SSEEvent {
   success?: boolean;
   result?: unknown;
   error?: string;
+  // UI action fields (emotion support)
+  action_id?: string;
+  action_type?: string;
+  timeout_seconds?: number;
+  default_delta_calories?: number;
+  can_apply?: boolean;
+  unavailable_reason?: string | null;
   // Timing fields
   thinking_duration_ms?: number;
   answer_duration_ms?: number;

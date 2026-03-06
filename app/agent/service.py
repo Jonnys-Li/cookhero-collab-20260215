@@ -337,8 +337,32 @@ class AgentService:
 
                 elif chunk.type == AgentChunkType.TRACE:
                     trace_step = chunk.data
-                    trace_steps.append(asdict(trace_step))
-                    yield self._format_event("trace", asdict(trace_step))
+                    trace_dict = asdict(trace_step)
+                    trace_steps.append(trace_dict)
+                    if trace_dict.get("action") == "ui_action":
+                        ui_payload = trace_dict.get("content")
+                        if isinstance(ui_payload, dict):
+                            yield self._format_event(
+                                "ui_action",
+                                {
+                                    **ui_payload,
+                                    "iteration": trace_dict.get("iteration", 0),
+                                    "source": trace_dict.get("source"),
+                                    "subagent_name": trace_dict.get("subagent_name"),
+                                    "session_id": actual_session_id,
+                                },
+                            )
+                    yield self._format_event("trace", trace_dict)
+
+                elif chunk.type == AgentChunkType.UI_ACTION:
+                    action_payload = chunk.data if isinstance(chunk.data, dict) else {}
+                    yield self._format_event(
+                        "ui_action",
+                        {
+                            **action_payload,
+                            "session_id": actual_session_id,
+                        },
+                    )
 
                 elif chunk.type == AgentChunkType.ERROR:
                     yield self._format_event("error", chunk.data)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
@@ -20,6 +21,7 @@ from app.agent.service import agent_service
 from app.agent.registry import AgentHub
 from app.security.dependencies import check_message_security
 from app.services.mcp_service import mcp_service
+from app.services.emotion_budget_service import emotion_budget_service
 from app.services.subagent_service import subagent_service
 
 logger = logging.getLogger(__name__)
@@ -188,6 +190,108 @@ class AgentHistoryResponse(BaseModel):
 
     session_id: str
     messages: List[AgentMessageResponse]
+
+
+class ApplyEmotionBudgetAdjustRequest(BaseModel):
+    """Apply emotion-budget adjustment action from chat card."""
+
+    session_id: str
+    action_id: str
+    delta_calories: int = Field(..., description="仅支持 50/100/150")
+    mode: str = Field(..., pattern="^(user_select|auto_timeout)$")
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+    @field_validator("delta_calories")
+    @classmethod
+    def validate_delta_calories(cls, value: int) -> int:
+        if value not in {50, 100, 150}:
+            raise ValueError("delta_calories 仅支持 50/100/150")
+        return value
+
+
+class ApplyEmotionBudgetAdjustResponse(BaseModel):
+    """Response payload for emotion-budget adjustment result."""
+
+    action_id: str
+    requested: int
+    applied: Optional[int] = None
+    capped: bool
+    effective_goal: Optional[int] = None
+    used_provider: str
+    mode: str
+    message: str
+
+
+def _parse_trace_step(raw: Any) -> Optional[dict[str, Any]]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _extract_trace_content(raw_content: Any) -> Optional[dict[str, Any]]:
+    if isinstance(raw_content, dict):
+        return raw_content
+    if isinstance(raw_content, str):
+        try:
+            parsed = json.loads(raw_content)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+async def _find_emotion_ui_action(
+    session_id: str,
+    action_id: str,
+) -> Optional[dict[str, Any]]:
+    messages = await agent_service.repository.get_messages(session_id, limit=200)
+    for msg in reversed(messages):
+        if msg.role != "assistant" or not msg.trace:
+            continue
+        for raw_step in msg.trace:
+            step = _parse_trace_step(raw_step)
+            if not step:
+                continue
+            if step.get("action") != "ui_action":
+                continue
+            content = _extract_trace_content(step.get("content"))
+            if not content:
+                continue
+            if content.get("action_type") != "emotion_budget_adjust":
+                continue
+            if content.get("action_id") == action_id:
+                return content
+    return None
+
+
+async def _find_existing_emotion_action_result(
+    session_id: str,
+    action_id: str,
+) -> Optional[dict[str, Any]]:
+    messages = await agent_service.repository.get_messages(session_id, limit=200)
+    for msg in reversed(messages):
+        if msg.role != "assistant" or not msg.trace:
+            continue
+        for raw_step in msg.trace:
+            step = _parse_trace_step(raw_step)
+            if not step:
+                continue
+            if step.get("action") != "emotion_budget_adjust_result":
+                continue
+            content = _extract_trace_content(step.get("content"))
+            if not content:
+                continue
+            if content.get("action_id") == action_id:
+                return content
+    return None
 
 
 @router.get("/agent/tools")
@@ -487,6 +591,97 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error processing agent chat: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="处理请求时发生错误")
+
+
+@router.post(
+    "/agent/emotion-actions/apply-budget-adjust",
+    response_model=ApplyEmotionBudgetAdjustResponse,
+)
+async def apply_emotion_budget_adjust(
+    payload: ApplyEmotionBudgetAdjustRequest,
+    http_request: Request,
+) -> ApplyEmotionBudgetAdjustResponse:
+    """Apply emotion-support budget adjustment from chat card."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    session = await agent_service.get_session(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("user_id") != str(user_id):
+        raise HTTPException(status_code=403, detail="无权访问此会话")
+
+    action_payload = await _find_emotion_ui_action(payload.session_id, payload.action_id)
+    if not action_payload:
+        raise HTTPException(status_code=404, detail="未知或已过期的 action_id")
+
+    if not action_payload.get("can_apply", True):
+        reason = action_payload.get("unavailable_reason") or "当前自动预算调整不可用"
+        raise HTTPException(status_code=400, detail=reason)
+
+    existing = await _find_existing_emotion_action_result(
+        payload.session_id,
+        payload.action_id,
+    )
+    if existing:
+        return ApplyEmotionBudgetAdjustResponse(
+            action_id=payload.action_id,
+            requested=int(existing.get("requested") or payload.delta_calories),
+            applied=existing.get("applied"),
+            capped=bool(existing.get("capped")),
+            effective_goal=existing.get("effective_goal"),
+            used_provider=str(existing.get("used_provider") or "unknown"),
+            mode=str(existing.get("mode") or payload.mode),
+            message=str(existing.get("message") or "调整已完成"),
+        )
+
+    try:
+        result = await emotion_budget_service.adjust_today_budget(
+            user_id=str(user_id),
+            delta_calories=payload.delta_calories,
+            reason=payload.reason or "情绪安抚自动预算调整",
+            mode=payload.mode,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    response_data = {
+        "action_id": payload.action_id,
+        "requested": payload.delta_calories,
+        "applied": result.get("applied"),
+        "capped": bool(result.get("capped")),
+        "effective_goal": result.get("effective_goal"),
+        "used_provider": result.get("used_provider") or "unknown",
+        "mode": payload.mode,
+        "message": result.get("message") or "自动调整完成",
+    }
+
+    applied = response_data["applied"]
+    applied_text = f"+{applied}" if isinstance(applied, int) else "已应用"
+    capped_text = "（已触发上限保护）" if response_data["capped"] else ""
+    content = (
+        f"已同步今日预算调整：请求 +{payload.delta_calories} kcal，"
+        f"实际 {applied_text} kcal，当前有效预算 {response_data['effective_goal']} kcal{capped_text}。"
+    )
+    trace_step = {
+        "iteration": 0,
+        "action": "emotion_budget_adjust_result",
+        "content": response_data,
+        "error": None,
+        "source": "subagent",
+        "subagent_name": "emotion_support",
+    }
+    await agent_service.repository.save_message(
+        payload.session_id,
+        "assistant",
+        content,
+        trace=[trace_step],
+    )
+
+    return ApplyEmotionBudgetAdjustResponse(**response_data)
 
 
 @router.get("/agent/session/{session_id}")

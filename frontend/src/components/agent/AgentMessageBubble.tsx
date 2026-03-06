@@ -5,9 +5,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Clock, Loader2, BookOpen, Globe, ExternalLink } from 'lucide-react';
-import type { Message, Source } from '../../types';
+import type { EmotionBudgetUIAction, Message, Source } from '../../types';
 import { MarkdownRenderer } from '../chat/MarkdownRenderer';
 import { AgentThinkingBlock, type TraceStep } from './AgentThinkingBlock';
+import { EmotionBudgetAdjustCard } from './EmotionBudgetAdjustCard';
 import { CopyButton } from '../common';
 
 export interface AgentMessageBubbleProps {
@@ -96,6 +97,19 @@ function parseTrace(trace: any[] | undefined): TraceStep[] {
       subagent_name: undefined,
     };
   });
+}
+
+function parseEmotionBudgetAction(trace: TraceStep[]): EmotionBudgetUIAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'ui_action') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'emotion_budget_adjust') continue;
+    if (!payload.action_id) continue;
+    return payload as unknown as EmotionBudgetUIAction;
+  }
+  return null;
 }
 
 function getSourceStyle(type: string): { icon: typeof BookOpen; accent: string; label: string } {
@@ -226,8 +240,10 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
 
   // Parse trace data - use message.trace if available, otherwise fall back to message.thinking
   const traceData = parseTrace(message.trace || message.thinking);
-  const mainTrace = traceData.filter((step) => step.source !== 'subagent');
-  const subagentTrace = traceData.filter((step) => step.source === 'subagent');
+  const traceWithoutUiAction = traceData.filter((step) => step.action !== 'ui_action');
+  const mainTrace = traceWithoutUiAction.filter((step) => step.source !== 'subagent');
+  const subagentTrace = traceWithoutUiAction.filter((step) => step.source === 'subagent');
+  const emotionBudgetAction = parseEmotionBudgetAction(traceData);
   const hasTrace = mainTrace.length > 0;
   const isThinkingPhase = !isUser && !!message.isStreaming && !hasText;
   const showThinkingBlock = !isUser && (hasTrace || isThinkingPhase);
@@ -359,6 +375,13 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
               </div>
             )}
             <MarkdownRenderer content={message.content.trim()} />
+            {!isUser && !message.isStreaming && emotionBudgetAction && (
+              <EmotionBudgetAdjustCard
+                action={emotionBudgetAction}
+                trace={traceData}
+                sessionId={message.agent_session_id || emotionBudgetAction.session_id}
+              />
+            )}
           </div>
         )}
 

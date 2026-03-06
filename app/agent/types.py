@@ -20,6 +20,7 @@ class AgentChunkType(str, Enum):
     TOOL_CALL = "tool_call"  # Tool 调用
     TOOL_RESULT = "tool_result"  # Tool 执行结果
     VISION = "vision"  # 图片分析结果
+    UI_ACTION = "ui_action"  # 前端交互动作
     ERROR = "error"  # 错误信息
     DONE = "done"  # 完成信号
 
@@ -57,9 +58,17 @@ class TraceStep:
     """执行轨迹步骤"""
 
     iteration: int
-    action: Literal["tool_call", "tool_result", "finish", "error", "subagent_output"]
+    action: Literal[
+        "tool_call",
+        "tool_result",
+        "finish",
+        "error",
+        "subagent_output",
+        "ui_action",
+        "emotion_budget_adjust_result",
+    ]
     tool_calls: list[dict] | None = None
-    content: str | None = None
+    content: Any = None
     error: str | None = None
     source: Literal["agent", "subagent"] = "agent"
     subagent_name: str | None = None
