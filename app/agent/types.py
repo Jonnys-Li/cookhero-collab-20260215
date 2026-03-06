@@ -94,6 +94,8 @@ class AgentContext:
     history_summary: str | None = None  # 历史摘要（压缩后）
     recent_messages: list[dict] = field(default_factory=list)  # 近期消息
     available_tools: list[dict] = field(default_factory=list)  # 可用 Tool schema
+    force_tool_name: str | None = None  # 必须执行的工具（确定性路由）
+    force_tool_arguments: dict[str, Any] | None = None  # 强制工具参数
     current_message: str = ""  # 当前用户消息
     images: list[dict] | None = None  # [{data, mime_type, url}]
     vision_analysis: dict | None = None  # Vision analysis result

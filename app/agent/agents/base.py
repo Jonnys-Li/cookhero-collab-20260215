@@ -107,6 +107,16 @@ class BaseAgent(ABC):
 
                 # 检查是否有 Tool 调用
                 tool_calls = self._extract_tool_calls(response)
+                forced_call_used = False
+                if not tool_calls:
+                    forced_tool_call = self._get_forced_tool_call(
+                        context=context,
+                        iteration=iteration,
+                        selected_tool_names=selected_tool_names,
+                    )
+                    if forced_tool_call:
+                        tool_calls = [forced_tool_call]
+                        forced_call_used = True
 
                 if tool_calls:
                     # 有 Tool 调用
@@ -155,9 +165,17 @@ class BaseAgent(ABC):
                         )
 
                     # 将 Tool 调用和结果加入消息历史
-                    messages = self._append_tool_messages(
-                        messages, response, tool_results
-                    )
+                    if forced_call_used:
+                        messages = self._append_tool_messages_streaming(
+                            messages,
+                            self._extract_content(response),
+                            tool_calls,
+                            tool_results,
+                        )
+                    else:
+                        messages = self._append_tool_messages(
+                            messages, response, tool_results
+                        )
 
                     # 发送轨迹事件
                     yield AgentChunk(
@@ -347,6 +365,57 @@ class BaseAgent(ABC):
                             # TOOL_CALL and TOOL_RESULT events are already sent
                             # and service.py will create trace_steps from them
                         else:
+                            forced_tool_call = self._get_forced_tool_call(
+                                context=context,
+                                iteration=iteration,
+                                selected_tool_names=selected_tool_names,
+                            )
+                            if forced_tool_call:
+                                tool_calls = [forced_tool_call]
+                                tool_results = []
+                                for tool_call in tool_calls:
+                                    yield AgentChunk(
+                                        type=AgentChunkType.TOOL_CALL,
+                                        data=tool_call,
+                                    )
+
+                                    result = None
+                                    async for event_type, payload in self._execute_tool_call(
+                                        tool_executor,
+                                        tool_call,
+                                    ):
+                                        if event_type == "trace":
+                                            yield AgentChunk(
+                                                type=AgentChunkType.TRACE,
+                                                data=payload,
+                                            )
+                                        else:
+                                            result = payload
+                                    if result is None:
+                                        result = ToolResult(
+                                            success=False,
+                                            error="Tool execution returned no result",
+                                        )
+
+                                    result_info = ToolResultInfo(
+                                        tool_call_id=tool_call.id,
+                                        name=tool_call.name,
+                                        success=result.success,
+                                        result=result.data,
+                                        error=result.error,
+                                    )
+                                    tool_results.append(result_info)
+
+                                    yield AgentChunk(
+                                        type=AgentChunkType.TOOL_RESULT,
+                                        data=result_info,
+                                    )
+
+                                messages = self._append_tool_messages_streaming(
+                                    messages, collected_content, tool_calls, tool_results
+                                )
+                                continue
+
                             # 无 Tool 调用，结束
                             yield AgentChunk(
                                 type=AgentChunkType.TRACE,
@@ -465,6 +534,29 @@ class BaseAgent(ABC):
                 )
 
         return tool_calls
+
+    def _get_forced_tool_call(
+        self,
+        *,
+        context: AgentContext,
+        iteration: int,
+        selected_tool_names: list[str],
+    ) -> ToolCallInfo | None:
+        if iteration != 0:
+            return None
+        force_tool_name = context.force_tool_name
+        if not force_tool_name:
+            return None
+        if force_tool_name not in selected_tool_names:
+            return None
+        arguments = context.force_tool_arguments or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        return ToolCallInfo(
+            id=f"forced-{force_tool_name}-{iteration}",
+            name=force_tool_name,
+            arguments=arguments,
+        )
 
     def _parse_streaming_tool_calls(
         self,

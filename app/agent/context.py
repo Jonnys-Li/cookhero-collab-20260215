@@ -118,6 +118,8 @@ class AgentContextBuilder:
             for tool in available_tools
             if isinstance(tool, dict)
         ]
+        force_tool_name: Optional[str] = None
+        force_tool_arguments: Optional[dict[str, str]] = None
 
         if (
             self._should_force_emotion_subagent(current_message)
@@ -134,6 +136,11 @@ class AgentContextBuilder:
                 "- 拿到子代理结果后再给最终答复，禁止直接跳过工具。\n"
                 "- 若工具不可用，才允许给保底安抚建议。"
             )
+            force_tool_name = "subagent_emotion_support"
+            force_tool_arguments = {
+                "task": current_message,
+                "background": "检测到明显负面情绪，请优先安抚，并执行预算调整交互流程。",
+            }
 
         # 5. user_profile user_instruction
         user_profile = None
@@ -158,6 +165,8 @@ class AgentContextBuilder:
             history_summary=compressed_summary,
             recent_messages=recent_messages,
             available_tools=available_tools,
+            force_tool_name=force_tool_name,
+            force_tool_arguments=force_tool_arguments,
             current_message=current_message,
             images=processed_images,
         )
