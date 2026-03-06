@@ -81,6 +81,8 @@ class Settings(BaseModel):
     MAX_IMAGE_SIZE_MB: int = int(os.getenv("MAX_IMAGE_SIZE_MB", "5"))
     # Prompt injection protection
     PROMPT_GUARD_ENABLED: bool = os.getenv("PROMPT_GUARD_ENABLED", "true").lower() == "true"
+    # Service key for MCP diet-adjust endpoint
+    MCP_DIET_SERVICE_KEY: str = os.getenv("MCP_DIET_SERVICE_KEY", "")
     
     # ==========================================================================
     # Module Configurations

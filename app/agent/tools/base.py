@@ -140,6 +140,10 @@ class MCPTool(BaseTool):
             self.parameters = parameters
         super().__init__()
 
+    def _accepts_user_id(self) -> bool:
+        properties = self.parameters.get("properties", {}) if isinstance(self.parameters, dict) else {}
+        return isinstance(properties, dict) and "user_id" in properties
+
     async def execute(self, **kwargs) -> ToolResult:
         """
         调用 MCP 服务。
@@ -151,7 +155,7 @@ class MCPTool(BaseTool):
 
             client = MCPClient(self.mcp_endpoint, headers=self.mcp_headers)
 
-            if kwargs and "user_id" in kwargs:
+            if kwargs and "user_id" in kwargs and not self._accepts_user_id():
                 kwargs.pop("user_id")
 
             return await client.call_tool(self.mcp_tool_name, kwargs)

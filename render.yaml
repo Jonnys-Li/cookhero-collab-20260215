@@ -37,3 +37,5 @@ services:
         sync: false
       - key: AMAP_API_KEY
         sync: false
+      - key: MCP_DIET_SERVICE_KEY
+        value: "cookhero-mcp-demo-key-v1"
