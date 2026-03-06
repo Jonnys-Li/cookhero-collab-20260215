@@ -6,6 +6,7 @@ Agent 上下文组装
 
 import json
 import logging
+import re
 from typing import Optional
 
 from app.agent.types import AgentContext, AgentConfig
@@ -20,6 +21,13 @@ from app.agent.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+FORCE_EMOTION_SUBAGENT_PATTERNS = [
+    re.compile(
+        r"(内疚|愧疚|自责|后悔|焦虑|难受|难过|低落|抑郁|沮丧|崩溃|压力大|烦躁|压抑|心慌|胸闷|喘不过气)",
+        re.IGNORECASE,
+    ),
+]
 
 
 class AgentContextBuilder:
@@ -81,6 +89,7 @@ class AgentContextBuilder:
                 description="Default agent",
                 system_prompt="You are a helpful assistant.",
             )
+        system_prompt = config.system_prompt
 
         # 2. 获取历史摘要
         (
@@ -104,6 +113,27 @@ class AgentContextBuilder:
 
             await subagent_service.sync_user_subagents(user_id)
         available_tools = AgentHub.get_tool_schemas(tools_to_use, user_id=user_id)
+        available_tool_names = [
+            tool.get("function", {}).get("name")
+            for tool in available_tools
+            if isinstance(tool, dict)
+        ]
+
+        if (
+            self._should_force_emotion_subagent(current_message)
+            and "subagent_emotion_support" in available_tool_names
+        ):
+            available_tools = AgentHub.get_tool_schemas(
+                ["subagent_emotion_support"],
+                user_id=user_id,
+            )
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "## 本轮强制执行策略\n"
+                "- 检测到用户明显负面情绪，本轮必须先调用 `subagent_emotion_support`。\n"
+                "- 拿到子代理结果后再给最终答复，禁止直接跳过工具。\n"
+                "- 若工具不可用，才允许给保底安抚建议。"
+            )
 
         # 5. user_profile user_instruction
         user_profile = None
@@ -120,7 +150,7 @@ class AgentContextBuilder:
             processed_images = await self._process_images(images)
 
         return AgentContext(
-            system_prompt=config.system_prompt,
+            system_prompt=system_prompt,
             user_id=session.user_id,
             session_id=session_id,
             user_profile=user_profile,
@@ -131,6 +161,11 @@ class AgentContextBuilder:
             current_message=current_message,
             images=processed_images,
         )
+
+    def _should_force_emotion_subagent(self, message: str) -> bool:
+        if not message:
+            return False
+        return any(pattern.search(message) for pattern in FORCE_EMOTION_SUBAGENT_PATTERNS)
 
     async def _process_images(self, images: list[dict]) -> list[dict]:
         """
