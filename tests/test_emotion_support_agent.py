@@ -382,6 +382,70 @@ def test_emotion_subagent_non_trigger_does_not_emit_ui_action(monkeypatch):
     assert all(event.action != "ui_action" for event in events)
 
 
+def test_emotion_subagent_negative_emotion_without_overeat_emits_ui_action(monkeypatch):
+    events = []
+
+    async def fake_run_with_tools(
+        self,
+        task,
+        user_id=None,
+        background=None,
+        event_handler=None,
+        tool_names_override=None,
+    ):
+        return ToolResult(success=True, data={"result": "ok", "iterations": 1})
+
+    async def fake_get_today_budget(*, user_id: str, target_date=None):
+        return {
+            "message": "ok",
+            "used_provider": "mcp",
+            "budget": {
+                "effective_goal": 1900,
+                "remaining_adjustment_cap": 100,
+            },
+        }
+
+    async def handle_event(step):
+        events.append(step)
+
+    monkeypatch.setattr(EmotionSupportSubagent, "run_with_tools", fake_run_with_tools)
+    monkeypatch.setattr(
+        "app.agent.subagents.builtin.emotion_support.emotion_budget_service.get_today_budget",
+        fake_get_today_budget,
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "list_tools",
+        classmethod(
+            lambda cls, user_id=None: [
+                "datetime",
+                "diet_analysis",
+                "web_search",
+                "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_diet_auto_adjust_auto_adjust_today_budget",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "get_tool",
+        classmethod(lambda cls, name, user_id=None: object()),
+    )
+
+    subagent = EmotionSupportSubagent(EmotionSupportSubagent.get_default_config())
+    run(
+        subagent.execute(
+            "我好难过，今天真的胸口好闷喘不过来气。",
+            user_id="u1",
+            event_handler=handle_event,
+        )
+    )
+
+    ui_events = [event for event in events if event.action == "ui_action"]
+    assert ui_events
+    assert ui_events[0].content["action_type"] == "emotion_budget_adjust"
+
+
 def test_manual_trigger_mode_prompt_hint():
     assert "subagent_emotion_support" in DEFAULT_AGENT_SYSTEM_PROMPT
 
