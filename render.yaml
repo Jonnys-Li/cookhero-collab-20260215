@@ -21,6 +21,12 @@ services:
         value: "https://.*\\.vercel\\.app"
       - key: RAG_INIT_ON_STARTUP
         value: "false"
+      - key: DB_INIT_TIMEOUT_SECONDS
+        value: "25"
+      - key: DB_INIT_FAIL_OPEN
+        value: "true"
+      - key: DB_INIT_RETRY_SECONDS
+        value: "8"
       - key: MCP_STARTUP_TIMEOUT_SECONDS
         value: "15"
       - key: METADATA_CACHE_TIMEOUT_SECONDS

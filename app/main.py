@@ -3,6 +3,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import os
 import secrets
+from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,14 @@ logger = logging.getLogger(__name__)
 
 # Setup secure logging with sensitive data filtering
 setup_secure_logging()
+
+_TRUTHY_VALUES = {"1", "true", "yes", "y", "on"}
+
+
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in _TRUTHY_VALUES
 
 
 def _load_cors_origins() -> list[str]:
@@ -105,10 +114,37 @@ async def _run_non_blocking_startup_tasks() -> None:
         logger.warning(f"Failed to initialize metadata cache: {e}")
 
 
+async def _initialize_database_or_raise(timeout_seconds: float) -> None:
+    logger.info("Initializing database...")
+    await asyncio.wait_for(init_db(), timeout=timeout_seconds)
+    logger.info("Database initialized.")
+
+
+async def _retry_database_initialization(
+    app: FastAPI,
+    timeout_seconds: float,
+    retry_interval_seconds: float,
+) -> None:
+    while not getattr(app.state, "db_ready", False):
+        try:
+            await _initialize_database_or_raise(timeout_seconds=timeout_seconds)
+            app.state.db_ready = True
+            logger.info("Database recovery succeeded; service is fully ready.")
+            return
+        except Exception as exc:
+            logger.warning(
+                "Database initialization retry failed: %s. Retrying in %.1fs.",
+                exc,
+                retry_interval_seconds,
+            )
+            await asyncio.sleep(retry_interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
     background_startup_task: asyncio.Task | None = None
+    db_recovery_task: Optional[asyncio.Task] = None
 
     # Startup
 
@@ -122,9 +158,28 @@ async def lifespan(app: FastAPI):
             "Set JWT_SECRET_KEY in Render env for stable login sessions."
         )
 
-    logger.info("Initializing database...")
-    await init_db()
-    logger.info("Database initialized.")
+    app.state.db_ready = False
+    db_init_timeout = float(os.getenv("DB_INIT_TIMEOUT_SECONDS", "25"))
+    db_init_fail_open = _is_truthy(os.getenv("DB_INIT_FAIL_OPEN", "true"))
+    db_init_retry_seconds = float(os.getenv("DB_INIT_RETRY_SECONDS", "8"))
+
+    try:
+        await _initialize_database_or_raise(timeout_seconds=db_init_timeout)
+        app.state.db_ready = True
+    except Exception as exc:
+        logger.error("Database initialization failed: %s", exc)
+        if not db_init_fail_open:
+            raise
+        logger.warning(
+            "DB_INIT_FAIL_OPEN=true, continue startup in degraded mode and retry in background."
+        )
+        db_recovery_task = asyncio.create_task(
+            _retry_database_initialization(
+                app=app,
+                timeout_seconds=db_init_timeout,
+                retry_interval_seconds=db_init_retry_seconds,
+            )
+        )
 
     # Initialize Agent module (registers default agent, tools, skills)
     logger.info("Initializing Agent module...")
@@ -156,6 +211,8 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if background_startup_task and not background_startup_task.done():
         background_startup_task.cancel()
+    if db_recovery_task and not db_recovery_task.done():
+        db_recovery_task.cancel()
 
     logger.info("Closing database connections...")
     await close_db()
@@ -227,6 +284,29 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def readiness_gate(request: Request, call_next):
+    """Gate non-exempt routes when database is not ready."""
+    if getattr(app.state, "db_ready", True):
+        return await call_next(request)
+
+    path = request.url.path
+    if (
+        path in EXEMPT_PATHS
+        or path == "/"
+        or path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path.startswith("/openapi")
+        or path.startswith("/static")
+    ):
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "服务初始化中，请稍后重试"},
+    )
+
+
+@app.middleware("http")
 async def auth_gateway(request: Request, call_next):
     """Simple gateway: require JWT for all routes except login/register/docs/root."""
     path = request.url.path
@@ -255,9 +335,6 @@ async def auth_gateway(request: Request, call_next):
     request.state.username = identity.get("username")
     request.state.user_id = identity.get("user_id")
 
-    print(request.state.user_id)
-    print(request.state.username)
-
     return await call_next(request)
 
 
@@ -284,4 +361,7 @@ async def root():
     """
     Root endpoint to check API status.
     """
-    return {"message": "Welcome to CookHero API!"}
+    return {
+        "message": "Welcome to CookHero API!",
+        "db_ready": bool(getattr(app.state, "db_ready", False)),
+    }
