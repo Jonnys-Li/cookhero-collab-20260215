@@ -1,12 +1,11 @@
 /**
  * Tool Selector Component
  *
- * Tools/MCP/Agents 分为独立方框：
- * - Tools 方框：展示 builtin server，点击展开显示工具列表
- * - MCP 方框：展示 MCP servers，点击展开显示工具列表
+ * Tools/Agents 分为独立方框：
+ * - Tools 方框：统一展示所有可用工具（本地 + MCP server）
  * - Agents 方框：展示 Subagent，点击展开显示列表
  *
- * Tools/MCP 使用统一的 ServerCard 组件展示。
+ * 所有工具 server 使用统一的 ServerCard 组件展示。
  */
 
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
@@ -296,7 +295,6 @@ export function ToolSelector({
   onExpandChange,
 }: ToolSelectorProps) {
   const [isToolsExpanded, setIsToolsExpanded] = useState(false);
-  const [isMCPExpanded, setIsMCPExpanded] = useState(false);
   const [isAgentsExpanded, setIsAgentsExpanded] = useState(false);
   const [servers, setServers] = useState<ServerInfo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -466,8 +464,8 @@ export function ToolSelector({
   }, [selectedTools]);
 
   useEffect(() => {
-    onExpandChange?.(isToolsExpanded || isMCPExpanded || isAgentsExpanded);
-  }, [isToolsExpanded, isMCPExpanded, isAgentsExpanded, onExpandChange]);
+    onExpandChange?.(isToolsExpanded || isAgentsExpanded);
+  }, [isToolsExpanded, isAgentsExpanded, onExpandChange]);
 
   useEffect(() => () => onExpandChange?.(false), [onExpandChange]);
 
@@ -564,17 +562,21 @@ export function ToolSelector({
     setShowingInfoAgent(prev => (prev === name ? null : name));
   }, []);
 
-  // Separate builtin and MCP servers
-  const { builtinServers, mcpServers } = useMemo(() => ({
-    builtinServers: servers.filter(s => s.type === 'local'),
-    mcpServers: servers.filter(s => s.type === 'mcp'),
-  }), [servers]);
+  const toolServers = useMemo(
+    () =>
+      [...servers].sort((a, b) => {
+        if (a.type === b.type) {
+          return a.name.localeCompare(b.name);
+        }
+        return a.type === 'local' ? -1 : 1;
+      }),
+    [servers]
+  );
 
-  // Calculate selected counts
-  const builtinTools = builtinServers.flatMap(s => s.tools);
-  const mcpTools = mcpServers.flatMap(s => s.tools);
-  const builtinSelectedCount = builtinTools.filter(t => selectedTools.includes(t.name)).length;
-  const mcpSelectedCount = mcpTools.filter(t => selectedTools.includes(t.name)).length;
+  const allTools = toolServers.flatMap((server) => server.tools);
+  const allSelectedToolCount = allTools.filter((tool) =>
+    selectedTools.includes(tool.name)
+  ).length;
   const subagentSelectedCount = subagents.filter(s =>
     selectedTools.includes(`subagent_${s.name}`)
   ).length;
@@ -592,7 +594,6 @@ export function ToolSelector({
           onClick={() => {
             setIsToolsExpanded(!isToolsExpanded);
             if (!isToolsExpanded) {
-              setIsMCPExpanded(false);
               setIsAgentsExpanded(false);
             }
           }}
@@ -611,7 +612,7 @@ export function ToolSelector({
           <Wrench className="w-4 h-4 text-orange-500" />
           <span className="font-medium">Tools</span>
           <span className="text-xs text-gray-500 dark:text-gray-400">
-            ({builtinSelectedCount}/{builtinTools.length})
+            ({allSelectedToolCount}/{allTools.length})
           </span>
           {isToolsExpanded ? (
             <ChevronUp className="w-4 h-4" />
@@ -619,44 +620,6 @@ export function ToolSelector({
             <ChevronDown className="w-4 h-4" />
           )}
         </button>
-
-        {/* MCP Header */}
-        {mcpServers.length > 0 && (
-          <button
-            onClick={() => {
-              setIsMCPExpanded(!isMCPExpanded);
-              if (!isMCPExpanded) {
-                setIsToolsExpanded(false);
-                setIsAgentsExpanded(false);
-              }
-            }}
-            disabled={isLoading}
-            className={`
-              flex items-center gap-2 px-3 py-2 rounded-lg text-sm
-              transition-colors duration-150 whitespace-nowrap
-              ${isLoading
-                ? 'text-gray-400 cursor-not-allowed'
-                : isMCPExpanded
-                  ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200'
-                  : 'text-gray-700 dark:text-gray-300 hover:bg-blue-50 dark:hover:bg-blue-900/20'
-              }
-            `}
-          >
-            <Globe className="w-4 h-4 text-blue-500" />
-            <span className="font-medium">MCP</span>
-            <span className="text-xs text-gray-500 dark:text-gray-400">
-              ({mcpSelectedCount}/{mcpTools.length})
-            </span>
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              {mcpServers.length} server{mcpServers.length > 1 ? 's' : ''}
-            </span>
-            {isMCPExpanded ? (
-              <ChevronUp className="w-4 h-4" />
-            ) : (
-              <ChevronDown className="w-4 h-4" />
-            )}
-          </button>
-        )}
 
         {/* Agents Header */}
         {hasSubagents && (
@@ -666,7 +629,6 @@ export function ToolSelector({
                 setIsAgentsExpanded(!isAgentsExpanded);
                 if (!isAgentsExpanded) {
                   setIsToolsExpanded(false);
-                  setIsMCPExpanded(false);
                 }
               }}
               disabled={isSubagentLoading}
@@ -705,7 +667,7 @@ export function ToolSelector({
       </div>
 
       {/* ========== Single Expanded Panel ========== */}
-      {(isToolsExpanded || isMCPExpanded || isAgentsExpanded) && (
+      {(isToolsExpanded || isAgentsExpanded) && (
         <div className="bg-gray-50/50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-600 p-3 space-y-2">
           {/* Tools Expanded Panel */}
           {isToolsExpanded && (
@@ -718,10 +680,10 @@ export function ToolSelector({
                 <div className="text-sm text-red-500 text-center py-2">
                   {error}
                 </div>
-              ) : builtinServers.length > 0 ? (
-                builtinServers.map(server => (
+              ) : toolServers.length > 0 ? (
+                toolServers.map(server => (
                   <ServerCard
-                    key={server.name}
+                    key={`${server.type}:${server.name}`}
                     server={server}
                     selectedTools={selectedTools}
                     onToggleTool={handleToggleTool}
@@ -733,27 +695,9 @@ export function ToolSelector({
                 ))
               ) : (
                 <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-2">
-                  No built-in tools available
+                  No tools available
                 </div>
               )}
-            </>
-          )}
-
-          {/* MCP Expanded Panel */}
-          {isMCPExpanded && (
-            <>
-              {mcpServers.map(server => (
-                <ServerCard
-                  key={server.name}
-                  server={server}
-                  selectedTools={selectedTools}
-                  onToggleTool={handleToggleTool}
-                  onToggleAll={handleToggleServer}
-                  disabled={disabled}
-                  isExpanded={expandedServers.has(server.name)}
-                  onToggleExpand={() => handleToggleExpandServer(server.name)}
-                />
-              ))}
             </>
           )}
 
