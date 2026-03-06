@@ -32,3 +32,14 @@
 
 - 默认在任务完成并通过必要校验后，执行 `git push origin main`。
 - 若用户明确要求“不 push”或“先别提交”，则以用户要求为准。
+
+## 自动化配置记忆（新增）
+
+- 自动同步脚本：`scripts/sync-render-env.sh`
+- 自动同步工作流：`.github/workflows/cloud-config-sync.yml`
+- 需要一次性配置的 GitHub Secrets：
+  - `MCP_DIET_SERVICE_KEY`
+  - `RENDER_API_KEY`
+  - `RENDER_SERVICE_ID`（推荐）或 `RENDER_SERVICE_NAME=cookhero-backend`
+  - `PROD_BACKEND_URL=https://cookhero-collab-20260215.onrender.com`
+- 烟测会读取 `MCP_DIET_SERVICE_KEY` 做 `diet-adjust` 端点可用性验证。

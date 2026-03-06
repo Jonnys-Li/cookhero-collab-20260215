@@ -12,6 +12,8 @@ MAX_RETRIES="${MAX_RETRIES:-2}"
 CONNECT_TIMEOUT_SECONDS="${CONNECT_TIMEOUT_SECONDS:-8}"
 REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-20}"
 SMOKE_STRICT="${SMOKE_STRICT:-false}"
+MCP_SERVICE_KEY="${MCP_SERVICE_KEY:-}"
+MCP_TOOLS_MIN="${MCP_TOOLS_MIN:-1}"
 
 TMP_DIR="$(mktemp -d)"
 TMP_HEADERS="${TMP_DIR}/headers.txt"
@@ -304,6 +306,37 @@ assert_status_with_retry \
   "GET" \
   "${BACKEND_URL}/" \
   "200"
+
+# 11) MCP diet-adjust 可用性探测（可选）
+if [[ -z "${MCP_SERVICE_KEY}" ]]; then
+  if [[ "${STRICT_MODE}" == "true" ]]; then
+    handle_assert_failure "MCP_SERVICE_KEY missing in strict mode: cannot validate MCP diet-adjust availability"
+  else
+    log_warn "MCP_SERVICE_KEY missing, skip MCP diet-adjust smoke check."
+  fi
+else
+  assert_status_with_retry \
+    "MCP diet-adjust tools/list status check" \
+    "POST" \
+    "${FRONTEND_URL}/api/v1/mcp/diet-adjust" \
+    "200" \
+    -H "Content-Type: application/json" \
+    -H "X-MCP-Service-Key: ${MCP_SERVICE_KEY}" \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+
+  if status_matches_expected "${LAST_STATUS}" "200"; then
+    if ! jq -e '.result.tools | type == "array"' "${TMP_BODY}" >/dev/null 2>&1; then
+      handle_assert_failure "MCP diet-adjust response does not contain result.tools array"
+    else
+      MCP_TOOL_COUNT="$(jq -r '.result.tools | length' "${TMP_BODY}" 2>/dev/null || echo "0")"
+      if [[ "${MCP_TOOL_COUNT}" =~ ^[0-9]+$ ]] && (( MCP_TOOL_COUNT >= MCP_TOOLS_MIN )); then
+        log_pass "MCP diet-adjust tools loaded (${MCP_TOOL_COUNT})"
+      else
+        handle_assert_failure "MCP diet-adjust tools count too low: expected >= ${MCP_TOOLS_MIN}, got ${MCP_TOOL_COUNT}"
+      fi
+    fi
+  fi
+fi
 
 echo ""
 echo "========================================="

@@ -9,6 +9,7 @@
 - 前端 API 策略: `VITE_API_BASE=/api/v1`（通过 `frontend/vercel.json` 代理）
 - 后端部署策略: Render Free（当前阶段仅监控，不升级付费）
 - 自动监控: GitHub Actions `Production Smoke Test`（每 30 分钟）
+- 自动修复: GitHub Actions `Cloud Config Sync`（push main / 手动触发）
 
 ## 2. 标准发布流程（常规）
 
@@ -97,13 +98,43 @@ vercel --prod --yes
 - `PROD_BACKEND_URL`
 - `SMOKE_USERNAME`（仅严格模式必需）
 - `SMOKE_PASSWORD`（仅严格模式必需）
+- `MCP_DIET_SERVICE_KEY`（用于 MCP 鉴权与烟测）
+- `RENDER_API_KEY`（用于自动回填 Render 环境变量）
+- `RENDER_SERVICE_ID`（推荐）或 `RENDER_SERVICE_NAME`（兜底）
 
 推荐值:
 
 - `PROD_FRONTEND_URL=https://frontend-one-gray-39.vercel.app`
 - `PROD_BACKEND_URL=https://cookhero-collab-20260215.onrender.com`
+- `RENDER_SERVICE_NAME=cookhero-backend`
 
-## 8. 变更约束
+## 8. 云配置自动同步（新增）
+
+- 工作流: `.github/workflows/cloud-config-sync.yml`
+- 同步脚本: `scripts/sync-render-env.sh`
+- 默认行为:
+  1. 将 `MCP_DIET_SERVICE_KEY` 写入 Render 服务环境变量
+  2. 可选触发一次 Render 部署
+  3. 轮询验证 `POST /api/v1/mcp/diet-adjust` 的 `tools/list` 是否恢复可用
+- 触发方式:
+  - `push main` 自动触发
+  - Actions 页面手工 `workflow_dispatch` 触发
+- 本地手工执行（紧急排障）:
+
+```bash
+RENDER_API_KEY=<render_api_key> \
+RENDER_SERVICE_ID=<render_service_id> \
+MCP_DIET_SERVICE_KEY=<mcp_key> \
+BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
+./scripts/sync-render-env.sh --trigger-deploy
+```
+
+- 说明:
+  - `RENDER_SERVICE_ID` 更稳定，优先推荐。
+  - 如仅提供 `RENDER_SERVICE_NAME`，脚本会先调用 Render API 解析 id。
+  - 若缺少必需 secrets，工作流会给出 warning，不会进行同步。
+
+## 9. 变更约束
 
 - 本阶段不修改后端公开 API 路径与返回协议。
 - 本阶段不引入额外付费监控服务。
