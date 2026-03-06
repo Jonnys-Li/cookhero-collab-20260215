@@ -11,6 +11,24 @@ from app.agent.tools.mcp.client import MCPClient
 logger = logging.getLogger(__name__)
 
 
+class MCPServerLoadError(Exception):
+    """Structured MCP server load error."""
+
+    def __init__(
+        self,
+        *,
+        server_name: str,
+        phase: str,
+        message: str,
+        error_code: str = "load_failed",
+    ):
+        self.server_name = server_name
+        self.phase = phase
+        self.message = message
+        self.error_code = error_code
+        super().__init__(f"[{server_name}:{phase}] {message}")
+
+
 class MCPToolProvider:
     name = "mcp"
 
@@ -53,18 +71,68 @@ class MCPToolProvider:
             if tool_name.startswith(prefix):
                 del self._tools[tool_name]
 
-    async def load_server_tools(self, name: str) -> list[MCPTool]:
+    async def load_server_tools(self, name: str, strict: bool = False) -> list[MCPTool]:
         client = self._get_client(name)
         if not client:
-            logger.warning(f"MCP server not registered: {name}")
+            message = "MCP server not registered"
+            if strict:
+                raise MCPServerLoadError(
+                    server_name=name,
+                    phase="register",
+                    message=message,
+                    error_code="not_registered",
+                )
+            logger.warning("%s: %s", message, name)
             return []
 
         try:
             self._remove_server_tools(name)
-            await client.initialize()
-            tools = await client.list_tools()
-            loaded: list[MCPTool] = []
+            try:
+                await client.initialize()
+            except Exception as exc:
+                if strict:
+                    raise MCPServerLoadError(
+                        server_name=name,
+                        phase="initialize",
+                        message=str(exc),
+                        error_code="initialize_failed",
+                    ) from exc
+                logger.exception(
+                    "Failed to initialize MCP server %s: %s",
+                    name,
+                    exc,
+                )
+                return []
 
+            try:
+                tools = await client.list_tools()
+            except Exception as exc:
+                if strict:
+                    raise MCPServerLoadError(
+                        server_name=name,
+                        phase="tools/list",
+                        message=str(exc),
+                        error_code="tools_list_failed",
+                    ) from exc
+                logger.exception(
+                    "Failed to fetch tools/list from MCP server %s: %s",
+                    name,
+                    exc,
+                )
+                return []
+
+            if not tools:
+                if strict:
+                    raise MCPServerLoadError(
+                        server_name=name,
+                        phase="tools/list",
+                        message="MCP server returned zero tools",
+                        error_code="zero_tools",
+                    )
+                logger.warning("MCP server %s returned zero tools", name)
+                return []
+
+            loaded: list[MCPTool] = []
             for tool_info in tools:
                 tool_name = tool_info.get("name", "")
                 if not tool_name:
@@ -83,10 +151,23 @@ class MCPToolProvider:
                 self._tools[mcp_tool.name] = mcp_tool
                 loaded.append(mcp_tool)
 
-            logger.info(f"Loaded {len(loaded)} tools from MCP server: {name}")
+            if not loaded:
+                if strict:
+                    raise MCPServerLoadError(
+                        server_name=name,
+                        phase="tools/list",
+                        message="MCP server tools are invalid or empty",
+                        error_code="invalid_tools",
+                    )
+                logger.warning("MCP server %s returned invalid tools payload", name)
+                return []
+
+            logger.info("Loaded %s tools from MCP server: %s", len(loaded), name)
             return loaded
         except Exception as e:
-            logger.exception(f"Failed to load tools from MCP server {name}: {e}")
+            if strict and isinstance(e, MCPServerLoadError):
+                raise
+            logger.exception("Failed to load tools from MCP server %s: %s", name, e)
             return []
 
     def unregister_server(self, name: str) -> None:

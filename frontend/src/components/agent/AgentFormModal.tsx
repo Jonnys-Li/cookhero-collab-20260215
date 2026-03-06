@@ -9,6 +9,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { Modal } from '../common/Modal';
 import type { SubagentSchema, CreateSubagentRequest, UpdateSubagentRequest } from '../../types';
 import { createSubagent, updateSubagent, getAvailableTools } from '../../services/api/agent';
+import { TOOLS_UPDATED_EVENT } from '../../constants';
 
 interface AgentFormModalProps {
   open: boolean;
@@ -55,8 +56,8 @@ export function AgentFormModal({ open, onClose, agent, token, onSave }: AgentFor
     try {
       const response = await getAvailableTools(token);
       const toolNames = response.servers
-        .filter((s) => s.type === 'local')
-        .flatMap((s) => s.tools.map((t) => t.name));
+        .flatMap((s) => s.tools.map((t) => t.name))
+        .filter((toolName) => !toolName.startsWith('subagent_'));
       setAvailableTools(toolNames);
     } catch (err) {
       console.error('Failed to load tools:', err);
@@ -89,6 +90,17 @@ export function AgentFormModal({ open, onClose, agent, token, onSave }: AgentFor
       setValidationErrors({});
     }
   }, [open, agent, loadAvailableTools]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleToolsUpdated = () => {
+      loadAvailableTools();
+    };
+    window.addEventListener(TOOLS_UPDATED_EVENT, handleToolsUpdated);
+    return () => {
+      window.removeEventListener(TOOLS_UPDATED_EVENT, handleToolsUpdated);
+    };
+  }, [open, loadAvailableTools]);
 
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};

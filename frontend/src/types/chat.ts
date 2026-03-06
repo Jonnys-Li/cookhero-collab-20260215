@@ -113,6 +113,8 @@ export interface MCPServer {
   enabled: boolean;
   created_at: string;
   updated_at: string;
+  loaded_tools_count?: number;
+  loaded_tools?: string[];
 }
 
 export interface MCPServerListResponse {

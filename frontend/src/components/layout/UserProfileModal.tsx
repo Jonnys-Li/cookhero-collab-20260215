@@ -3,7 +3,7 @@
  * Settings dialog for user profile and appearance
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Settings, Palette, Plug, Bot, Trash2, Pencil } from 'lucide-react';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../../services/api';
 import { useAuth, useTheme } from '../../contexts';
 import type { SubagentSchema, ToolSchema } from '../../types';
+import { TOOLS_UPDATED_EVENT } from '../../constants';
 
 export interface UserProfileModalProps {
   open: boolean;
@@ -62,6 +63,23 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
   const [agentLoading, setAgentLoading] = useState(false);
   const [editingAgentName, setEditingAgentName] = useState<string | null>(null);
 
+  const loadAvailableAgentTools = useCallback(async (authToken: string) => {
+    const res = await getAvailableTools(authToken);
+    const toolMap = new Map<string, ToolSchema>();
+    res.servers.forEach((server) => {
+      server.tools.forEach((tool) => {
+        if (!tool.name.startsWith('subagent_')) {
+          toolMap.set(tool.name, tool);
+        }
+      });
+    });
+    setAvailableAgentTools(Array.from(toolMap.values()));
+  }, []);
+
+  const notifyToolsUpdated = useCallback(() => {
+    window.dispatchEvent(new Event(TOOLS_UPDATED_EVENT));
+  }, []);
+
   useEffect(() => {
     if (!open || !token) return;
     let cancelled = false;
@@ -99,24 +117,15 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
 
-    getAvailableTools(token)
-      .then((res) => {
+    loadAvailableAgentTools(token)
+      .then(() => {
         if (cancelled) return;
-        const toolMap = new Map<string, ToolSchema>();
-        res.servers.forEach((server) => {
-          server.tools.forEach((tool) => {
-            if (!tool.name.startsWith('subagent_')) {
-              toolMap.set(tool.name, tool);
-            }
-          });
-        });
-        setAvailableAgentTools(Array.from(toolMap.values()));
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [open, token]);
+  }, [open, token, loadAvailableAgentTools]);
 
   const handleSave = async () => {
     setError(null);
@@ -188,6 +197,8 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
       setMcpAuthHeaderName('Authorization');
       setMcpAuthToken('');
       setEditingMcpName(null);
+      await loadAvailableAgentTools(token);
+      notifyToolsUpdated();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
@@ -253,6 +264,8 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
         )
       );
       resetMcpForm();
+      await loadAvailableAgentTools(token);
+      notifyToolsUpdated();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(
@@ -280,6 +293,8 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
       if (editingMcpName === name) {
         resetMcpForm();
       }
+      await loadAvailableAgentTools(token);
+      notifyToolsUpdated();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(

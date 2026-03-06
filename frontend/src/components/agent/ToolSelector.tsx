@@ -14,6 +14,7 @@ import { ChevronDown, ChevronUp, Wrench, Globe, Check, Info, Bot, Loader2, Setti
 import type { ServerInfo, ToolSchema, SubagentSchema } from '../../types';
 import { getAvailableTools, listSubagents, toggleSubagent } from '../../services/api/agent';
 import { AgentManager } from './AgentManager';
+import { TOOLS_UPDATED_EVENT } from '../../constants';
 
 // 默认选中的 subagent 名称
 const DEFAULT_SELECTED_SUBAGENTS = [
@@ -320,23 +321,32 @@ export function ToolSelector({
       const response = await getAvailableTools(token);
       setServers(response.servers);
 
-      // Always enable builtin tools on load
       if (response.servers.length > 0) {
+        const availableToolNames = response.servers.flatMap((server) =>
+          server.tools.map((tool) => tool.name)
+        );
+        const availableToolSet = new Set(availableToolNames);
         const builtinToolNames = response.servers
           .filter(server => server.type === 'local')
           .flatMap(server => server.tools.map(tool => tool.name));
         const builtinSet = new Set(builtinToolNames);
+
+        const preservedSelection = selectedToolsRef.current.filter(
+          (name) => name.startsWith('subagent_') || availableToolSet.has(name)
+        );
         const mergedSelection = [
-          ...selectedToolsRef.current.filter((name) => !builtinSet.has(name)),
+          ...preservedSelection.filter((name) => !builtinSet.has(name)),
           ...builtinToolNames,
         ];
+
+        const uniqueMergedSelection = Array.from(new Set(mergedSelection));
         const hasDiff =
-          mergedSelection.length !== selectedToolsRef.current.length ||
-          mergedSelection.some(
+          uniqueMergedSelection.length !== selectedToolsRef.current.length ||
+          uniqueMergedSelection.some(
             (name, index) => name !== selectedToolsRef.current[index]
           );
         if (hasDiff) {
-          onSelectionChange(mergedSelection);
+          onSelectionChange(uniqueMergedSelection);
         }
       }
     } catch (err) {
@@ -429,6 +439,16 @@ export function ToolSelector({
 
   useEffect(() => {
     loadTools();
+  }, [loadTools]);
+
+  useEffect(() => {
+    const handleToolsUpdated = () => {
+      loadTools();
+    };
+    window.addEventListener(TOOLS_UPDATED_EVENT, handleToolsUpdated);
+    return () => {
+      window.removeEventListener(TOOLS_UPDATED_EVENT, handleToolsUpdated);
+    };
   }, [loadTools]);
 
   useEffect(() => {

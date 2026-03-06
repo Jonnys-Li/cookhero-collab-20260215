@@ -18,6 +18,8 @@ export const STORAGE_KEYS = {
   STREAMING_CACHE: 'healthhero_streaming_cache',
 } as const;
 
+export const TOOLS_UPDATED_EVENT = 'cookhero:tools-updated';
+
 // Intent Labels
 export const INTENT_LABELS: Record<string, string> = {
   recipe_search: '菜谱搜索',

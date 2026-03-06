@@ -73,6 +73,8 @@ class MCPServerResponse(BaseModel):
     enabled: bool
     created_at: str
     updated_at: str
+    loaded_tools_count: Optional[int] = None
+    loaded_tools: Optional[List[str]] = None
 
 
 class MCPServerListResponse(BaseModel):
@@ -262,7 +264,7 @@ async def create_mcp_server(
         raise HTTPException(status_code=401, detail="需要登录")
 
     try:
-        server = await mcp_service.create_server(
+        server, loaded_tools = await mcp_service.create_server(
             user_id=user_id,
             name=payload.name,
             endpoint=str(payload.endpoint),
@@ -273,7 +275,11 @@ async def create_mcp_server(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return MCPServerResponse(**server.to_dict())
+    return MCPServerResponse(
+        **server.to_dict(),
+        loaded_tools_count=len(loaded_tools),
+        loaded_tools=loaded_tools,
+    )
 
 
 @router.patch("/agent/mcp-servers/{server_name}")
@@ -293,7 +299,7 @@ async def update_mcp_server(
     )
 
     try:
-        server = await mcp_service.update_server(
+        result = await mcp_service.update_server(
             user_id=user_id,
             name=server_name,
             endpoint=str(update_data["endpoint"]) if "endpoint" in update_data else None,
@@ -305,10 +311,15 @@ async def update_mcp_server(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if not server:
+    if not result:
         raise HTTPException(status_code=404, detail="MCP server not found")
 
-    return MCPServerResponse(**server.to_dict())
+    server, loaded_tools = result
+    return MCPServerResponse(
+        **server.to_dict(),
+        loaded_tools_count=len(loaded_tools),
+        loaded_tools=loaded_tools or None,
+    )
 
 
 @router.delete("/agent/mcp-servers/{server_name}")

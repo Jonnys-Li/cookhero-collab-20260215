@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.agent.database.models import AgentMCPServerModel
 from app.agent.registry import AgentHub
-from app.agent.tools.providers.mcp import MCPToolProvider
+from app.agent.tools.providers.mcp import MCPToolProvider, MCPServerLoadError
 from app.database.session import get_session_context
 
 logger = logging.getLogger(__name__)
@@ -39,45 +39,88 @@ class MCPService:
         enabled: bool = True,
         auth_header_name: str | None = None,
         auth_token: str | None = None,
-    ) -> AgentMCPServerModel:
+    ) -> tuple[AgentMCPServerModel, list[str]]:
         self._validate_name(name)
         self._validate_endpoint(endpoint)
         self._validate_auth(auth_header_name, auth_token)
 
-        async with get_session_context() as session:
-            existing_stmt = select(AgentMCPServerModel).where(
-                AgentMCPServerModel.user_id == user_id,
-                AgentMCPServerModel.name == name,
-            )
-            existing = (await session.execute(existing_stmt)).scalar_one_or_none()
-            if existing:
-                raise ValueError("MCP 名称已存在")
+        loaded_tool_names: list[str] = []
+        registration_attempted = False
+        server = AgentMCPServerModel(
+            user_id=user_id,
+            name=name,
+            endpoint=endpoint,
+            auth_header_name=auth_header_name,
+            auth_token=auth_token,
+            enabled=enabled,
+        )
 
-            server = AgentMCPServerModel(
-                user_id=user_id,
-                name=name,
-                endpoint=endpoint,
-                auth_header_name=auth_header_name,
-                auth_token=auth_token,
-                enabled=enabled,
-            )
-            session.add(server)
-            await session.flush()
+        try:
+            async with get_session_context() as session:
+                existing_stmt = select(AgentMCPServerModel).where(
+                    AgentMCPServerModel.user_id == user_id,
+                    AgentMCPServerModel.name == name,
+                )
+                existing = (await session.execute(existing_stmt)).scalar_one_or_none()
+                if existing:
+                    raise ValueError("MCP 名称已存在")
 
-        if enabled:
-            await self.register_server(server)
+                session.add(server)
+                await session.flush()
 
-        return server
+                if enabled:
+                    registration_attempted = True
+                    loaded_tool_names = await self.register_server(server, strict=True)
+        except Exception:
+            if registration_attempted:
+                self._unregister_server(name)
+            raise
 
-    async def register_server(self, server: AgentMCPServerModel) -> bool:
+        return server, loaded_tool_names
+
+    async def register_server(
+        self,
+        server: AgentMCPServerModel,
+        *,
+        strict: bool = False,
+    ) -> list[str]:
         if not server.enabled:
-            return False
+            return []
 
         provider = self._get_provider()
         headers = self._build_headers(server)
         provider.register_server(server.name, server.endpoint, headers)
-        loaded = await provider.load_server_tools(server.name)
-        return len(loaded) > 0
+
+        try:
+            loaded = await provider.load_server_tools(server.name, strict=strict)
+        except MCPServerLoadError as exc:
+            provider.unregister_server(server.name)
+            logger.warning(
+                "MCP server registration failed: server=%s endpoint=%s phase=%s error_code=%s error=%s",
+                server.name,
+                server.endpoint,
+                exc.phase,
+                exc.error_code,
+                exc.message,
+            )
+            if strict:
+                raise ValueError(
+                    self._format_load_error(server.name, server.endpoint, exc)
+                ) from exc
+            return []
+
+        loaded_tool_names = [tool.name for tool in loaded]
+        if strict and not loaded_tool_names:
+            provider.unregister_server(server.name)
+            logger.warning(
+                "MCP server registration failed: server=%s endpoint=%s phase=tools/list error_code=zero_tools",
+                server.name,
+                server.endpoint,
+            )
+            raise ValueError(
+                f"MCP 服务器校验失败（{server.name}）：tools/list 阶段未返回可用工具"
+            )
+        return loaded_tool_names
 
     async def register_all_for_user(self, user_id: str) -> None:
         servers = await self.list_servers(user_id)
@@ -118,34 +161,53 @@ class MCPService:
         auth_header_name: str | None = None,
         auth_token: str | None = None,
         update_auth: bool = False,
-    ) -> AgentMCPServerModel | None:
-        async with get_session_context() as session:
-            stmt = select(AgentMCPServerModel).where(
-                AgentMCPServerModel.user_id == user_id,
-                AgentMCPServerModel.name == name,
-            )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-            if not existing:
-                return None
+    ) -> tuple[AgentMCPServerModel, list[str]] | None:
+        loaded_tool_names: list[str] = []
+        registration_attempted = False
+        should_unregister_after_commit = False
 
-            if endpoint is not None:
-                self._validate_endpoint(endpoint)
-                existing.endpoint = endpoint
+        try:
+            async with get_session_context() as session:
+                stmt = select(AgentMCPServerModel).where(
+                    AgentMCPServerModel.user_id == user_id,
+                    AgentMCPServerModel.name == name,
+                )
+                existing = (await session.execute(stmt)).scalar_one_or_none()
+                if not existing:
+                    return None
 
-            if update_auth:
-                self._validate_auth(auth_header_name, auth_token)
-                existing.auth_header_name = auth_header_name
-                existing.auth_token = auth_token
+                if endpoint is not None:
+                    self._validate_endpoint(endpoint)
+                    existing.endpoint = endpoint
 
-            if enabled is not None:
-                existing.enabled = enabled
+                if update_auth:
+                    self._validate_auth(auth_header_name, auth_token)
+                    existing.auth_header_name = auth_header_name
+                    existing.auth_token = auth_token
 
-        if not existing.enabled:
-            self._unregister_server(existing.name)
-            return existing
+                if enabled is not None:
+                    existing.enabled = enabled
 
-        await self.register_server(existing)
-        return existing
+                should_revalidate = (
+                    endpoint is not None or update_auth or enabled is not None
+                )
+
+                if existing.enabled and should_revalidate:
+                    registration_attempted = True
+                    loaded_tool_names = await self.register_server(existing, strict=True)
+                elif not existing.enabled:
+                    should_unregister_after_commit = True
+
+                await session.flush()
+        except Exception:
+            if registration_attempted:
+                self._unregister_server(name)
+            raise
+
+        if should_unregister_after_commit:
+            self._unregister_server(name)
+
+        return existing, loaded_tool_names
 
     async def delete_server(self, user_id: str, name: str) -> bool:
         async with get_session_context() as session:
@@ -188,6 +250,17 @@ class MCPService:
         if server.auth_header_name and server.auth_token:
             return {server.auth_header_name: server.auth_token}
         return None
+
+    def _format_load_error(
+        self,
+        server_name: str,
+        endpoint: str,
+        exc: MCPServerLoadError,
+    ) -> str:
+        return (
+            f"MCP 服务器校验失败（{server_name}）：{exc.phase} 阶段错误（{exc.error_code}）- "
+            f"{exc.message}。endpoint={endpoint}"
+        )
 
     def _get_provider(self) -> MCPToolProvider:
         return AgentHub.get_provider("mcp")  # type: ignore
