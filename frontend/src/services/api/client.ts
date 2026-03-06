@@ -5,6 +5,102 @@
 import { API_BASE, STORAGE_KEYS } from '../../constants';
 import { capitalize } from '../../utils';
 
+const DEFAULT_TIMEOUT_MS = 12000;
+const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+const API_FALLBACK_BASE =
+  import.meta.env.VITE_API_FALLBACK_BASE ||
+  'https://cookhero-collab-20260215.onrender.com/api/v1';
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
+function normalizeBase(base: string): string {
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
+function normalizeEndpoint(endpoint: string): string {
+  return endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+}
+
+function buildRequestUrl(base: string, endpoint: string): string {
+  return `${normalizeBase(base)}${normalizeEndpoint(endpoint)}`;
+}
+
+function getFallbackUrl(endpoint: string): string | null {
+  const normalizedPrimary = normalizeBase(API_BASE);
+  const normalizedFallback = normalizeBase(API_FALLBACK_BASE);
+
+  if (!normalizedFallback || normalizedFallback === normalizedPrimary) {
+    return null;
+  }
+
+  return buildRequestUrl(normalizedFallback, endpoint);
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof DOMException && error.name === 'AbortError'
+  );
+}
+
+function toNetworkErrorMessage(error: unknown): string {
+  if (isTimeoutError(error)) {
+    return `请求超时（>${Math.round(API_TIMEOUT_MS / 1000)}秒），请稍后重试。`;
+  }
+  if (error instanceof TypeError) {
+    return '网络连接异常，请检查网络后重试。';
+  }
+  return String(error instanceof Error ? error.message : 'Unknown network error');
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function requestWithFallback(
+  endpoint: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const primaryUrl = buildRequestUrl(API_BASE, endpoint);
+  const fallbackUrl = getFallbackUrl(endpoint);
+
+  try {
+    const primaryResponse = await fetchWithTimeout(primaryUrl, init);
+    if (!fallbackUrl || !RETRYABLE_STATUS_CODES.has(primaryResponse.status)) {
+      return primaryResponse;
+    }
+
+    console.warn(
+      `[api] primary request returned ${primaryResponse.status}, retrying via fallback: ${fallbackUrl}`,
+    );
+    return await fetchWithTimeout(fallbackUrl, init);
+  } catch (error) {
+    if (!fallbackUrl || (!isTimeoutError(error) && !(error instanceof TypeError))) {
+      throw new Error(toNetworkErrorMessage(error));
+    }
+
+    console.warn(
+      `[api] primary request failed, retrying via fallback: ${fallbackUrl}`,
+      error,
+    );
+    try {
+      return await fetchWithTimeout(fallbackUrl, init);
+    } catch (fallbackError) {
+      throw new Error(toNetworkErrorMessage(fallbackError));
+    }
+  }
+}
+
 /**
  * Create authorization headers
  */
@@ -97,7 +193,7 @@ function friendlyMessageFor(msg: string, ctx?: Record<string, unknown>): string 
  * Make a GET request
  */
 export async function apiGet<T>(endpoint: string, token?: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await requestWithFallback(endpoint, {
     headers: createAuthHeaders(token),
   });
 
@@ -117,7 +213,7 @@ export async function apiPost<T, D = unknown>(
   data: D,
   token?: string
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await requestWithFallback(endpoint, {
     method: 'POST',
     headers: createJsonHeaders(token),
     body: JSON.stringify(data),
@@ -139,7 +235,7 @@ export async function apiPut<T, D = unknown>(
   data: D,
   token?: string
 ): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await requestWithFallback(endpoint, {
     method: 'PUT',
     headers: createJsonHeaders(token),
     body: JSON.stringify(data),
@@ -157,7 +253,7 @@ export async function apiPut<T, D = unknown>(
  * Make a DELETE request
  */
 export async function apiDelete<T>(endpoint: string, token?: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await requestWithFallback(endpoint, {
     method: 'DELETE',
     headers: createAuthHeaders(token),
   });
