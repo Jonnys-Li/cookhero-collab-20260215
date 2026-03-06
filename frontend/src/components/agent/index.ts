@@ -16,3 +16,6 @@ export type { AgentThinkingBlockProps, TraceStep } from './AgentThinkingBlock';
 
 export { ToolSelector } from './ToolSelector';
 export type { ToolSelectorProps } from './ToolSelector';
+
+export { AgentCollabTimelineCard } from './AgentCollabTimelineCard';
+export { SmartRecommendationCard } from './SmartRecommendationCard';

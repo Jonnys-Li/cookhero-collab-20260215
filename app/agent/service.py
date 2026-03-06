@@ -9,6 +9,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import date, timedelta
 from dataclasses import asdict
 from typing import Any, AsyncGenerator, Optional
 
@@ -187,7 +188,22 @@ class AgentService:
                 images=images,
             )
 
+            response_content = ""
+            trace_steps: list[dict[str, Any]] = []
             tool_events = []
+            collab_runtime = self._build_collab_runtime(
+                context.collab_plan,
+                actual_session_id,
+            )
+            if collab_runtime:
+                initial_timeline = self._build_collab_timeline_payload(collab_runtime)
+                trace_steps.append(
+                    self._build_collab_trace_step(
+                        content=initial_timeline,
+                        action="collab_timeline",
+                    )
+                )
+                yield self._format_event("collab_timeline", initial_timeline)
 
             # 4. If images present, run vision analysis and emit event
             if context.images:
@@ -217,6 +233,30 @@ class AgentService:
                         }
                     )
                     yield self._format_event("vision", vision_result)
+                    if collab_runtime:
+                        self._update_collab_stage(
+                            collab_runtime,
+                            stage_id="recognition",
+                            status="completed",
+                            summary=(
+                                vision_result.get("description")
+                                if isinstance(vision_result, dict)
+                                else None
+                            ),
+                        )
+                        recognition_timeline = self._build_collab_timeline_payload(
+                            collab_runtime
+                        )
+                        trace_steps.append(
+                            self._build_collab_trace_step(
+                                content=recognition_timeline,
+                                action="collab_timeline",
+                            )
+                        )
+                        yield self._format_event(
+                            "collab_timeline",
+                            recognition_timeline,
+                        )
 
             # 5. 获取 Agent
             agent = self._get_agent_or_fallback(agent_name)
@@ -228,10 +268,7 @@ class AgentService:
             )
 
             # 7. 执行 Agent
-            response_content = ""
-            trace_steps = []
-
-            if streaming:
+            if streaming and not collab_runtime:
                 agent_generator = agent.run_streaming(invoker, context)
             else:
                 agent_generator = agent.run(invoker, context)
@@ -291,6 +328,29 @@ class AgentService:
                             "iteration": iteration,
                         },
                     )
+                    if collab_runtime:
+                        forced_call = collab_runtime["forced_call_map"].get(tool_call.id)
+                        if forced_call:
+                            stage_id = str(forced_call.get("stage_id") or "")
+                            if stage_id:
+                                self._update_collab_stage(
+                                    collab_runtime,
+                                    stage_id=stage_id,
+                                    status="running",
+                                )
+                                timeline_payload = self._build_collab_timeline_payload(
+                                    collab_runtime
+                                )
+                                trace_steps.append(
+                                    self._build_collab_trace_step(
+                                        content=timeline_payload,
+                                        action="collab_timeline",
+                                    )
+                                )
+                                yield self._format_event(
+                                    "collab_timeline",
+                                    timeline_payload,
+                                )
 
                 elif chunk.type == AgentChunkType.TOOL_RESULT:
                     result = chunk.data
@@ -334,6 +394,64 @@ class AgentService:
                             "iteration": iteration,
                         },
                     )
+                    if collab_runtime:
+                        forced_call = collab_runtime["forced_call_map"].get(
+                            result.tool_call_id
+                        )
+                        if forced_call:
+                            stage_id = str(forced_call.get("stage_id") or "")
+                            if stage_id:
+                                stage_success = bool(result.success)
+                                self._record_collab_tool_output(
+                                    collab_runtime,
+                                    stage_id=stage_id,
+                                    tool_name=result.name,
+                                    arguments=forced_call.get("arguments"),
+                                    result=result.result,
+                                    success=stage_success,
+                                )
+                                expected_count = collab_runtime["stage_expected"].get(
+                                    stage_id, 1
+                                )
+                                completed_count = collab_runtime["stage_completed"].get(
+                                    stage_id, 0
+                                )
+                                if stage_success:
+                                    completed_count += 1
+                                    collab_runtime["stage_completed"][
+                                        stage_id
+                                    ] = completed_count
+                                next_status = (
+                                    "completed"
+                                    if stage_success and completed_count >= expected_count
+                                    else "failed"
+                                    if not stage_success
+                                    else "running"
+                                )
+                                summary = (
+                                    self._build_result_summary(result.result)
+                                    if stage_success
+                                    else (result.error or "执行失败")
+                                )
+                                self._update_collab_stage(
+                                    collab_runtime,
+                                    stage_id=stage_id,
+                                    status=next_status,
+                                    summary=summary,
+                                )
+                                timeline_payload = self._build_collab_timeline_payload(
+                                    collab_runtime
+                                )
+                                trace_steps.append(
+                                    self._build_collab_trace_step(
+                                        content=timeline_payload,
+                                        action="collab_timeline",
+                                    )
+                                )
+                                yield self._format_event(
+                                    "collab_timeline",
+                                    timeline_payload,
+                                )
 
                 elif chunk.type == AgentChunkType.TRACE:
                     trace_step = chunk.data
@@ -370,6 +488,60 @@ class AgentService:
                 elif chunk.type == AgentChunkType.DONE:
                     # Track answer end time
                     answer_end_time = time.time()
+
+                    if collab_runtime:
+                        self._finalize_collab_stages(collab_runtime)
+                        final_timeline = self._build_collab_timeline_payload(
+                            collab_runtime
+                        )
+                        trace_steps.append(
+                            self._build_collab_trace_step(
+                                content=final_timeline,
+                                action="collab_timeline",
+                            )
+                        )
+                        yield self._format_event("collab_timeline", final_timeline)
+
+                        smart_action = self._build_smart_recommendation_action(
+                            collab_runtime
+                        )
+                        if smart_action:
+                            trace_steps.append(
+                                {
+                                    "error": None,
+                                    "action": "ui_action",
+                                    "content": smart_action,
+                                    "iteration": 0,
+                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                    "source": "subagent",
+                                    "subagent_name": "emotion_support",
+                                }
+                            )
+                            yield self._format_event(
+                                "ui_action",
+                                {
+                                    **smart_action,
+                                    "iteration": 0,
+                                    "source": "subagent",
+                                    "subagent_name": "emotion_support",
+                                    "session_id": actual_session_id,
+                                },
+                            )
+
+                    if not response_content and collab_runtime:
+                        fallback_content = self._build_collab_fallback_content(
+                            collab_runtime
+                        )
+                        if fallback_content:
+                            if thinking_end_time is None:
+                                thinking_end_time = time.time()
+                            response_content = fallback_content
+                            yield self._format_event(
+                                "text",
+                                {
+                                    "content": fallback_content,
+                                },
+                            )
 
                     # Calculate durations
                     thinking_duration_ms = None
@@ -507,6 +679,309 @@ class AgentService:
         except Exception as e:
             logger.exception(f"AgentService.chat failed: {e}")
             yield self._format_event("error", {"error": str(e)})
+
+    def _build_collab_runtime(
+        self,
+        collab_plan: Optional[dict[str, Any]],
+        session_id: str,
+    ) -> Optional[dict[str, Any]]:
+        if not isinstance(collab_plan, dict):
+            return None
+        if not collab_plan.get("enabled"):
+            return None
+
+        raw_stages = collab_plan.get("stages") or []
+        if not isinstance(raw_stages, list):
+            raw_stages = []
+        stages: list[dict[str, Any]] = []
+        for stage in raw_stages:
+            if not isinstance(stage, dict):
+                continue
+            stage_id = str(stage.get("id") or "").strip()
+            if not stage_id:
+                continue
+            stages.append(
+                {
+                    "id": stage_id,
+                    "label": str(stage.get("label") or stage_id),
+                    "status": str(stage.get("status") or "pending"),
+                    "reason": str(stage.get("reason") or ""),
+                    "summary": str(stage.get("summary") or ""),
+                }
+            )
+
+        force_tool_calls = collab_plan.get("force_tool_calls") or []
+        if not isinstance(force_tool_calls, list):
+            force_tool_calls = []
+        forced_call_map: dict[str, dict[str, Any]] = {}
+        stage_expected: dict[str, int] = {}
+        for index, raw_call in enumerate(force_tool_calls):
+            if not isinstance(raw_call, dict):
+                continue
+            name = str(raw_call.get("name") or "").strip()
+            if not name:
+                continue
+            stage_id = str(raw_call.get("stage_id") or "").strip()
+            forced_id = f"forced-{name}-{index}"
+            forced_call_map[forced_id] = raw_call
+            if stage_id:
+                stage_expected[stage_id] = stage_expected.get(stage_id, 0) + 1
+
+        return {
+            "session_id": session_id,
+            "timeline_id": f"collab-{uuid.uuid4().hex}",
+            "stages": stages,
+            "forced_call_map": forced_call_map,
+            "stage_expected": stage_expected,
+            "stage_completed": {},
+            "stage_outputs": {},
+            "weekly_summary": None,
+            "weekly_deviation": None,
+            "emotion_triggered": bool(collab_plan.get("emotion_triggered")),
+            "weekly_progress_triggered": bool(
+                collab_plan.get("weekly_progress_triggered")
+            ),
+        }
+
+    def _build_collab_timeline_payload(self, runtime: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "action_id": runtime.get("timeline_id"),
+            "action_type": "collab_timeline",
+            "source": "collaboration_pipeline",
+            "stages": runtime.get("stages", []),
+        }
+
+    def _build_collab_trace_step(
+        self,
+        *,
+        content: dict[str, Any],
+        action: str,
+    ) -> dict[str, Any]:
+        return {
+            "error": None,
+            "action": action,
+            "content": content,
+            "iteration": 0,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "source": "agent",
+            "subagent_name": None,
+        }
+
+    def _update_collab_stage(
+        self,
+        runtime: dict[str, Any],
+        *,
+        stage_id: str,
+        status: str,
+        summary: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        for stage in runtime.get("stages", []):
+            if stage.get("id") != stage_id:
+                continue
+            stage["status"] = status
+            if summary is not None:
+                stage["summary"] = summary
+            if reason is not None:
+                stage["reason"] = reason
+            return
+
+    def _record_collab_tool_output(
+        self,
+        runtime: dict[str, Any],
+        *,
+        stage_id: str,
+        tool_name: str,
+        arguments: Any,
+        result: Any,
+        success: bool,
+    ) -> None:
+        stage_outputs = runtime.setdefault("stage_outputs", {})
+        existing = stage_outputs.setdefault(stage_id, [])
+        existing.append(
+            {
+                "tool_name": tool_name,
+                "arguments": arguments if isinstance(arguments, dict) else {},
+                "result": result,
+                "success": success,
+            }
+        )
+
+        if tool_name != "diet_analysis":
+            return
+        if not isinstance(arguments, dict):
+            return
+        action = str(arguments.get("action") or "").strip()
+        payload = self._normalize_result_payload(result)
+        if not isinstance(payload, dict):
+            return
+        if action == "weekly_summary":
+            runtime["weekly_summary"] = payload.get("summary", payload)
+        elif action == "deviation":
+            runtime["weekly_deviation"] = payload.get("analysis", payload)
+
+    def _normalize_result_payload(self, result: Any) -> Any:
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:
+                return result
+        return result
+
+    def _build_result_summary(self, result: Any) -> str:
+        payload = self._normalize_result_payload(result)
+        if isinstance(payload, dict):
+            for key in ("message", "result", "summary"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()[:120]
+            if "analysis" in payload and isinstance(payload["analysis"], dict):
+                analysis = payload["analysis"]
+                total_dev = analysis.get("total_deviation")
+                exec_rate = analysis.get("execution_rate")
+                return (
+                    f"偏差 {total_dev} kcal，执行率 {exec_rate}%"
+                    if total_dev is not None and exec_rate is not None
+                    else "已生成周偏差分析"
+                )
+            return "已返回结构化结果"
+        text = str(payload or "").strip()
+        if not text:
+            return "执行完成"
+        return text[:120]
+
+    def _finalize_collab_stages(self, runtime: dict[str, Any]) -> None:
+        for stage in runtime.get("stages", []):
+            status = stage.get("status")
+            if status in {"completed", "failed", "skipped"}:
+                continue
+            if status == "running":
+                stage["status"] = "completed"
+                if not stage.get("summary"):
+                    stage["summary"] = "执行完成"
+            else:
+                stage["status"] = "skipped"
+                if not stage.get("reason"):
+                    stage["reason"] = "本轮未触发该阶段"
+
+    def _build_collab_fallback_content(self, runtime: dict[str, Any]) -> str:
+        lines = ["我已经按你勾选的 Agent 跑完一轮协作，整理如下："]
+        for stage in runtime.get("stages", []):
+            label = stage.get("label") or stage.get("id")
+            status = stage.get("status")
+            if status == "completed":
+                summary = stage.get("summary") or "已完成"
+                lines.append(f"- {label}：✅ {summary}")
+            elif status == "failed":
+                summary = stage.get("summary") or stage.get("reason") or "执行失败"
+                lines.append(f"- {label}：⚠️ {summary}")
+            elif status == "skipped":
+                reason = stage.get("reason") or "未触发"
+                lines.append(f"- {label}：⏭️ {reason}")
+        lines.append("\n你可以直接在下方推荐卡里选择“立即应用”来落地到饮食管理。")
+        return "\n".join(lines)
+
+    def _infer_next_meal_plan(self) -> tuple[date, str]:
+        now = time.localtime()
+        today = date.today()
+        hour = now.tm_hour
+        if hour < 10:
+            return today, "lunch"
+        if hour < 15:
+            return today, "dinner"
+        if hour < 21:
+            return today, "snack"
+        return today + timedelta(days=1), "breakfast"
+
+    def _build_smart_recommendation_action(
+        self,
+        runtime: dict[str, Any],
+    ) -> dict[str, Any]:
+        plan_date, meal_type = self._infer_next_meal_plan()
+        weekly_summary = runtime.get("weekly_summary") if isinstance(runtime, dict) else None
+        weekly_deviation = runtime.get("weekly_deviation") if isinstance(runtime, dict) else None
+        execution_rate = None
+        total_deviation = None
+        if isinstance(weekly_deviation, dict):
+            execution_rate = weekly_deviation.get("execution_rate")
+            total_deviation = weekly_deviation.get("total_deviation")
+            try:
+                execution_rate = (
+                    float(execution_rate) if execution_rate is not None else None
+                )
+            except (TypeError, ValueError):
+                execution_rate = None
+            try:
+                total_deviation = (
+                    int(total_deviation) if total_deviation is not None else None
+                )
+            except (TypeError, ValueError):
+                total_deviation = None
+
+        weekly_text = "你可以说“看本周进度”获取执行摘要。"
+        if execution_rate is not None and total_deviation is not None:
+            weekly_text = (
+                f"本周执行率 {execution_rate:.1f}% ，总偏差 {total_deviation} kcal。"
+            )
+        elif isinstance(weekly_summary, dict):
+            avg_daily = weekly_summary.get("avg_daily_calories")
+            if avg_daily is not None:
+                weekly_text = f"本周日均摄入约 {avg_daily:.0f} kcal。"
+
+        return {
+            "action_id": f"smart-recommendation-{uuid.uuid4().hex}",
+            "action_type": "smart_recommendation_card",
+            "title": "我整理了一个可直接执行的智能推荐卡",
+            "description": "包含下一餐纠偏、放松场景建议和周进度入口。",
+            "timeout_seconds": 10,
+            "timeout_mode": "timeout_suggest_only",
+            "default_timeout_suggestion": "若你暂时不点击，我会保留建议，不会自动写入饮食数据。",
+            "next_meal_options": [
+                {
+                    "option_id": "balanced",
+                    "title": "轻负担均衡餐",
+                    "description": "优先蛋白 + 蔬菜，减少高油高糖负担。",
+                    "meal_type": meal_type,
+                    "plan_date": plan_date.isoformat(),
+                    "dish_name": "鸡蛋豆腐蔬菜碗",
+                    "calories": 420,
+                },
+                {
+                    "option_id": "protein",
+                    "title": "高蛋白稳态餐",
+                    "description": "帮助稳定饱腹感，避免再次冲动进食。",
+                    "meal_type": meal_type,
+                    "plan_date": plan_date.isoformat(),
+                    "dish_name": "鸡胸肉沙拉配酸奶",
+                    "calories": 460,
+                },
+                {
+                    "option_id": "comfort",
+                    "title": "温和安抚餐",
+                    "description": "低负担 + 情绪安抚，避免惩罚性节食。",
+                    "meal_type": meal_type,
+                    "plan_date": plan_date.isoformat(),
+                    "dish_name": "燕麦酸奶水果杯",
+                    "calories": 380,
+                },
+            ],
+            "relax_suggestions": [
+                "做 3 轮方块呼吸（吸4秒-停4秒-呼4秒-停4秒）。",
+                "走到窗边或户外 5 分钟，放松肩颈和下颌。",
+                "给自己一句中性提醒：一次波动不等于失败。",
+            ],
+            "weekly_progress": {
+                "trigger_hint": "看本周进度",
+                "summary_text": weekly_text,
+                "execution_rate": execution_rate,
+                "total_deviation": total_deviation,
+            },
+            "budget_options": [50, 100, 150],
+            "source": "collaboration_pipeline",
+            "session_id": runtime.get("session_id"),
+        }
 
     def _get_agent_or_fallback(self, agent_name: str) -> BaseAgent:
         try:

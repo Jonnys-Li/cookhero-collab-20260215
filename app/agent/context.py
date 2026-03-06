@@ -29,6 +29,14 @@ FORCE_EMOTION_SUBAGENT_PATTERNS = [
     ),
 ]
 
+WEEKLY_PROGRESS_PATTERNS = [
+    re.compile(r"(本周|这周|周进度|周总结|周报|周执行)", re.IGNORECASE),
+    re.compile(r"(查看|看看|帮我看|分析).*(进度|完成度|偏差|执行)", re.IGNORECASE),
+]
+
+PLANNER_SUBAGENT_TOOL = "subagent_diet_planner"
+EMOTION_SUBAGENT_TOOL = "subagent_emotion_support"
+
 
 class AgentContextBuilder:
     """
@@ -113,20 +121,35 @@ class AgentContextBuilder:
 
             await subagent_service.sync_user_subagents(user_id)
         available_tools = AgentHub.get_tool_schemas(tools_to_use, user_id=user_id)
-        available_tool_names = [
-            tool.get("function", {}).get("name")
-            for tool in available_tools
-            if isinstance(tool, dict)
-        ]
+        available_tool_names: list[str] = []
+        for tool in available_tools:
+            if not isinstance(tool, dict):
+                continue
+            name = tool.get("function", {}).get("name")
+            if isinstance(name, str) and name:
+                available_tool_names.append(name)
         force_tool_name: Optional[str] = None
         force_tool_arguments: Optional[dict[str, str]] = None
+        collab_plan = self._build_collab_plan(
+            current_message=current_message,
+            available_tool_names=available_tool_names,
+            has_images=bool(images),
+        )
 
-        if (
+        if collab_plan and collab_plan.get("force_tool_calls"):
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "## 本轮多 Agent 协作编排（确定性）\n"
+                "- 系统会按固定优先级串行执行已勾选的专业子代理（识别→规划→共情）。\n"
+                "- 你需要在最终回答中总结每个阶段结论，并给出下一步建议。\n"
+                "- 不要要求用户理解工具细节，重点突出可执行动作。"
+            )
+        elif (
             self._should_force_emotion_subagent(current_message)
-            and "subagent_emotion_support" in available_tool_names
+            and EMOTION_SUBAGENT_TOOL in available_tool_names
         ):
             available_tools = AgentHub.get_tool_schemas(
-                ["subagent_emotion_support"],
+                [EMOTION_SUBAGENT_TOOL],
                 user_id=user_id,
             )
             system_prompt = (
@@ -136,7 +159,7 @@ class AgentContextBuilder:
                 "- 拿到子代理结果后再给最终答复，禁止直接跳过工具。\n"
                 "- 若工具不可用，才允许给保底安抚建议。"
             )
-            force_tool_name = "subagent_emotion_support"
+            force_tool_name = EMOTION_SUBAGENT_TOOL
             force_tool_arguments = {
                 "task": current_message,
                 "background": "检测到明显负面情绪，请优先安抚，并执行预算调整交互流程。",
@@ -167,6 +190,12 @@ class AgentContextBuilder:
             available_tools=available_tools,
             force_tool_name=force_tool_name,
             force_tool_arguments=force_tool_arguments,
+            force_tool_calls=(
+                collab_plan.get("force_tool_calls")
+                if isinstance(collab_plan, dict)
+                else None
+            ),
+            collab_plan=collab_plan,
             current_message=current_message,
             images=processed_images,
         )
@@ -175,6 +204,186 @@ class AgentContextBuilder:
         if not message:
             return False
         return any(pattern.search(message) for pattern in FORCE_EMOTION_SUBAGENT_PATTERNS)
+
+    def _is_weekly_progress_query(self, message: str) -> bool:
+        if not message:
+            return False
+        return any(pattern.search(message) for pattern in WEEKLY_PROGRESS_PATTERNS)
+
+    def _build_collab_plan(
+        self,
+        *,
+        current_message: str,
+        available_tool_names: list[str],
+        has_images: bool,
+    ) -> Optional[dict]:
+        if not available_tool_names:
+            return None
+
+        selected_subagents = [
+            name for name in available_tool_names if name.startswith("subagent_")
+        ]
+        emotion_triggered = self._should_force_emotion_subagent(current_message)
+        weekly_progress_triggered = self._is_weekly_progress_query(current_message)
+
+        if not selected_subagents and not weekly_progress_triggered:
+            return None
+
+        planner_selected = PLANNER_SUBAGENT_TOOL in available_tool_names
+        emotion_selected = EMOTION_SUBAGENT_TOOL in available_tool_names
+        custom_selected = sorted(
+            [
+                name
+                for name in selected_subagents
+                if name not in {PLANNER_SUBAGENT_TOOL, EMOTION_SUBAGENT_TOOL}
+            ]
+        )
+
+        stages: list[dict[str, str]] = []
+        forced_calls: list[dict[str, object]] = []
+
+        stages.append(
+            {
+                "id": "recognition",
+                "label": "识别",
+                "status": "pending" if has_images else "skipped",
+                "reason": "" if has_images else "未上传图片，跳过视觉识别",
+            }
+        )
+
+        if planner_selected:
+            stages.append(
+                {
+                    "id": "planning",
+                    "label": "规划",
+                    "status": "pending",
+                    "reason": "",
+                }
+            )
+            forced_calls.append(
+                {
+                    "stage_id": "planning",
+                    "name": PLANNER_SUBAGENT_TOOL,
+                    "arguments": {
+                        "task": current_message,
+                        "background": "请重点给出下一餐可执行的纠偏建议。",
+                    },
+                }
+            )
+        else:
+            stages.append(
+                {
+                    "id": "planning",
+                    "label": "规划",
+                    "status": "skipped",
+                    "reason": "未勾选饮食规划 Agent",
+                }
+            )
+
+        for index, tool_name in enumerate(custom_selected):
+            stage_id = f"custom_{index + 1}"
+            stages.append(
+                {
+                    "id": stage_id,
+                    "label": tool_name.replace("subagent_", ""),
+                    "status": "pending",
+                    "reason": "",
+                }
+            )
+            forced_calls.append(
+                {
+                    "stage_id": stage_id,
+                    "name": tool_name,
+                    "arguments": {
+                        "task": current_message,
+                        "background": "请按你的专业角色补充可执行建议。",
+                    },
+                }
+            )
+
+        weekly_progress_enabled = weekly_progress_triggered and "diet_analysis" in available_tool_names
+        if weekly_progress_enabled:
+            stages.append(
+                {
+                    "id": "weekly_progress",
+                    "label": "周进度",
+                    "status": "pending",
+                    "reason": "",
+                }
+            )
+            forced_calls.extend(
+                [
+                    {
+                        "stage_id": "weekly_progress",
+                        "name": "diet_analysis",
+                        "arguments": {"action": "weekly_summary"},
+                    },
+                    {
+                        "stage_id": "weekly_progress",
+                        "name": "diet_analysis",
+                        "arguments": {"action": "deviation"},
+                    },
+                ]
+            )
+        elif weekly_progress_triggered:
+            stages.append(
+                {
+                    "id": "weekly_progress",
+                    "label": "周进度",
+                    "status": "skipped",
+                    "reason": "未启用 diet_analysis 工具",
+                }
+            )
+
+        emotion_enabled = emotion_selected and emotion_triggered
+        if emotion_enabled:
+            stages.append(
+                {
+                    "id": "emotion",
+                    "label": "共情",
+                    "status": "pending",
+                    "reason": "",
+                }
+            )
+            forced_calls.append(
+                {
+                    "stage_id": "emotion",
+                    "name": EMOTION_SUBAGENT_TOOL,
+                    "arguments": {
+                        "task": current_message,
+                        "background": "先安抚再建议，保持非责备语气。",
+                    },
+                }
+            )
+        elif emotion_selected:
+            stages.append(
+                {
+                    "id": "emotion",
+                    "label": "共情",
+                    "status": "skipped",
+                    "reason": "未触发负面情绪语义，跳过共情阶段",
+                }
+            )
+        else:
+            stages.append(
+                {
+                    "id": "emotion",
+                    "label": "共情",
+                    "status": "skipped",
+                    "reason": "未勾选情感安抚 Agent",
+                }
+            )
+
+        if not forced_calls and not has_images:
+            return None
+
+        return {
+            "enabled": True,
+            "stages": stages,
+            "force_tool_calls": forced_calls,
+            "emotion_triggered": emotion_triggered,
+            "weekly_progress_triggered": weekly_progress_triggered,
+        }
 
     async def _process_images(self, images: list[dict]) -> list[dict]:
         """

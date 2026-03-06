@@ -27,7 +27,7 @@ export interface ConversationRequest {
 }
 
 export interface SSEEvent {
-  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done' | 'session' | 'tool_call' | 'tool_result' | 'trace' | 'ui_action' | 'skill_load' | 'error';
+  type: 'vision' | 'intent' | 'thinking' | 'text' | 'sources' | 'done' | 'session' | 'tool_call' | 'tool_result' | 'trace' | 'ui_action' | 'collab_timeline' | 'skill_load' | 'error';
   content?: string;
   data?: VisionInfo | IntentInfo | Source[] | string;
   conversation_id?: string;
@@ -54,6 +54,7 @@ export interface SSEEvent {
   default_delta_calories?: number;
   can_apply?: boolean;
   unavailable_reason?: string | null;
+  stages?: Array<{ id: string; label: string; status: string; reason?: string; summary?: string }>;
   // Timing fields
   thinking_duration_ms?: number;
   answer_duration_ms?: number;

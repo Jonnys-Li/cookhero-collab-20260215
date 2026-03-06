@@ -66,6 +66,8 @@ class TraceStep:
         "subagent_output",
         "ui_action",
         "emotion_budget_adjust_result",
+        "collab_timeline",
+        "smart_action_result",
     ]
     tool_calls: list[dict] | None = None
     content: Any = None
@@ -96,6 +98,8 @@ class AgentContext:
     available_tools: list[dict] = field(default_factory=list)  # 可用 Tool schema
     force_tool_name: str | None = None  # 必须执行的工具（确定性路由）
     force_tool_arguments: dict[str, Any] | None = None  # 强制工具参数
+    force_tool_calls: list[dict[str, Any]] | None = None  # 强制工具调用序列
+    collab_plan: dict[str, Any] | None = None  # 协作编排计划与阶段状态
     current_message: str = ""  # 当前用户消息
     images: list[dict] | None = None  # [{data, mime_type, url}]
     vision_analysis: dict | None = None  # Vision analysis result

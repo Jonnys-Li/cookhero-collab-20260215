@@ -10,6 +10,7 @@ import asyncio
 import base64
 import json
 import logging
+from datetime import date, datetime, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +24,7 @@ from app.security.dependencies import check_message_security
 from app.services.mcp_service import mcp_service
 from app.services.emotion_budget_service import emotion_budget_service
 from app.services.subagent_service import subagent_service
+from app.diet.service import diet_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -222,6 +224,32 @@ class ApplyEmotionBudgetAdjustResponse(BaseModel):
     message: str
 
 
+class ApplySmartActionRequest(BaseModel):
+    """Apply action from smart recommendation card."""
+
+    session_id: str
+    action_id: str
+    action_kind: str = Field(
+        ...,
+        pattern="^(apply_budget_adjust|apply_next_meal_plan|fetch_weekly_progress)$",
+    )
+    mode: str = Field(..., pattern="^(user_select|timeout_suggest_only)$")
+    payload: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = Field(default=None, max_length=200)
+
+
+class ApplySmartActionResponse(BaseModel):
+    """Response payload for smart recommendation action."""
+
+    action_id: str
+    action_kind: str
+    mode: str
+    applied: bool
+    used_provider: str
+    message: str
+    result: Optional[Dict[str, Any]] = None
+
+
 def _parse_trace_step(raw: Any) -> Optional[dict[str, Any]]:
     if isinstance(raw, dict):
         return raw
@@ -272,6 +300,31 @@ async def _find_emotion_ui_action(
     return None
 
 
+async def _find_smart_ui_action(
+    session_id: str,
+    action_id: str,
+) -> Optional[dict[str, Any]]:
+    messages = await agent_service.repository.get_messages(session_id, limit=200)
+    for msg in reversed(messages):
+        if msg.role != "assistant" or not msg.trace:
+            continue
+        for raw_step in msg.trace:
+            step = _parse_trace_step(raw_step)
+            if not step:
+                continue
+            if step.get("action") != "ui_action":
+                continue
+            content = _extract_trace_content(step.get("content"))
+            if not content:
+                continue
+            if content.get("action_type") != "smart_recommendation_card":
+                continue
+            if content.get("action_id") != action_id:
+                continue
+            return content
+    return None
+
+
 async def _find_existing_emotion_action_result(
     session_id: str,
     action_id: str,
@@ -291,6 +344,32 @@ async def _find_existing_emotion_action_result(
                 continue
             if content.get("action_id") == action_id:
                 return content
+    return None
+
+
+async def _find_existing_smart_action_result(
+    session_id: str,
+    action_id: str,
+    action_kind: str,
+) -> Optional[dict[str, Any]]:
+    messages = await agent_service.repository.get_messages(session_id, limit=200)
+    for msg in reversed(messages):
+        if msg.role != "assistant" or not msg.trace:
+            continue
+        for raw_step in msg.trace:
+            step = _parse_trace_step(raw_step)
+            if not step:
+                continue
+            if step.get("action") != "smart_action_result":
+                continue
+            content = _extract_trace_content(step.get("content"))
+            if not content:
+                continue
+            if content.get("action_id") != action_id:
+                continue
+            if content.get("action_kind") != action_kind:
+                continue
+            return content
     return None
 
 
@@ -591,6 +670,208 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error processing agent chat: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="处理请求时发生错误")
+
+
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    if value is None:
+        return None
+    value = str(value).strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="日期需为 YYYY-MM-DD 格式") from exc
+
+
+def _infer_default_next_meal() -> tuple[date, str]:
+    now = datetime.now()
+    if now.hour < 10:
+        return now.date(), "lunch"
+    if now.hour < 15:
+        return now.date(), "dinner"
+    if now.hour < 21:
+        return now.date(), "snack"
+    return now.date() + timedelta(days=1), "breakfast"
+
+
+@router.post(
+    "/agent/smart-actions/apply",
+    response_model=ApplySmartActionResponse,
+)
+async def apply_smart_action(
+    payload: ApplySmartActionRequest,
+    http_request: Request,
+) -> ApplySmartActionResponse:
+    """Apply action from smart recommendation card."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    session = await agent_service.get_session(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.get("user_id") != str(user_id):
+        raise HTTPException(status_code=403, detail="无权访问此会话")
+
+    action_payload = await _find_smart_ui_action(payload.session_id, payload.action_id)
+    if not action_payload:
+        raise HTTPException(status_code=404, detail="未知或已过期的 action_id")
+
+    existing = await _find_existing_smart_action_result(
+        payload.session_id,
+        payload.action_id,
+        payload.action_kind,
+    )
+    if existing:
+        return ApplySmartActionResponse(
+            action_id=payload.action_id,
+            action_kind=payload.action_kind,
+            mode=str(existing.get("mode") or payload.mode),
+            applied=bool(existing.get("applied")),
+            used_provider=str(existing.get("used_provider") or "local"),
+            message=str(existing.get("message") or "操作已执行"),
+            result=existing.get("result")
+            if isinstance(existing.get("result"), dict)
+            else None,
+        )
+
+    if payload.mode == "timeout_suggest_only":
+        response_data = {
+            "action_id": payload.action_id,
+            "action_kind": payload.action_kind,
+            "mode": payload.mode,
+            "applied": False,
+            "used_provider": "none",
+            "message": "仅生成建议，不自动写入饮食数据。",
+            "result": {
+                "suggestion_only": True,
+            },
+        }
+    else:
+        action_data = payload.payload or {}
+        if not isinstance(action_data, dict):
+            raise HTTPException(status_code=400, detail="payload 必须是对象")
+
+        if payload.action_kind == "apply_budget_adjust":
+            delta_raw = action_data.get("delta_calories", 100)
+            try:
+                delta_calories = int(delta_raw)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="delta_calories 必须为整数") from exc
+            if delta_calories not in {50, 100, 150}:
+                raise HTTPException(status_code=400, detail="delta_calories 仅支持 50/100/150")
+
+            try:
+                result = await emotion_budget_service.adjust_today_budget(
+                    user_id=str(user_id),
+                    delta_calories=delta_calories,
+                    reason=payload.reason or "智能推荐卡预算调整",
+                    mode="user_select",
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": bool(result.get("applied")),
+                "used_provider": result.get("used_provider") or "unknown",
+                "message": result.get("message") or "预算调整完成",
+                "result": {
+                    "requested": delta_calories,
+                    "applied": result.get("applied"),
+                    "capped": bool(result.get("capped")),
+                    "effective_goal": result.get("effective_goal"),
+                },
+            }
+        elif payload.action_kind == "apply_next_meal_plan":
+            plan_date = _parse_iso_date(action_data.get("plan_date"))
+            meal_type = str(action_data.get("meal_type") or "").strip().lower()
+            if not plan_date or meal_type not in {"breakfast", "lunch", "dinner", "snack"}:
+                inferred_date, inferred_meal = _infer_default_next_meal()
+                if not plan_date:
+                    plan_date = inferred_date
+                if meal_type not in {"breakfast", "lunch", "dinner", "snack"}:
+                    meal_type = inferred_meal
+
+            dish_name = str(action_data.get("dish_name") or "").strip() or "智能推荐轻负担餐"
+            calories = action_data.get("calories")
+            try:
+                calories_value = int(calories) if calories is not None else None
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(status_code=400, detail="calories 必须为整数") from exc
+
+            dishes = [{"name": dish_name, "calories": calories_value}]
+            meal = await diet_service.add_meal(
+                user_id=str(user_id),
+                plan_date=plan_date,
+                meal_type=meal_type,
+                dishes=dishes,
+                notes="来自智能推荐卡的一键纠偏建议",
+            )
+
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": True,
+                "used_provider": "local",
+                "message": "已写入计划餐次，可在饮食管理中查看",
+                "result": {
+                    "plan_date": plan_date.isoformat(),
+                    "meal_type": meal_type,
+                    "meal": meal,
+                },
+            }
+        elif payload.action_kind == "fetch_weekly_progress":
+            week_start = _parse_iso_date(action_data.get("week_start_date"))
+            if not week_start:
+                today = date.today()
+                week_start = today - timedelta(days=today.weekday())
+
+            weekly_summary = await diet_service.get_weekly_summary(
+                str(user_id),
+                week_start,
+            )
+            deviation = await diet_service.get_deviation_analysis(
+                str(user_id),
+                week_start,
+            )
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": False,
+                "used_provider": "local",
+                "message": "周进度查询完成",
+                "result": {
+                    "weekly_summary": weekly_summary,
+                    "deviation": deviation,
+                },
+            }
+        else:
+            raise HTTPException(status_code=400, detail="未知 action_kind")
+
+    trace_step = {
+        "iteration": 0,
+        "action": "smart_action_result",
+        "content": response_data,
+        "error": None,
+        "source": "subagent",
+        "subagent_name": "emotion_support",
+    }
+    await agent_service.repository.save_message(
+        payload.session_id,
+        "assistant",
+        response_data["message"],
+        trace=[trace_step],
+    )
+
+    return ApplySmartActionResponse(**response_data)
 
 
 @router.post(

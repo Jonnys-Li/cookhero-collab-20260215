@@ -151,6 +151,24 @@ function transformEventToTraceStep(event: any, fallbackIteration: number): Trace
         source: event.source || 'agent',
         subagent_name: event.subagent_name,
       };
+    case 'collab_timeline': {
+      const {
+        iteration,
+        source,
+        subagent_name,
+        ...timelinePayload
+      } = event || {};
+      return {
+        error: null,
+        action: 'collab_timeline',
+        content: timelinePayload || null,
+        iteration: iteration ?? fallbackIteration,
+        timestamp: new Date().toISOString(),
+        tool_calls: undefined,
+        source: source || 'agent',
+        subagent_name,
+      };
+    }
     case 'ui_action': {
       const {
         iteration,
@@ -440,6 +458,7 @@ export function useAgent(token?: string) {
           case 'tool_call':
           case 'tool_result':
           case 'trace':
+          case 'collab_timeline':
           case 'ui_action': {
             // Transform SSE event to TraceStep format
             const traceStep = transformEventToTraceStep(event, 0);

@@ -43,3 +43,12 @@
   - `RENDER_SERVICE_ID`（推荐）或 `RENDER_SERVICE_NAME=cookhero-backend`
   - `PROD_BACKEND_URL=https://cookhero-collab-20260215.onrender.com`
 - 烟测会读取 `MCP_DIET_SERVICE_KEY` 做 `diet-adjust` 端点可用性验证。
+
+## 三系统协作默认策略（新增）
+
+- 主链路默认：主聊天一句话触发三系统协作（识别→规划→共情），未勾选节点自动跳过。
+- 编排默认：按用户已勾选 Agent/工具做条件串行；支持用户自定义 Subagent 插入链路。
+- 可视化默认：必须在聊天气泡展示“协作时间线卡 + 智能推荐总卡”。
+- 超时默认：`10s` 后仅转建议模式（`timeout_suggest_only`），不自动写库。
+- 写入默认：所有写入型动作必须由用户显式点击触发（预算调整/计划餐次）。
+- 周进度默认：支持自然语言触发（如“看本周进度”），返回周摘要与偏差结果块。

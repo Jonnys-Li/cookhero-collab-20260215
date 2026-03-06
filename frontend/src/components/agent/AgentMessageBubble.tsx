@@ -5,10 +5,18 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Clock, Loader2, BookOpen, Globe, ExternalLink } from 'lucide-react';
-import type { EmotionBudgetUIAction, Message, Source } from '../../types';
+import type {
+  CollabTimelineAction,
+  EmotionBudgetUIAction,
+  Message,
+  SmartRecommendationAction,
+  Source,
+} from '../../types';
 import { MarkdownRenderer } from '../chat/MarkdownRenderer';
 import { AgentThinkingBlock, type TraceStep } from './AgentThinkingBlock';
 import { EmotionBudgetAdjustCard } from './EmotionBudgetAdjustCard';
+import { AgentCollabTimelineCard } from './AgentCollabTimelineCard';
+import { SmartRecommendationCard } from './SmartRecommendationCard';
 import { CopyButton } from '../common';
 
 export interface AgentMessageBubbleProps {
@@ -108,6 +116,31 @@ function parseEmotionBudgetAction(trace: TraceStep[]): EmotionBudgetUIAction | n
     if (payload.action_type !== 'emotion_budget_adjust') continue;
     if (!payload.action_id) continue;
     return payload as unknown as EmotionBudgetUIAction;
+  }
+  return null;
+}
+
+function parseCollabTimelineAction(trace: TraceStep[]): CollabTimelineAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'collab_timeline') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'collab_timeline') continue;
+    return payload as unknown as CollabTimelineAction;
+  }
+  return null;
+}
+
+function parseSmartRecommendationAction(trace: TraceStep[]): SmartRecommendationAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'ui_action') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'smart_recommendation_card') continue;
+    if (!payload.action_id) continue;
+    return payload as unknown as SmartRecommendationAction;
   }
   return null;
 }
@@ -240,10 +273,15 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
 
   // Parse trace data - use message.trace if available, otherwise fall back to message.thinking
   const traceData = parseTrace(message.trace || message.thinking);
-  const traceWithoutUiAction = traceData.filter((step) => step.action !== 'ui_action');
+  const traceWithoutUiAction = traceData.filter(
+    (step) =>
+      !['ui_action', 'collab_timeline', 'smart_action_result'].includes(step.action)
+  );
   const mainTrace = traceWithoutUiAction.filter((step) => step.source !== 'subagent');
   const subagentTrace = traceWithoutUiAction.filter((step) => step.source === 'subagent');
   const emotionBudgetAction = parseEmotionBudgetAction(traceData);
+  const collabTimelineAction = parseCollabTimelineAction(traceData);
+  const smartRecommendationAction = parseSmartRecommendationAction(traceData);
   const hasTrace = mainTrace.length > 0;
   const isThinkingPhase = !isUser && !!message.isStreaming && !hasText;
   const showThinkingBlock = !isUser && (hasTrace || isThinkingPhase);
@@ -380,6 +418,16 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
                 action={emotionBudgetAction}
                 trace={traceData}
                 sessionId={message.agent_session_id || emotionBudgetAction.session_id}
+              />
+            )}
+            {!isUser && !message.isStreaming && collabTimelineAction && (
+              <AgentCollabTimelineCard timeline={collabTimelineAction} />
+            )}
+            {!isUser && !message.isStreaming && smartRecommendationAction && (
+              <SmartRecommendationCard
+                action={smartRecommendationAction}
+                trace={traceData}
+                sessionId={message.agent_session_id || smartRecommendationAction.session_id}
               />
             )}
           </div>

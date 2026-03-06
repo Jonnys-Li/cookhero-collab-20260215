@@ -122,6 +122,52 @@ export interface EmotionBudgetUIAction {
   session_id?: string;
 }
 
+export interface CollabTimelineStage {
+  id: string;
+  label: string;
+  status: 'pending' | 'running' | 'completed' | 'skipped' | 'failed' | string;
+  reason?: string;
+  summary?: string;
+}
+
+export interface CollabTimelineAction {
+  action_id: string;
+  action_type: 'collab_timeline';
+  source?: string;
+  stages: CollabTimelineStage[];
+}
+
+export interface SmartMealOption {
+  option_id: string;
+  title: string;
+  description: string;
+  meal_type: 'breakfast' | 'lunch' | 'dinner' | 'snack' | string;
+  plan_date: string;
+  dish_name: string;
+  calories?: number;
+}
+
+export interface SmartRecommendationAction {
+  action_id: string;
+  action_type: 'smart_recommendation_card';
+  title: string;
+  description?: string;
+  timeout_seconds: number;
+  timeout_mode: 'timeout_suggest_only';
+  default_timeout_suggestion?: string;
+  next_meal_options: SmartMealOption[];
+  relax_suggestions: string[];
+  weekly_progress?: {
+    trigger_hint?: string;
+    summary_text?: string;
+    execution_rate?: number | null;
+    total_deviation?: number | null;
+  };
+  budget_options?: number[];
+  source?: string;
+  session_id?: string;
+}
+
 export interface ApplyEmotionBudgetAdjustRequest {
   session_id: string;
   action_id: string;
@@ -139,6 +185,25 @@ export interface ApplyEmotionBudgetAdjustResponse {
   used_provider: string;
   mode: EmotionBudgetApplyMode;
   message: string;
+}
+
+export interface ApplySmartActionRequest {
+  session_id: string;
+  action_id: string;
+  action_kind: 'apply_budget_adjust' | 'apply_next_meal_plan' | 'fetch_weekly_progress';
+  mode: 'user_select' | 'timeout_suggest_only';
+  payload?: Record<string, unknown>;
+  reason?: string;
+}
+
+export interface ApplySmartActionResponse {
+  action_id: string;
+  action_kind: string;
+  mode: string;
+  applied: boolean;
+  used_provider: string;
+  message: string;
+  result?: Record<string, unknown> | null;
 }
 
 export interface ToolSchema {
