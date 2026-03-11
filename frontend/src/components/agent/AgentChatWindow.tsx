@@ -131,37 +131,34 @@ function EmptyState({
 }) {
     return (
         <div className="flex flex-col items-center justify-center h-full w-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500 overflow-x-hidden px-4 box-border">
-            {/* <section className="relative flex-1 flex flex-col items-center justify-center overflow-hidden">
-                <div className="flex items-center gap-4">
-                    <div className="w-20 h-20 bg-orange-100 dark:bg-orange-900/30 rounded-2xl flex items-center justify-center text-orange-600 dark:text-orange-400 shrink-0 overflow-hidden">
-                        <img src="/image.png" alt="HealthHero Logo" className="w-full h-full object-contain p-2" />
-                    </div>
-                    <div className="w-100 h-48 max-w-5xl mx-auto flex items-center justify-center">
-                        <img
-                            src="/image.png"
-                            alt="HealthHero Logo"
-                            className="w-full max-w-4xl object-contain transition-all duration-500 group-hover:scale-105"
-                        />
-                    </div>
-                    <div>
-                        <h2 className="text-3xl font-bold text-orange-600 dark:text-orange-400">
-                            Your Personal Agent
-                        </h2>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 max-w-md mt-1">
-                            Calculate, analyze, and plan with intelligent tools
-                        </p>
-                    </div>
-                </div>
-            </section> */}
             {!isToolSelectorOpen && (
                 <section className="empty-state-hero relative flex-1 flex flex-col items-center justify-center overflow-hidden">
                     <div className="relative group w-full px-4">
-                        <div className="w-100 h-48 max-w-5xl mx-auto flex items-center justify-center">
-                            <img
-                                src="/image.png"
-                                alt="HealthHero Logo"
-                                className="w-full max-w-4xl object-contain transition-all duration-500 group-hover:scale-105"
-                            />
+                        <div className="flex flex-col items-center justify-center py-8">
+                            <div className="relative mb-4">
+                                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center shadow-lg shadow-orange-500/25 group-hover:scale-105 transition-transform duration-300">
+                                    <span className="text-4xl">🍳</span>
+                                </div>
+                                <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-pulse" />
+                                <div className="absolute -bottom-1 -left-1 w-2 h-2 bg-orange-300 rounded-full" />
+                            </div>
+
+                            <h1 className="text-4xl sm:text-5xl font-bold tracking-tight">
+                                <span className="bg-gradient-to-r from-orange-500 via-orange-600 to-amber-500 bg-clip-text text-transparent">
+                                    Health
+                                </span>
+                                <span className="text-gray-800 dark:text-gray-100">Hero</span>
+                            </h1>
+
+                            <p className="mt-3 text-sm sm:text-base text-gray-500 dark:text-gray-400 text-center max-w-md">
+                                Your AI-powered health companion for better living
+                            </p>
+
+                            <div className="mt-4 flex items-center gap-2">
+                                <div className="w-8 h-0.5 bg-gradient-to-r from-transparent to-orange-400 rounded-full" />
+                                <div className="w-2 h-2 rounded-full bg-orange-400" />
+                                <div className="w-8 h-0.5 bg-gradient-to-l from-transparent to-orange-400 rounded-full" />
+                            </div>
                         </div>
                     </div>
                 </section>
