@@ -221,6 +221,11 @@ export interface WeekPlanPreviewMeal {
   candidates?: Array<{
     dish_name: string;
     calories?: number;
+    protein?: number;
+    fat?: number;
+    carbs?: number;
+    nutrition_source?: string;
+    nutrition_confidence?: number;
     description?: string;
   }>;
 }

@@ -18,6 +18,11 @@ interface WeekPlanPreviewCardProps {
 interface MealCandidate {
   dish_name: string;
   calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  nutrition_source?: string;
+  nutrition_confidence?: number;
   description?: string;
 }
 
@@ -110,27 +115,41 @@ export function WeekPlanPreviewCard({
           Array.isArray(item.dishes) && item.dishes[0] && typeof item.dishes[0] === 'object'
             ? (item.dishes[0] as Record<string, unknown>)
             : {};
+        const dishPatch: Record<string, unknown> = {
+          name: candidate.dish_name,
+          calories: candidate.calories,
+        };
+        if (candidate.protein !== undefined) dishPatch.protein = candidate.protein;
+        if (candidate.fat !== undefined) dishPatch.fat = candidate.fat;
+        if (candidate.carbs !== undefined) dishPatch.carbs = candidate.carbs;
+        if (candidate.nutrition_source !== undefined) dishPatch.nutrition_source = candidate.nutrition_source;
+        if (candidate.nutrition_confidence !== undefined) dishPatch.nutrition_confidence = candidate.nutrition_confidence;
         return {
           ...item,
           dishes: [
             {
               ...originalDish,
-              name: candidate.dish_name,
-              calories: candidate.calories,
+              ...dishPatch,
             },
           ],
           notes: candidate.description || item.notes,
         };
       });
       if (!matched) {
+        const dish: Record<string, unknown> = {
+          name: candidate.dish_name,
+          calories: candidate.calories,
+        };
+        if (candidate.protein !== undefined) dish.protein = candidate.protein;
+        if (candidate.fat !== undefined) dish.fat = candidate.fat;
+        if (candidate.carbs !== undefined) dish.carbs = candidate.carbs;
+        if (candidate.nutrition_source !== undefined) dish.nutrition_source = candidate.nutrition_source;
+        if (candidate.nutrition_confidence !== undefined) dish.nutrition_confidence = candidate.nutrition_confidence;
         next.push({
           plan_date: planDate,
           meal_type: mealType,
           dishes: [
-            {
-              name: candidate.dish_name,
-              calories: candidate.calories,
-            },
+            dish,
           ],
           notes: candidate.description || '由 PlanMode 个性化推荐卡写入',
         });

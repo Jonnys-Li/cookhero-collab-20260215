@@ -1013,6 +1013,10 @@ def _build_meal_candidates(
     weekly_intensity: str,
     limit: int = 3,
 ) -> list[dict[str, Any]]:
+    # AUTO macro estimation: deterministic fallback to ensure plan meals always
+    # carry P/F/C even when RAG is unavailable or not triggered.
+    from app.diet.macro_estimation import estimate_macros_from_calories
+
     goal_library = PLAN_LIBRARY.get(goal) or PLAN_LIBRARY["fat_loss"]
     meal_options = goal_library.get(meal_type) or PLAN_LIBRARY["maintenance"][meal_type]
     max_candidates = max(1, min(limit, len(meal_options)))
@@ -1020,10 +1024,16 @@ def _build_meal_candidates(
     for offset in range(max_candidates):
         template = meal_options[(day_index + offset) % len(meal_options)]
         calories = _adjust_calories(int(template.get("calories") or 420), weekly_intensity)
+        macros = estimate_macros_from_calories(calories, goal)
         candidates.append(
             {
                 "dish_name": str(template.get("dish_name") or "个性化推荐餐"),
                 "calories": calories,
+                "protein": macros.get("protein_g"),
+                "fat": macros.get("fat_g"),
+                "carbs": macros.get("carbs_g"),
+                "nutrition_source": macros.get("source"),
+                "nutrition_confidence": macros.get("confidence"),
                 "description": template.get("description") or "",
             }
         )
@@ -1055,6 +1065,13 @@ def _build_week_plan_preview(profile: dict[str, Any]) -> dict[str, Any]:
                 {
                     "name": default_candidate["dish_name"],
                     "calories": default_candidate["calories"],
+                    "protein": default_candidate.get("protein"),
+                    "fat": default_candidate.get("fat"),
+                    "carbs": default_candidate.get("carbs"),
+                    "nutrition_source": default_candidate.get("nutrition_source"),
+                    "nutrition_confidence": default_candidate.get(
+                        "nutrition_confidence"
+                    ),
                 }
             ]
             meal_blocks.append(

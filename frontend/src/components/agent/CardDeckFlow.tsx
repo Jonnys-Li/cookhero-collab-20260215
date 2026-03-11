@@ -136,12 +136,27 @@ export function CardDeckFlow({
 }) {
   const collab = useMemo(() => parseCollabTimelineAction(trace), [trace]);
   const deck = useMemo(() => buildDeck(trace), [trace]);
+  const deckSignature = useMemo(() => {
+    return deck
+      .map((step) => {
+        const actionId = (step.action as any)?.action_id || (step.action as any)?.actionId || '';
+        return `${step.kind}:${String(actionId)}`;
+      })
+      .join('|');
+  }, [deck]);
   const [activeIndex, setActiveIndex] = useState(() => firstUnresolvedIndex(deck, trace));
   const [transitioning, setTransitioning] = useState(false);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     setActiveIndex(firstUnresolvedIndex(deck, trace));
   }, [deck, trace]);
+
+  useEffect(() => {
+    setReady(false);
+    const timer = window.setTimeout(() => setReady(true), 800);
+    return () => window.clearTimeout(timer);
+  }, [deckSignature]);
 
   const active = deck[activeIndex];
   if (!active && !collab) return null;
@@ -162,7 +177,12 @@ export function CardDeckFlow({
     <div className="mt-3">
       {collab && <AgentCollabTimelineCard timeline={collab} />}
       <div className={`transition-all duration-200 ${transitioning ? 'opacity-40 translate-y-1' : 'opacity-100 translate-y-0'}`}>
-        {active?.kind === 'emotion_budget_adjust' && (
+        {!ready && active && (
+          <div className="mt-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/40 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+            已生成建议，准备进入下一步...
+          </div>
+        )}
+        {ready && active?.kind === 'emotion_budget_adjust' && (
           <EmotionBudgetAdjustCard
             action={active.action}
             trace={trace}
@@ -171,7 +191,7 @@ export function CardDeckFlow({
             showSkipButton
           />
         )}
-        {active?.kind === 'smart_next_meal' && (
+        {ready && active?.kind === 'smart_next_meal' && (
           <SmartRecommendationCard
             action={active.action}
             trace={trace}
@@ -181,7 +201,7 @@ export function CardDeckFlow({
             showSkipButton
           />
         )}
-        {active?.kind === 'smart_review_relax' && (
+        {ready && active?.kind === 'smart_review_relax' && (
           <SmartRecommendationCard
             action={active.action}
             trace={trace}

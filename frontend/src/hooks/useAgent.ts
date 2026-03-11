@@ -14,6 +14,7 @@ import type {
   AgentSessionResponse,
   AgentHistoryResponse,
   ImageData,
+  SSEEvent,
 } from '../types';
 import {
   streamAgentChat,
@@ -479,6 +480,7 @@ export function useAgent(token?: string) {
         }
       } finally {
         drainingTypewriter = false;
+        maybeFinalizeDone();
       }
     };
 
@@ -488,6 +490,93 @@ export function useAgent(token?: string) {
         typewriterQueue.push(chunk.slice(i, i + TYPEWRITER_STEP));
       }
       void drainTypewriterQueue();
+    };
+
+    let pendingDoneEvent: SSEEvent | null = null;
+    let pendingDoneAnswerEndTime: number | null = null;
+
+    const finalizeDone = (doneEvent: SSEEvent, answerEndTime: number) => {
+      // Build timing data
+      const timingData: Partial<Message> = {
+        isStreaming: false,
+        thinkingStartTime,
+        thinkingEndTime: answerStartTime || answerEndTime,
+        answerStartTime: answerStartTime,
+        answerEndTime: answerEndTime,
+        agent_session_id: doneEvent.session_id || streamingSessionId,
+      };
+
+      // Save the original session ID before potential switch
+      const originalSessionId = streamingSessionId;
+
+      // Handle session ID switch for new sessions
+      if (doneEvent.session_id) {
+        const newId = doneEvent.session_id;
+        if (isTempSession && streamingSessionId !== newId) {
+          const cached = streamingCacheRef.current.get(streamingSessionId);
+          if (cached) {
+            streamingCacheRef.current.delete(streamingSessionId);
+            streamingCacheRef.current.set(newId, { ...cached, sessionId: newId, tempId: streamingSessionId });
+          }
+
+          // Update session with proper last_message_preview
+          setSessionsRef.current(prev =>
+            prev.map(c => {
+              if (c.id === streamingSessionId) {
+                return {
+                  ...c,
+                  id: newId,
+                  // Keep the last_message_preview from temp session (user's message)
+                  last_message_preview: c.last_message_preview
+                };
+              }
+              return c;
+            })
+          );
+
+          // Update streamingSessionId first
+          streamingSessionId = newId;
+
+          // Then update the current session ID ref and state if this is the current session
+          if (currentSessionIdRef.current === originalSessionId) {
+            currentSessionIdRef.current = newId;
+            setSessionIdRef.current(newId);
+          }
+        }
+
+        // Delay refresh to allow backend to save messages
+        setTimeout(() => refreshSessionsRef.current?.(true), 5);
+      }
+
+      updateStreamingState(
+        msgs => msgs.map(msg =>
+          msg.id === assistantMessageId
+            ? { ...msg, ...timingData }
+            : doneEvent.session_id
+              ? { ...msg, agent_session_id: doneEvent.session_id }
+            : msg
+        ),
+        false
+      );
+
+      streamingCacheRef.current.delete(streamingSessionId);
+      saveStreamingCache(streamingCacheRef.current);
+
+      // Mark global UI state as complete only if the user is still viewing this session.
+      if (currentSessionIdRef.current === streamingSessionId || currentSessionIdRef.current === originalSessionId) {
+        setIsLoading(false);
+        setIsStreaming(false);
+      }
+    };
+
+    const maybeFinalizeDone = () => {
+      if (!pendingDoneEvent) return;
+      if (typewriterQueue.length > 0 || drainingTypewriter) return;
+      const doneEvent = pendingDoneEvent;
+      const answerEndTime = pendingDoneAnswerEndTime || Date.now();
+      pendingDoneEvent = null;
+      pendingDoneAnswerEndTime = null;
+      finalizeDone(doneEvent, answerEndTime);
     };
 
     // Timing tracking - thinkingStartTime is already set in assistantMessage
@@ -558,79 +647,9 @@ export function useAgent(token?: string) {
 
           case 'done':
             {
-              flushTypewriterQueue();
-              // Record answer end time
-              const answerEndTime = Date.now();
-
-              // Build timing data
-              const timingData: Partial<Message> = {
-                isStreaming: false,
-                thinkingStartTime,
-                thinkingEndTime: answerStartTime || answerEndTime,
-                answerStartTime: answerStartTime,
-                answerEndTime: answerEndTime,
-                agent_session_id: event.session_id || streamingSessionId,
-              };
-
-              // Save the original session ID before potential switch
-              const originalSessionId = streamingSessionId;
-
-              // Handle session ID switch for new sessions
-              if (event.session_id) {
-                const newId = event.session_id;
-                if (isTempSession && streamingSessionId !== newId) {
-                  const cached = streamingCacheRef.current.get(streamingSessionId);
-                  if (cached) {
-                    streamingCacheRef.current.delete(streamingSessionId);
-                    streamingCacheRef.current.set(newId, { ...cached, sessionId: newId, tempId: streamingSessionId });
-                  }
-
-                  // Update session with proper last_message_preview
-                  setSessionsRef.current(prev =>
-                    prev.map(c => {
-                      if (c.id === streamingSessionId) {
-                        return {
-                          ...c,
-                          id: newId,
-                          // Keep the last_message_preview from temp session (user's message)
-                          last_message_preview: c.last_message_preview
-                        };
-                      }
-                      return c;
-                    })
-                  );
-
-                  // Update streamingSessionId first
-                  streamingSessionId = newId;
-
-                  // Then update the current session ID ref and state if this is the current session
-                  if (currentSessionIdRef.current === originalSessionId) {
-                    currentSessionIdRef.current = newId;
-                    setSessionIdRef.current(newId);
-                  }
-                }
-                // Delay refresh to allow backend to save messages
-                setTimeout(() => refreshSessionsRef.current?.(true), 5);
-              }
-
-              const cached = streamingCacheRef.current.get(streamingSessionId);
-              const finalMessages = cached
-                ? cached.messages.map(msg =>
-                    msg.id === assistantMessageId
-                      ? { ...msg, ...timingData }
-                      : event.session_id
-                        ? { ...msg, agent_session_id: event.session_id }
-                      : msg
-                  )
-                : [];
-
-              // Check both the new session ID and the original (for cases where session wasn't switched)
-              if ((currentSessionIdRef.current === streamingSessionId || currentSessionIdRef.current === originalSessionId) && finalMessages.length > 0) {
-                setMessagesRef.current(finalMessages);
-                setIsStreamingRef.current(false);
-              }
-              streamingCacheRef.current.delete(streamingSessionId);
-              saveStreamingCache(streamingCacheRef.current);
+              pendingDoneEvent = event as SSEEvent;
+              pendingDoneAnswerEndTime = Date.now();
+              maybeFinalizeDone();
             }
             break;
         }
@@ -673,7 +692,9 @@ export function useAgent(token?: string) {
         }
       }
     } finally {
-      if (currentSessionIdRef.current === streamingSessionId) {
+      // If 'done' already arrived but we're still revealing typewriter text,
+      // defer cleanup until the queue is fully drained.
+      if (!pendingDoneEvent && currentSessionIdRef.current === streamingSessionId) {
         setIsLoading(false);
         setIsStreaming(false);
       }

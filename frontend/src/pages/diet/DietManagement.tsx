@@ -1458,7 +1458,7 @@ export default function DietManagementPage() {
                       {planTotals.calories ? `${planTotals.calories.toFixed(0)} kcal` : '未设置'}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
-                      蛋白 {planTotals.protein.toFixed(1)}g · 脂肪 {planTotals.fat.toFixed(1)}g · 碳水 {planTotals.carbs.toFixed(1)}g
+                      蛋白 {planTotals.protein ? planTotals.protein.toFixed(1) : '--'}g · 脂肪 {planTotals.fat ? planTotals.fat.toFixed(1) : '--'}g · 碳水 {planTotals.carbs ? planTotals.carbs.toFixed(1) : '--'}g
                     </div>
                     <div className="mt-3 text-xs text-gray-500">
                       计划餐次 {plan?.meals?.filter(meal => meal.plan_date === dateStr).length || 0} 餐

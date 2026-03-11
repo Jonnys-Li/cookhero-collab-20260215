@@ -201,3 +201,53 @@ def test_get_plan_by_week_backfills_missing_nutrition(monkeypatch):
     assert returned_meal["dishes"][0]["protein"] == 18.0
     assert returned_meal["total_protein"] == 18.0
 
+
+def test_get_plan_by_week_backfills_missing_macros_with_auto(monkeypatch):
+    repo = FakeDietRepoForNutrition()
+    meal = FakeMeal(
+        meal_id=str(uuid.uuid4()),
+        user_id="u1",
+        plan_date=date.today(),
+        meal_type="dinner",
+        dishes=[
+            {
+                "name": "豆腐蔬菜碗",
+                "calories": 380,
+                "protein": None,
+                "fat": None,
+                "carbs": None,
+            }
+        ],
+        total_calories=380,
+        total_protein=None,
+        total_fat=None,
+        total_carbs=None,
+    )
+    repo.meals_by_id[str(meal.id)] = meal
+
+    service = DietService(repository=repo)
+
+    async def fake_complete(*, user_id: str, dishes: list[dict]):
+        # RAG completion returns no changes; AUTO fallback should fill macros.
+        return deepcopy(dishes), False
+
+    from app.diet import nutrition_completion_service as completion_module
+
+    monkeypatch.setattr(
+        completion_module.nutrition_completion_service,
+        "complete_dishes",
+        fake_complete,
+    )
+
+    plan = run(service.get_plan_by_week("u1", date.today()))
+    assert plan is not None
+    assert repo.updated_count == 1
+
+    returned_meal = plan["meals"][0]
+    dish = returned_meal["dishes"][0]
+    assert dish["nutrition_source"] == "AUTO"
+    assert dish["nutrition_confidence"] == 0.35
+    assert dish["protein"] == 23.8
+    assert dish["fat"] == 12.7
+    assert dish["carbs"] == 42.8
+    assert returned_meal["total_protein"] == 23.8

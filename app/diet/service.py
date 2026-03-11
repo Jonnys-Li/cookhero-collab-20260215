@@ -130,6 +130,36 @@ class DietService:
             "total_carbs": total_carbs or None,
         }
 
+    @staticmethod
+    def _resolve_macro_goal_from_preference(pref: Optional[object]) -> str:
+        """Resolve macro goal label used by AUTO macro estimation.
+
+        Priority:
+        1) stats.planmode_profile.goal
+        2) diet_tags includes any known goal label
+        3) default maintenance
+        """
+        allowed = {"fat_loss", "muscle_gain", "maintenance", "recovery"}
+        if not pref:
+            return "maintenance"
+
+        stats = getattr(pref, "stats", None)
+        if isinstance(stats, dict):
+            planmode_profile = stats.get("planmode_profile")
+            if isinstance(planmode_profile, dict):
+                goal = str(planmode_profile.get("goal") or "").strip().lower()
+                if goal in allowed:
+                    return goal
+
+        diet_tags = getattr(pref, "diet_tags", None)
+        if isinstance(diet_tags, list):
+            for tag in diet_tags:
+                text = str(tag or "").strip().lower()
+                if text in allowed:
+                    return text
+
+        return "maintenance"
+
     async def _enrich_dishes_with_nutrition(
         self,
         *,
@@ -138,18 +168,80 @@ class DietService:
     ) -> tuple[list, bool]:
         if not dishes:
             return list(dishes or []), False
+
+        enriched: list = deepcopy(list(dishes))
+        changed = False
+
+        # 1) RAG-first nutrition completion (may be unavailable in demo env)
         try:
             from app.diet.nutrition_completion_service import (
                 nutrition_completion_service,
             )
 
-            return await nutrition_completion_service.complete_dishes(
+            enriched, changed = await nutrition_completion_service.complete_dishes(
                 user_id=user_id,
                 dishes=dishes,
             )
         except Exception as exc:
             logger.warning("Nutrition completion skipped due to runtime error: %s", exc)
-            return list(dishes), False
+
+        # 2) AUTO macro estimation fallback: fill missing P/F/C deterministically
+        try:
+            from app.diet.macro_estimation import (
+                estimate_macros_from_calories,
+                AUTO_NUTRITION_CONFIDENCE,
+                AUTO_NUTRITION_SOURCE,
+            )
+        except Exception:
+            return list(enriched), changed
+
+        macro_goal = "maintenance"
+        try:
+            pref = await self.repository.get_user_preference(user_id)
+            macro_goal = self._resolve_macro_goal_from_preference(pref)
+        except Exception:
+            macro_goal = "maintenance"
+
+        for dish in enriched:
+            if not isinstance(dish, dict):
+                continue
+            calories_raw = dish.get("calories")
+            try:
+                calories_value = int(round(float(calories_raw))) if calories_raw is not None else 0
+            except (TypeError, ValueError):
+                calories_value = 0
+            if calories_value <= 0:
+                continue
+
+            missing_any = any(dish.get(field) is None for field in ("protein", "fat", "carbs"))
+            if not missing_any:
+                continue
+
+            macros = estimate_macros_from_calories(calories_value, macro_goal)
+            updated = False
+
+            if dish.get("protein") is None and macros.get("protein_g") is not None:
+                dish["protein"] = macros["protein_g"]
+                updated = True
+            if dish.get("fat") is None and macros.get("fat_g") is not None:
+                dish["fat"] = macros["fat_g"]
+                updated = True
+            if dish.get("carbs") is None and macros.get("carbs_g") is not None:
+                dish["carbs"] = macros["carbs_g"]
+                updated = True
+
+            if not updated:
+                continue
+
+            # Only set source/confidence when not already present (RAG wins).
+            if not dish.get("nutrition_source"):
+                dish["nutrition_source"] = str(macros.get("source") or AUTO_NUTRITION_SOURCE)
+            if dish.get("nutrition_confidence") is None:
+                dish["nutrition_confidence"] = float(macros.get("confidence") or AUTO_NUTRITION_CONFIDENCE)
+
+            changed = True
+
+        return list(enriched), changed
 
     # ==================== 计划餐次 ====================
 

@@ -3,7 +3,7 @@
  * Displays individual chat messages with Agent-specific styling and trace rendering
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Clock, Loader2, BookOpen, Globe, ExternalLink } from 'lucide-react';
 import type {
   CollabTimelineAction,
@@ -300,7 +300,10 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
   const hasText = !!(message.content && message.content.trim().length > 0);
 
   // Parse trace data - use message.trace if available, otherwise fall back to message.thinking
-  const traceData = parseTrace(message.trace || message.thinking);
+  const traceData = useMemo(
+    () => parseTrace(message.trace || message.thinking),
+    [message.trace, message.thinking]
+  );
   const traceWithoutUiAction = traceData.filter(
     (step) =>
       !['ui_action', 'collab_timeline', 'smart_action_result'].includes(step.action)
@@ -420,51 +423,80 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
           </div>
         )}
 
-        {/* Message Text (hide while only thinking) */}
-        {!isThinkingPhase && (
-          <div
-            className={`text-sm leading-relaxed break-words ${
-              isUser
-                ? 'bg-gradient-to-br from-blue-500 to-blue-500 text-white px-4 py-1 rounded-2xl shadow-sm'
-                : 'prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100 px-0 py-0'
-            }`}
-          >
-            {/* User Images (displayed before text) */}
-            {isUser && hasUserImages && (
-              <div className="flex flex-wrap gap-2 mb-2">
-                {userImages.map((imgUrl, idx) => (
-                  <img
-                    key={idx}
-                    src={imgUrl}
-                    alt={`Uploaded image ${idx + 1}`}
-                    className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
-                  />
-                ))}
+        {/* Message Body */}
+        <div
+          className={`text-sm leading-relaxed break-words ${
+            isUser
+              ? 'bg-gradient-to-br from-blue-500 to-blue-500 text-white px-4 py-1 rounded-2xl shadow-sm'
+              : 'prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-100 px-0 py-0'
+          }`}
+        >
+          {/* User Images (displayed before text) */}
+          {isUser && hasUserImages && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {userImages.map((imgUrl, idx) => (
+                <img
+                  key={idx}
+                  src={imgUrl}
+                  alt={`Uploaded image ${idx + 1}`}
+                  className="max-w-[200px] max-h-[200px] rounded-lg object-cover"
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Assistant: visible placeholder during long thinking */}
+          {!isUser && isThinkingPhase && (
+            <div className="mt-1 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-900/20 p-3">
+              <div className="flex items-center gap-2 text-orange-700 dark:text-orange-200">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <div className="text-sm font-medium">正在生成中，请稍等...</div>
               </div>
-            )}
+              <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                已耗时 {formatDuration(elapsedTime)}{mainTrace.some((s) => s.action === 'tool_call') ? ' · 正在调用工具...' : ''}
+              </div>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-orange-100/70 dark:bg-orange-900/30">
+                <div className="h-full w-1/3 animate-pulse rounded-full bg-gradient-to-r from-orange-400 via-amber-400 to-orange-400" />
+              </div>
+            </div>
+          )}
+
+          {/* Assistant: during streaming, render plain text (no markdown parsing) */}
+          {!isUser && !isThinkingPhase && message.isStreaming && (
+            <div className="whitespace-pre-wrap break-words">
+              {message.content}
+              <span className="ml-0.5 animate-pulse">▍</span>
+            </div>
+          )}
+
+          {/* Final assistant content: markdown render once after streaming ends */}
+          {isUser ? (
             <MarkdownRenderer content={message.content.trim()} />
-            {!isUser && !message.isStreaming && (emotionBudgetAction || smartRecommendationAction || collabTimelineAction) && (
-              <CardDeckFlow
-                trace={traceData}
-                sessionId={message.agent_session_id}
-              />
-            )}
-            {!isUser && !message.isStreaming && planModeAction && (
-              <PlanModeMealWizardCard
-                action={planModeAction}
-                trace={traceData}
-                sessionId={message.agent_session_id || planModeAction.session_id}
-              />
-            )}
-            {!isUser && !message.isStreaming && weekPlanPreviewAction && (
-              <WeekPlanPreviewCard
-                action={weekPlanPreviewAction}
-                trace={traceData}
-                sessionId={message.agent_session_id || weekPlanPreviewAction.session_id}
-              />
-            )}
-          </div>
-        )}
+          ) : (
+            !message.isStreaming && <MarkdownRenderer content={message.content.trim()} />
+          )}
+
+          {!isUser && !message.isStreaming && (emotionBudgetAction || smartRecommendationAction || collabTimelineAction) && (
+            <CardDeckFlow
+              trace={traceData}
+              sessionId={message.agent_session_id}
+            />
+          )}
+          {!isUser && !message.isStreaming && planModeAction && (
+            <PlanModeMealWizardCard
+              action={planModeAction}
+              trace={traceData}
+              sessionId={message.agent_session_id || planModeAction.session_id}
+            />
+          )}
+          {!isUser && !message.isStreaming && weekPlanPreviewAction && (
+            <WeekPlanPreviewCard
+              action={weekPlanPreviewAction}
+              trace={traceData}
+              sessionId={message.agent_session_id || weekPlanPreviewAction.session_id}
+            />
+          )}
+        </div>
 
         {/* Timestamp and Duration Stats */}
         <div
