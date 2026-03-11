@@ -74,6 +74,46 @@ class AgentRepository:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
+    async def get_session_metadata(self, session_id: str) -> dict[str, Any]:
+        """获取 Session metadata。"""
+        async with get_session_context() as session:
+            try:
+                sess_uuid = uuid.UUID(session_id)
+            except ValueError:
+                return {}
+
+            stmt = select(AgentSessionModel.metadata_).where(AgentSessionModel.id == sess_uuid)
+            result = await session.execute(stmt)
+            metadata = result.scalar_one_or_none()
+            if isinstance(metadata, dict):
+                return dict(metadata)
+            return {}
+
+    async def merge_session_metadata(self, session_id: str, patch: dict[str, Any]) -> bool:
+        """合并更新 Session metadata。"""
+        if not isinstance(patch, dict):
+            return False
+
+        async with get_session_context() as session:
+            try:
+                sess_uuid = uuid.UUID(session_id)
+            except ValueError:
+                return False
+
+            stmt = select(AgentSessionModel).where(AgentSessionModel.id == sess_uuid)
+            result = await session.execute(stmt)
+            agent_session = result.scalar_one_or_none()
+            if not agent_session:
+                return False
+
+            current = agent_session.metadata_ if isinstance(agent_session.metadata_, dict) else {}
+            merged = dict(current)
+            merged.update(patch)
+            agent_session.metadata_ = merged
+            agent_session.updated_at = datetime.utcnow()
+            await session.flush()
+            return True
+
     async def list_sessions(
         self,
         user_id: Optional[str] = None,

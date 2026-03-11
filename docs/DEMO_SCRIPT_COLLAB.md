@@ -10,7 +10,8 @@
    - `subagent_emotion_support`
    - （可选）任意自定义 `subagent_*`
    - `diet_analysis`
-3. 打开饮食管理页确认可查看“计划餐次”。
+3. 工具区确认提示：`系统内置 MCP 已启用（diet_auto_adjust）`。  
+4. 打开饮食管理页确认可查看“计划餐次”。
 
 ---
 

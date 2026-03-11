@@ -36,6 +36,8 @@ MAX_MESSAGE_LENGTH = settings.MAX_MESSAGE_LENGTH  # 10000 characters
 MAX_IMAGES = 4
 MAX_IMAGE_SIZE_MB = 10.0
 SUPPORTED_IMAGE_FORMATS = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+EMOTION_DEMO_METADATA_KEY = "emotion_demo_state"
+EMOTION_FOLLOW_UP_COOLDOWN_SECONDS = 180
 
 
 class ToolSchema(BaseModel):
@@ -1322,6 +1324,150 @@ def _build_weekly_progress_summary(
     return f"{base} 已完成周进度分析。"
 
 
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    raw = raw.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+async def _load_emotion_demo_state(session_id: str) -> dict[str, Any]:
+    try:
+        metadata = await agent_service.repository.get_session_metadata(session_id)
+    except Exception as exc:
+        logger.warning("Failed to read session metadata %s: %s", session_id, exc)
+        return {}
+
+    state = metadata.get(EMOTION_DEMO_METADATA_KEY)
+    if isinstance(state, dict):
+        return dict(state)
+    return {}
+
+
+async def _save_emotion_demo_state(session_id: str, state: dict[str, Any]) -> None:
+    if not isinstance(state, dict):
+        return
+    try:
+        await agent_service.repository.merge_session_metadata(
+            session_id,
+            {EMOTION_DEMO_METADATA_KEY: state},
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist session metadata %s: %s", session_id, exc)
+
+
+def _should_emit_emotion_followup(action_id: str, state: dict[str, Any]) -> bool:
+    last_action = str(state.get("last_followup_for_action_id") or "").strip()
+    if last_action and last_action == action_id:
+        return False
+
+    last_followup_at = _parse_iso_datetime(state.get("last_followup_at"))
+    if not last_followup_at:
+        return True
+
+    now = (
+        datetime.now(last_followup_at.tzinfo)
+        if last_followup_at.tzinfo
+        else datetime.utcnow()
+    )
+    return (
+        now - last_followup_at
+    ).total_seconds() >= EMOTION_FOLLOW_UP_COOLDOWN_SECONDS
+
+
+def _build_emotion_followup_smart_action(
+    *,
+    session_id: str,
+    parent_action_id: str,
+    emotion_level: Optional[str],
+    used_provider: str,
+    effective_goal: Optional[int],
+    applied_delta: Optional[int],
+    capped: bool,
+) -> dict[str, Any]:
+    plan_date, meal_type = _infer_default_next_meal()
+    emotion_label_map = {
+        "low": "轻度波动",
+        "medium": "中度压力",
+        "high": "高压时段",
+    }
+    emotion_label = emotion_label_map.get(
+        str(emotion_level or "").strip().lower(),
+        "情绪波动",
+    )
+    provider_label = "MCP" if used_provider == "mcp" else "本地工具"
+    capped_hint = "（已触发上限保护）" if capped else ""
+    applied_hint = (
+        f"本次已弹性调整 +{applied_delta} kcal{capped_hint}"
+        if isinstance(applied_delta, int)
+        else "已完成预算弹性调整"
+    )
+    goal_hint = (
+        f"，当前有效预算约 {effective_goal} kcal"
+        if isinstance(effective_goal, int)
+        else ""
+    )
+
+    return {
+        "action_id": f"smart-recommendation-{uuid.uuid4().hex}",
+        "action_type": "smart_recommendation_card",
+        "title": "下一步我建议你这样稳住节奏",
+        "description": (
+            f"已识别为{emotion_label}；{applied_hint}{goal_hint}。"
+            f"下面这张卡可以直接执行（预算来源：{provider_label}）。"
+        ),
+        "timeout_seconds": 10,
+        "timeout_mode": "timeout_suggest_only",
+        "default_timeout_suggestion": "超时后保留建议，不会自动写入饮食数据。",
+        "next_meal_options": [
+            {
+                "option_id": "stabilize",
+                "title": "稳态轻负担餐",
+                "description": "优先蛋白 + 蔬菜，避免补偿性节食和二次暴食。",
+                "meal_type": meal_type,
+                "plan_date": plan_date.isoformat(),
+                "dish_name": "鸡蛋豆腐蔬菜碗",
+                "calories": 420,
+            },
+            {
+                "option_id": "protein",
+                "title": "高蛋白稳定餐",
+                "description": "提高饱腹感，减少情绪波动带来的冲动进食。",
+                "meal_type": meal_type,
+                "plan_date": plan_date.isoformat(),
+                "dish_name": "鸡胸肉沙拉配酸奶",
+                "calories": 460,
+            },
+            {
+                "option_id": "comfort",
+                "title": "温和安抚餐",
+                "description": "保留满足感，不用通过惩罚来“补偿”自己。",
+                "meal_type": meal_type,
+                "plan_date": plan_date.isoformat(),
+                "dish_name": "燕麦酸奶水果杯",
+                "calories": 380,
+            },
+        ],
+        "relax_suggestions": _build_relax_suggestions(["breathing", "walk", "journaling"]),
+        "weekly_progress": {
+            "trigger_hint": "看本周进度",
+            "summary_text": "点击查看本周执行偏差，做一次轻量复盘。",
+            "execution_rate": None,
+            "total_deviation": None,
+        },
+        "budget_options": [50, 100, 150],
+        "source": "emotion_support_followup",
+        "session_id": session_id,
+        "parent_action_id": parent_action_id,
+    }
+
+
 @router.post(
     "/agent/smart-actions/apply",
     response_model=ApplySmartActionResponse,
@@ -1639,6 +1785,9 @@ async def apply_emotion_budget_adjust(
             message=str(existing.get("message") or "调整已完成"),
         )
 
+    demo_state = await _load_emotion_demo_state(payload.session_id)
+    should_emit_followup = _should_emit_emotion_followup(payload.action_id, demo_state)
+
     try:
         result = await emotion_budget_service.adjust_today_budget(
             user_id=str(user_id),
@@ -1677,11 +1826,55 @@ async def apply_emotion_budget_adjust(
         "source": "subagent",
         "subagent_name": "emotion_support",
     }
+    trace_steps = [trace_step]
+
+    followup_action: Optional[dict[str, Any]] = None
+    if should_emit_followup:
+        followup_action = _build_emotion_followup_smart_action(
+            session_id=payload.session_id,
+            parent_action_id=payload.action_id,
+            emotion_level=action_payload.get("emotion_level"),
+            used_provider=str(response_data["used_provider"]),
+            effective_goal=response_data.get("effective_goal"),
+            applied_delta=applied if isinstance(applied, int) else None,
+            capped=bool(response_data["capped"]),
+        )
+        trace_steps.append(
+            {
+                "iteration": 0,
+                "action": "ui_action",
+                "content": followup_action,
+                "error": None,
+                "source": "subagent",
+                "subagent_name": "emotion_support",
+            }
+        )
+
+    now_iso = datetime.utcnow().isoformat()
+    updated_state = dict(demo_state)
+    updated_state.update(
+        {
+            "last_emotion_level": action_payload.get("emotion_level"),
+            "last_budget_provider": response_data["used_provider"],
+            "last_budget_action_id": payload.action_id,
+            "last_budget_applied_at": now_iso,
+        }
+    )
+    if followup_action:
+        updated_state.update(
+            {
+                "last_followup_for_action_id": payload.action_id,
+                "last_followup_action_id": followup_action.get("action_id"),
+                "last_followup_at": now_iso,
+            }
+        )
+    await _save_emotion_demo_state(payload.session_id, updated_state)
+
     await agent_service.repository.save_message(
         payload.session_id,
         "assistant",
         content,
-        trace=[trace_step],
+        trace=trace_steps,
     )
 
     return ApplyEmotionBudgetAdjustResponse(**response_data)

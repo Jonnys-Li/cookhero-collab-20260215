@@ -14,6 +14,7 @@
 - 认证 Header 名称：`X-MCP-Service-Key`
 - 服务密钥环境变量：`MCP_DIET_SERVICE_KEY`
 - 当前演示值：`cookhero-mcp-demo-key-v1`
+- 默认行为：后端启动时自动注册 `diet_auto_adjust`（无需前端手动添加）
 
 ## 自定义 Agent 推荐模板
 

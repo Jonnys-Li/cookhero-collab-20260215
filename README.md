@@ -242,6 +242,11 @@ WEB_SEARCH_API_KEY=your_tavily_api_key
 # ==================== MCP 集成 ====================
 # 高德地图 MCP 服务 API Key
 AMAP_API_KEY=your_amap_api_key
+# 内置饮食预算 MCP（默认自动注册）
+MCP_DIET_AUTO_REGISTER_ENABLED=true
+MCP_DIET_ENDPOINT=https://cookhero-collab-20260215.onrender.com/api/v1/mcp/diet-adjust
+MCP_DIET_AUTH_HEADER_NAME=X-MCP-Service-Key
+MCP_DIET_SERVICE_KEY=cookhero-mcp-demo-key-v1
 
 # ==================== 图片生成 ====================
 # OpenAI 兼容的图片生成 API Key（DALL-E 3 等）

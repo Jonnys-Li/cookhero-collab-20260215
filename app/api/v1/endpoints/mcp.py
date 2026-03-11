@@ -19,7 +19,6 @@ from app.diet.service import diet_service
 router = APIRouter()
 
 MCP_SESSION_HEADER = "Mcp-Session-Id"
-MCP_AUTH_HEADER = "X-MCP-Service-Key"
 
 EMOTION_DELTA_MAP = {
     "low": 50,
@@ -126,14 +125,20 @@ def _parse_target_date(target_date: Optional[str]) -> Optional[date]:
         raise ValueError("target_date 必须是 YYYY-MM-DD 格式") from exc
 
 
+def _get_auth_header_name() -> str:
+    configured = settings.MCP_DIET_AUTH_HEADER_NAME.strip()
+    return configured or "X-MCP-Service-Key"
+
+
 def _is_authorized(request: Request) -> tuple[bool, Optional[str]]:
     expected = settings.MCP_DIET_SERVICE_KEY.strip()
     if not expected:
         return False, "MCP_DIET_SERVICE_KEY 未配置"
 
-    provided = request.headers.get(MCP_AUTH_HEADER, "").strip()
+    auth_header = _get_auth_header_name()
+    provided = request.headers.get(auth_header, "").strip()
     if not provided:
-        return False, f"缺少认证头 {MCP_AUTH_HEADER}"
+        return False, f"缺少认证头 {auth_header}"
 
     if not secrets.compare_digest(provided, expected):
         return False, "MCP 服务密钥无效"

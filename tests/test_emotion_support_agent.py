@@ -110,6 +110,7 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
                 "mcp_city_weather",
                 "mcp_fun_music",
                 "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_custom_auto_adjust_today_budget",
                 "mcp_internal_sql",
             ]
         ),
@@ -124,9 +125,8 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
                 "datetime",
                 "diet_analysis",
                 "web_search",
-                "mcp_city_weather",
-                "mcp_fun_music",
                 "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_custom_auto_adjust_today_budget",
             }
             else None
         ),
@@ -134,9 +134,10 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
 
     subagent = EmotionSupportSubagent(EmotionSupportSubagent.get_default_config())
     tools = subagent._build_tool_whitelist("u1")
-    assert "mcp_city_weather" in tools
-    assert "mcp_fun_music" in tools
     assert "mcp_diet_auto_adjust_get_today_budget" in tools
+    assert "mcp_custom_auto_adjust_today_budget" in tools
+    assert "mcp_city_weather" not in tools
+    assert "mcp_fun_music" not in tools
     assert "mcp_internal_sql" not in tools
 
 

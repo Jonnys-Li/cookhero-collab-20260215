@@ -32,6 +32,12 @@ from app.config.config_loader import (
     load_image_storage_config,
 )
 
+DEFAULT_MCP_DIET_ENDPOINT = (
+    "https://cookhero-collab-20260215.onrender.com/api/v1/mcp/diet-adjust"
+)
+DEFAULT_MCP_DIET_AUTH_HEADER = "X-MCP-Service-Key"
+DEFAULT_MCP_DIET_SERVICE_KEY = "cookhero-mcp-demo-key-v1"
+
 
 class Settings(BaseModel):
     """
@@ -81,8 +87,23 @@ class Settings(BaseModel):
     MAX_IMAGE_SIZE_MB: int = int(os.getenv("MAX_IMAGE_SIZE_MB", "5"))
     # Prompt injection protection
     PROMPT_GUARD_ENABLED: bool = os.getenv("PROMPT_GUARD_ENABLED", "true").lower() == "true"
-    # Service key for MCP diet-adjust endpoint
-    MCP_DIET_SERVICE_KEY: str = os.getenv("MCP_DIET_SERVICE_KEY", "")
+    # Built-in MCP diet-adjust endpoint (demo-first defaults)
+    MCP_DIET_AUTO_REGISTER_ENABLED: bool = (
+        os.getenv("MCP_DIET_AUTO_REGISTER_ENABLED", "true").lower() == "true"
+    )
+    MCP_DIET_ENDPOINT: str = os.getenv(
+        "MCP_DIET_ENDPOINT",
+        DEFAULT_MCP_DIET_ENDPOINT,
+    )
+    MCP_DIET_AUTH_HEADER_NAME: str = os.getenv(
+        "MCP_DIET_AUTH_HEADER_NAME",
+        DEFAULT_MCP_DIET_AUTH_HEADER,
+    )
+    # Service key for MCP diet-adjust endpoint (env first, demo fallback)
+    MCP_DIET_SERVICE_KEY: str = os.getenv(
+        "MCP_DIET_SERVICE_KEY",
+        DEFAULT_MCP_DIET_SERVICE_KEY,
+    )
     
     # ==========================================================================
     # Module Configurations

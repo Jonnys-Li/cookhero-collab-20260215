@@ -220,14 +220,17 @@ class MCPToolProvider:
         """
         # Group tools by server
         servers: dict[str, list[dict]] = {}
+        known_servers = sorted(self._servers.keys(), key=len, reverse=True)
 
         for t in self._tools.values():
             # name format: mcp_{server}_{tool}
             server_name = None
             if t.name.startswith("mcp_"):
-                parts = t.name.split("_", 2)
-                if len(parts) >= 2:
-                    server_name = parts[1]
+                for candidate in known_servers:
+                    prefix = f"mcp_{candidate}_"
+                    if t.name.startswith(prefix):
+                        server_name = candidate
+                        break
 
             if server_name is None:
                 server_name = "unknown"

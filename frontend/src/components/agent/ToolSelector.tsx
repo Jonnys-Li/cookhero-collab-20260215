@@ -37,7 +37,8 @@ const ToolChip = memo(function ToolChip({
   onShowInfo,
   isShowingInfo,
   disabled,
-  serverType
+  serverType,
+  serverName,
 }: {
   tool: ToolSchema;
   isSelected: boolean;
@@ -46,11 +47,14 @@ const ToolChip = memo(function ToolChip({
   isShowingInfo: boolean;
   disabled?: boolean;
   serverType: string;
+  serverName: string;
 }) {
-  // For MCP tools, remove prefix for shorter display
-  const displayName = serverType === 'mcp'
-    ? tool.name.replace(/^mcp_\w+_/, '')
-    : tool.name;
+  // For MCP tools, remove exact server prefix for shorter display.
+  const mcpPrefix = `mcp_${serverName}_`;
+  const displayName =
+    serverType === 'mcp' && tool.name.startsWith(mcpPrefix)
+      ? tool.name.slice(mcpPrefix.length)
+      : tool.name;
 
   // Colors based on server type
   const isLocal = serverType === 'local';
@@ -263,6 +267,7 @@ const ServerCard = memo(function ServerCard({
                 isShowingInfo={showingInfoTool === tool.name}
                 disabled={disabled}
                 serverType={server.type}
+                serverName={server.name}
               />
             ))}
             {server.tools.length === 0 && (
@@ -574,6 +579,12 @@ export function ToolSelector({
   );
 
   const allTools = toolServers.flatMap((server) => server.tools);
+  const hasBuiltInDietAutoAdjust = toolServers.some(
+    (server) =>
+      server.type === 'mcp' &&
+      server.name === 'diet_auto_adjust' &&
+      server.tools.length > 0
+  );
   const allSelectedToolCount = allTools.filter((tool) =>
     selectedTools.includes(tool.name)
   ).length;
@@ -665,6 +676,12 @@ export function ToolSelector({
           </div>
         )}
       </div>
+
+      {hasBuiltInDietAutoAdjust && (
+        <div className="mb-2 rounded-lg border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-1.5 text-[11px] text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-900/30 dark:text-emerald-300">
+          系统内置 MCP 已启用（diet_auto_adjust），无需手动添加。
+        </div>
+      )}
 
       {/* ========== Single Expanded Panel ========== */}
       {(isToolsExpanded || isAgentsExpanded) && (

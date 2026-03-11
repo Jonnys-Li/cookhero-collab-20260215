@@ -174,3 +174,26 @@ def test_load_server_tools_strict_initialize_error(monkeypatch):
 
     assert exc.value.phase == "initialize"
     assert exc.value.error_code == "initialize_failed"
+
+
+def test_list_servers_with_tools_supports_server_name_with_underscores(monkeypatch):
+    module, fake_client = load_mcp_provider_module(monkeypatch)
+    provider = module.MCPToolProvider()
+
+    fake_client.tools_payload = [
+        {
+            "name": "get_today_budget",
+            "description": "budget tool",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+    ]
+    fake_client.initialize_error = None
+    fake_client.list_tools_error = None
+
+    provider.register_server("diet_auto_adjust", "https://example.com/mcp")
+    run(provider.load_server_tools("diet_auto_adjust", strict=True))
+
+    servers = provider.list_servers_with_tools()
+    assert len(servers) == 1
+    assert servers[0]["name"] == "diet_auto_adjust"
+    assert servers[0]["tools"][0]["name"] == "mcp_diet_auto_adjust_get_today_budget"

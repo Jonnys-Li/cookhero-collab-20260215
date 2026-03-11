@@ -12,19 +12,18 @@ MCP_DIET_SERVICE_KEY=cookhero-mcp-demo-key-v1
 
 > 该密钥用于 `POST /api/v1/mcp/diet-adjust` 服务端鉴权（Header：`X-MCP-Service-Key`）。
 
-## 2. MCP 配置（前端设置页）
+## 2. MCP 默认内置（无需手工添加）
 
-在「设置 -> MCP 配置」新增：
+当前版本会在服务启动时自动注册系统 MCP：
 
 - MCP 名称：`diet_auto_adjust`
 - Endpoint：`https://cookhero-collab-20260215.onrender.com/api/v1/mcp/diet-adjust`
-- 启用认证 Header：开启
-- Header 名称：`X-MCP-Service-Key`
-- Token：`cookhero-mcp-demo-key-v1`
+- Header：`X-MCP-Service-Key: ${MCP_DIET_SERVICE_KEY}`
 
-保存成功后，工具会以 `mcp_diet_auto_adjust_*` 形式出现在可选工具列表里。
+只要后端环境变量 `MCP_DIET_SERVICE_KEY` 可用，`mcp_diet_auto_adjust_*` 工具会自动出现在 Agent 工具列表中。
+无需再到「设置 -> MCP 配置」手动添加。
 
-## 3. 新建自定义 Agent（推荐）
+## 3. 新建自定义 Agent（可选）
 
 建议创建：
 
@@ -64,8 +63,9 @@ MCP_DIET_SERVICE_KEY=cookhero-mcp-demo-key-v1
 
 ## 5. 手工验收
 
-1. 在聊天中选择自定义 Agent `emotion_budget_guard`
-2. 输入：`我今天吃多了很内疚`
-3. 观察：先安抚 -> 调预算 -> 返回新预算说明
-4. 在饮食管理页面核对当天有效预算变化
-5. 把 Header Token 改错，确认 MCP 报鉴权错误但系统主流程不崩溃
+1. 启动后进入 Agent 页面，确认工具区域提示“系统内置 MCP 已启用（diet_auto_adjust）”
+2. 在聊天中选择自定义 Agent `emotion_budget_guard`（可选）
+3. 输入：`我今天吃多了很内疚`
+4. 观察：先安抚 -> 调预算 -> 返回新预算说明
+5. 在饮食管理页面核对当天有效预算变化
+6. 把 `MCP_DIET_SERVICE_KEY` 改错，确认 MCP 报鉴权错误但系统主流程不崩溃（自动回退本地能力）
