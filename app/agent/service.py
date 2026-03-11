@@ -289,7 +289,7 @@ class AgentService:
             )
 
             # 7. 执行 Agent
-            if streaming and not collab_runtime:
+            if streaming:
                 agent_generator = agent.run_streaming(invoker, context)
             else:
                 agent_generator = agent.run(invoker, context)

@@ -439,6 +439,57 @@ export function useAgent(token?: string) {
       }
     };
 
+    const appendAssistantText = (text: string) => {
+      if (!text) return;
+      updateStreamingState(
+        msgs => msgs.map(msg =>
+          msg.id === assistantMessageId
+            ? { ...msg, content: msg.content + text }
+            : msg
+        ),
+        true
+      );
+    };
+
+    const typewriterQueue: string[] = [];
+    let drainingTypewriter = false;
+    const TYPEWRITER_STEP = 12;
+    const TYPEWRITER_DELAY_MS = 14;
+
+    const flushTypewriterQueue = () => {
+      if (typewriterQueue.length === 0) return;
+      const remaining = typewriterQueue.join('');
+      typewriterQueue.length = 0;
+      appendAssistantText(remaining);
+    };
+
+    const drainTypewriterQueue = async () => {
+      if (drainingTypewriter) return;
+      drainingTypewriter = true;
+      try {
+        while (typewriterQueue.length > 0) {
+          if (abortController.signal.aborted) {
+            flushTypewriterQueue();
+            break;
+          }
+          const piece = typewriterQueue.shift();
+          if (!piece) continue;
+          appendAssistantText(piece);
+          await new Promise<void>((resolve) => window.setTimeout(resolve, TYPEWRITER_DELAY_MS));
+        }
+      } finally {
+        drainingTypewriter = false;
+      }
+    };
+
+    const enqueueTypewriterChunk = (chunk: string) => {
+      if (!chunk) return;
+      for (let i = 0; i < chunk.length; i += TYPEWRITER_STEP) {
+        typewriterQueue.push(chunk.slice(i, i + TYPEWRITER_STEP));
+      }
+      void drainTypewriterQueue();
+    };
+
     // Timing tracking - thinkingStartTime is already set in assistantMessage
     let answerStartTime: number | undefined;
 
@@ -452,7 +503,10 @@ export function useAgent(token?: string) {
         images: images,
       }, token, abortController.signal)) {
 
-        if (abortController.signal.aborted) break;
+        if (abortController.signal.aborted) {
+          flushTypewriterQueue();
+          break;
+        }
 
         switch (event.type) {
           case 'tool_call':
@@ -484,17 +538,11 @@ export function useAgent(token?: string) {
             if (!answerStartTime) {
               answerStartTime = Date.now();
             }
-            updateStreamingState(
-              msgs => msgs.map(msg =>
-                msg.id === assistantMessageId
-                  ? { ...msg, content: msg.content + (event.content || '') }
-                  : msg
-              ),
-              true
-            );
+            enqueueTypewriterChunk(event.content || '');
             break;
 
            case 'error':
+             flushTypewriterQueue();
              console.error('Agent error:', event.error);
              setError(event.error || 'An error occurred');
              // Stop streaming on error
@@ -510,6 +558,7 @@ export function useAgent(token?: string) {
 
           case 'done':
             {
+              flushTypewriterQueue();
               // Record answer end time
               const answerEndTime = Date.now();
 

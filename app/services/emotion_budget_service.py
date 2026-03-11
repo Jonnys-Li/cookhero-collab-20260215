@@ -106,6 +106,21 @@ class EmotionBudgetService:
             return payload
         return None
 
+    def _extract_goal_source(self, payload: dict[str, Any], budget: dict[str, Any]) -> Optional[str]:
+        source = payload.get("goal_source", budget.get("goal_source"))
+        if source is None:
+            return None
+        source_text = str(source).strip().lower()
+        if source_text in {"explicit", "avg7d", "default1800"}:
+            return source_text
+        return None
+
+    def _extract_goal_seeded(self, payload: dict[str, Any], budget: dict[str, Any]) -> Optional[bool]:
+        seeded = payload.get("goal_seeded", budget.get("goal_seeded"))
+        if seeded is None:
+            return None
+        return bool(seeded)
+
     def _target_date_to_str(self, target_date: Optional[date | str]) -> Optional[str]:
         if target_date is None:
             return None
@@ -140,11 +155,15 @@ class EmotionBudgetService:
             if mcp_payload:
                 budget = self._extract_budget(mcp_payload)
                 if budget is not None:
+                    goal_source = self._extract_goal_source(mcp_payload, budget)
+                    goal_seeded = self._extract_goal_seeded(mcp_payload, budget)
                     return {
                         "message": mcp_payload.get("message") or "获取当天预算成功",
                         "budget": budget,
                         "used_provider": "mcp",
                         "used_tool": mcp_tool,
+                        "goal_source": goal_source,
+                        "goal_seeded": goal_seeded,
                         "provider_errors": provider_errors,
                     }
                 provider_errors.append(f"{mcp_tool}: payload missing budget")
@@ -162,11 +181,15 @@ class EmotionBudgetService:
         if local_payload:
             budget = self._extract_budget(local_payload)
             if budget is not None:
+                goal_source = self._extract_goal_source(local_payload, budget)
+                goal_seeded = self._extract_goal_seeded(local_payload, budget)
                 return {
                     "message": local_payload.get("message") or "获取当天预算成功",
                     "budget": budget,
                     "used_provider": "local",
                     "used_tool": "diet_analysis",
+                    "goal_source": goal_source,
+                    "goal_seeded": goal_seeded,
                     "provider_errors": provider_errors,
                 }
             provider_errors.append("diet_analysis: payload missing budget")
@@ -216,12 +239,16 @@ class EmotionBudgetService:
                     "effective_goal",
                     budget.get("effective_goal"),
                 )
+                goal_source = self._extract_goal_source(mcp_payload, budget)
+                goal_seeded = self._extract_goal_seeded(mcp_payload, budget)
                 return {
                     "message": mcp_payload.get("message") or "自动调整完成",
                     "requested": delta_calories,
                     "applied": applied,
                     "capped": bool(capped),
                     "effective_goal": effective_goal,
+                    "goal_source": goal_source,
+                    "goal_seeded": goal_seeded,
                     "budget": budget,
                     "used_provider": "mcp",
                     "used_tool": mcp_tool,
@@ -247,12 +274,16 @@ class EmotionBudgetService:
             applied = budget.get("applied_delta")
             capped = budget.get("capped", False)
             effective_goal = budget.get("effective_goal")
+            goal_source = self._extract_goal_source(local_payload, budget)
+            goal_seeded = self._extract_goal_seeded(local_payload, budget)
             return {
                 "message": local_payload.get("message") or "当天预算调整完成",
                 "requested": delta_calories,
                 "applied": applied,
                 "capped": bool(capped),
                 "effective_goal": effective_goal,
+                "goal_source": goal_source,
+                "goal_seeded": goal_seeded,
                 "budget": budget,
                 "used_provider": "local",
                 "used_tool": "diet_analysis",
@@ -267,4 +298,3 @@ class EmotionBudgetService:
 
 
 emotion_budget_service = EmotionBudgetService()
-

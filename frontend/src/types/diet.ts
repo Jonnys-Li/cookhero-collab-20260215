@@ -12,6 +12,8 @@ export interface Dish {
   protein?: number;
   fat?: number;
   carbs?: number;
+  nutrition_source?: string;
+  nutrition_confidence?: number;
 }
 
 export interface DietPlanMeal {

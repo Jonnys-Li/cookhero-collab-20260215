@@ -116,6 +116,8 @@ export interface EmotionBudgetUIAction {
     remaining_adjustment_cap?: number;
     adjustment_cap?: number;
     date?: string;
+    goal_source?: 'explicit' | 'avg7d' | 'default1800' | string;
+    goal_seeded?: boolean;
   } | null;
   budget_provider?: string | null;
   source?: string;
@@ -145,6 +147,11 @@ export interface SmartMealOption {
   plan_date: string;
   dish_name: string;
   calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  nutrition_source?: string;
+  nutrition_confidence?: number;
 }
 
 export interface SmartRecommendationAction {
@@ -268,6 +275,8 @@ export interface ApplyEmotionBudgetAdjustResponse {
   applied?: number | null;
   capped: boolean;
   effective_goal?: number | null;
+  goal_source?: 'explicit' | 'avg7d' | 'default1800' | string | null;
+  goal_seeded?: boolean | null;
   used_provider: string;
   mode: EmotionBudgetApplyMode;
   message: string;

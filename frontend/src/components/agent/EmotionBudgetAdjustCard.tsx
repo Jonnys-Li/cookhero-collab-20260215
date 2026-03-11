@@ -16,6 +16,8 @@ interface EmotionBudgetAdjustCardProps {
   action: EmotionBudgetUIAction;
   trace: TraceStep[];
   sessionId?: string;
+  onStepResolved?: (status: 'applied' | 'skipped') => void;
+  showSkipButton?: boolean;
 }
 
 function parseTraceResult(
@@ -39,6 +41,14 @@ function parseTraceResult(
         result.effective_goal === null || result.effective_goal === undefined
           ? null
           : Number(result.effective_goal),
+      goal_source:
+        result.goal_source === null || result.goal_source === undefined
+          ? null
+          : String(result.goal_source),
+      goal_seeded:
+        result.goal_seeded === null || result.goal_seeded === undefined
+          ? null
+          : Boolean(result.goal_seeded),
       used_provider: String(result.used_provider || 'unknown'),
       mode: (result.mode as EmotionBudgetApplyMode) || 'user_select',
       message: String(result.message || '自动调整完成'),
@@ -51,6 +61,8 @@ export function EmotionBudgetAdjustCard({
   action,
   trace,
   sessionId,
+  onStepResolved,
+  showSkipButton = true,
 }: EmotionBudgetAdjustCardProps) {
   const { token } = useAuth();
   const resolvedSessionId = sessionId || action.session_id;
@@ -61,6 +73,7 @@ export function EmotionBudgetAdjustCard({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [floatingFeedback, setFloatingFeedback] = useState<string | null>(null);
 
   const traceResult = useMemo(
     () => parseTraceResult(trace, action.action_id),
@@ -70,12 +83,34 @@ export function EmotionBudgetAdjustCard({
     traceResult
   );
   const autoTriggeredRef = useRef(false);
+  const resolvedRef = useRef(false);
 
   useEffect(() => {
     if (traceResult) {
       setResult(traceResult);
     }
   }, [traceResult]);
+
+  useEffect(() => {
+    if (result) {
+      setFloatingFeedback(`预算调整成功：+${result.applied ?? 0} kcal`);
+      if (!resolvedRef.current) {
+        resolvedRef.current = true;
+        onStepResolved?.('applied');
+      }
+      return;
+    }
+    if (dismissed && !resolvedRef.current) {
+      resolvedRef.current = true;
+      onStepResolved?.('skipped');
+    }
+  }, [dismissed, onStepResolved, result]);
+
+  useEffect(() => {
+    if (!floatingFeedback) return;
+    const timer = window.setTimeout(() => setFloatingFeedback(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [floatingFeedback]);
 
   const canAutoApply =
     action.auto_apply_on_timeout &&
@@ -136,9 +171,16 @@ export function EmotionBudgetAdjustCard({
 
   const budgetSnapshot = action.budget_snapshot;
   const showActionArea = !result && !dismissed;
+  const goalSourceText = (() => {
+    const source = budgetSnapshot?.goal_source;
+    if (source === 'explicit') return '用户目标';
+    if (source === 'avg7d') return '近7天均值';
+    if (source === 'default1800') return '系统默认 1800';
+    return '未标注';
+  })();
 
   return (
-    <div className="mt-3 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50/70 dark:bg-orange-900/20 p-3">
+    <div className="relative mt-3 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50/70 dark:bg-orange-900/20 p-3">
       <div className="text-sm font-medium text-orange-800 dark:text-orange-200">
         {action.title || '自动预算调整'}
       </div>
@@ -152,6 +194,9 @@ export function EmotionBudgetAdjustCard({
         <div className="mt-2 text-xs text-gray-700 dark:text-gray-300">
           当前有效预算 <span className="font-semibold">{budgetSnapshot.effective_goal ?? '--'}</span> kcal，
           剩余可调 <span className="font-semibold">{budgetSnapshot.remaining_adjustment_cap ?? '--'}</span> kcal
+          <span className="ml-1 text-[11px] text-gray-500 dark:text-gray-400">
+            （基线来源：{goalSourceText}）
+          </span>
         </div>
       )}
 
@@ -185,6 +230,10 @@ export function EmotionBudgetAdjustCard({
             })}
           </div>
 
+          <div className="mt-2 rounded-lg border border-orange-200/70 bg-white/70 px-2.5 py-2 text-xs text-orange-700 dark:border-orange-800 dark:bg-gray-900/50 dark:text-orange-200">
+            变更预览：若立即应用，将把今日预算增加 <span className="font-semibold">+{selectedDelta} kcal</span>。
+          </div>
+
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -194,14 +243,16 @@ export function EmotionBudgetAdjustCard({
             >
               {isSubmitting ? '执行中...' : '立即应用'}
             </button>
-            <button
-              type="button"
-              onClick={() => setDismissed(true)}
-              disabled={isSubmitting}
-              className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-            >
-              暂不调整
-            </button>
+            {showSkipButton && (
+              <button
+                type="button"
+                onClick={() => setDismissed(true)}
+                disabled={isSubmitting}
+                className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                暂不调整
+              </button>
+            )}
             {canAutoApply && (
               <div className="inline-flex items-center gap-1 text-xs text-orange-700 dark:text-orange-300">
                 <Timer className="h-3.5 w-3.5" />
@@ -226,6 +277,12 @@ export function EmotionBudgetAdjustCard({
           <div className="mt-1 text-[11px] text-emerald-600/90 dark:text-emerald-300/90">
             Provider: {result.used_provider} · {result.message}
           </div>
+          {result.goal_source && (
+            <div className="mt-1 text-[11px] text-emerald-600/90 dark:text-emerald-300/90">
+              基线来源：{result.goal_source}
+              {result.goal_seeded ? '（系统自动兜底）' : ''}
+            </div>
+          )}
         </div>
       )}
 
@@ -246,6 +303,12 @@ export function EmotionBudgetAdjustCard({
         <div className="mt-2 inline-flex items-center gap-1 text-xs text-orange-700 dark:text-orange-300">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
           正在同步预算...
+        </div>
+      )}
+
+      {floatingFeedback && (
+        <div className="absolute right-2 top-2 rounded-md bg-emerald-500/95 px-2 py-1 text-[11px] text-white shadow">
+          {floatingFeedback}
         </div>
       )}
     </div>

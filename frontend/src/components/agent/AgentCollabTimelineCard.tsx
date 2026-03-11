@@ -1,4 +1,5 @@
-import { CheckCircle2, CircleDashed, Loader2, SkipForward, TriangleAlert } from 'lucide-react';
+import { useState } from 'react';
+import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, Loader2, SkipForward, TriangleAlert } from 'lucide-react';
 
 import type { CollabTimelineAction, CollabTimelineStage } from '../../types';
 
@@ -42,39 +43,53 @@ function getStageStyle(stage: CollabTimelineStage) {
 }
 
 export function AgentCollabTimelineCard({ timeline }: AgentCollabTimelineCardProps) {
+  const [isOpen, setIsOpen] = useState(false);
   if (!timeline.stages?.length) return null;
 
   return (
     <div className="mt-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-900/20 p-3">
-      <div className="text-sm font-medium text-indigo-800 dark:text-indigo-200">
-        三系统协作时间线
-      </div>
-      <div className="mt-2 space-y-2">
-        {timeline.stages.map((stage) => {
-          const style = getStageStyle(stage);
-          return (
-            <div
-              key={stage.id}
-              className="rounded-lg border border-indigo-100 dark:border-indigo-800/60 bg-white/70 dark:bg-gray-900/50 px-2.5 py-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
-                  {style.icon}
-                  <span className="font-medium">{stage.label}</span>
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between text-left"
+      >
+        <span className="text-sm font-medium text-indigo-800 dark:text-indigo-200">
+          三系统协作时间线
+        </span>
+        {isOpen ? (
+          <ChevronDown className="h-4 w-4 text-indigo-500" />
+        ) : (
+          <ChevronRight className="h-4 w-4 text-indigo-500" />
+        )}
+      </button>
+      {isOpen && (
+        <div className="mt-2 space-y-2">
+          {timeline.stages.map((stage) => {
+            const style = getStageStyle(stage);
+            return (
+              <div
+                key={stage.id}
+                className="rounded-lg border border-indigo-100 dark:border-indigo-800/60 bg-white/70 dark:bg-gray-900/50 px-2.5 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-2 text-xs text-gray-700 dark:text-gray-200">
+                    {style.icon}
+                    <span className="font-medium">{stage.label}</span>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] ${style.badge}`}>
+                    {style.label}
+                  </span>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] ${style.badge}`}>
-                  {style.label}
-                </span>
+                {(stage.summary || stage.reason) && (
+                  <div className="mt-1 text-[11px] text-gray-600 dark:text-gray-400">
+                    {stage.summary || stage.reason}
+                  </div>
+                )}
               </div>
-              {(stage.summary || stage.reason) && (
-                <div className="mt-1 text-[11px] text-gray-600 dark:text-gray-400">
-                  {stage.summary || stage.reason}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from datetime import date, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -53,6 +54,7 @@ class FakePreference:
 class FakeDietRepository:
     def __init__(self):
         self.preferences: dict[str, FakePreference] = {}
+        self.log_items = []
 
     async def get_user_preference(self, user_id: str):
         return self.preferences.get(user_id)
@@ -68,6 +70,13 @@ class FakeDietRepository:
                 setattr(pref, key, value)
         pref.updated_at = datetime.utcnow()
         return pref
+
+    async def get_log_items_by_date_range(self, user_id: str, start_date, end_date):
+        return [
+            item
+            for item in self.log_items
+            if item.user_id == user_id and start_date <= item.log_date <= end_date
+        ]
 
 
 def run(coro):
@@ -179,6 +188,51 @@ def test_get_today_budget_effective_goal():
     assert budget["today_adjustment"] == 100
     assert budget["effective_goal"] == 1900
     assert budget["remaining_adjustment_cap"] == 50
+    assert budget["goal_source"] == "explicit"
+    assert budget["goal_seeded"] is False
+
+
+def test_get_today_budget_auto_seed_from_recent_avg():
+    repo = FakeDietRepository()
+    service = DietService(repository=repo)
+
+    today = date.today()
+    repo.log_items = [
+        SimpleNamespace(user_id="u1", log_date=today - timedelta(days=1), calories=1700),
+        SimpleNamespace(user_id="u1", log_date=today - timedelta(days=2), calories=1900),
+        SimpleNamespace(user_id="u1", log_date=today - timedelta(days=3), calories=0),
+    ]
+
+    budget = run(service.get_today_budget("u1"))
+    assert budget["base_goal"] == 1800
+    assert budget["goal_source"] == "avg7d"
+    assert budget["goal_seeded"] is True
+    assert repo.preferences["u1"].stats["goals"]["calorie_goal"] == 1800
+
+
+def test_get_today_budget_auto_seed_default_when_no_history():
+    repo = FakeDietRepository()
+    service = DietService(repository=repo)
+
+    budget = run(service.get_today_budget("u1"))
+    assert budget["base_goal"] == 1800
+    assert budget["effective_goal"] == 1800
+    assert budget["goal_source"] == "default1800"
+    assert budget["goal_seeded"] is True
+
+
+def test_update_preferences_marks_explicit_goal_source():
+    repo = FakeDietRepository()
+    service = DietService(repository=repo)
+
+    run(service.update_user_preference("u1", calorie_goal=2100))
+    budget = run(service.get_today_budget("u1"))
+    goals_meta = repo.preferences["u1"].stats["goals_meta"]
+
+    assert goals_meta["calorie_goal_source"] == "explicit"
+    assert goals_meta["calorie_goal_seeded"] is False
+    assert budget["goal_source"] == "explicit"
+    assert budget["goal_seeded"] is False
 
 
 def test_update_preferences_goal_persisted_in_stats():

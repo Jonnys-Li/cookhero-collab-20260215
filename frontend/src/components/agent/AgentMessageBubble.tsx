@@ -16,9 +16,7 @@ import type {
 } from '../../types';
 import { MarkdownRenderer } from '../chat/MarkdownRenderer';
 import { AgentThinkingBlock, type TraceStep } from './AgentThinkingBlock';
-import { EmotionBudgetAdjustCard } from './EmotionBudgetAdjustCard';
-import { AgentCollabTimelineCard } from './AgentCollabTimelineCard';
-import { SmartRecommendationCard } from './SmartRecommendationCard';
+import { CardDeckFlow } from './CardDeckFlow';
 import { PlanModeMealWizardCard } from './PlanModeMealWizardCard';
 import { WeekPlanPreviewCard } from './WeekPlanPreviewCard';
 import { CopyButton } from '../common';
@@ -445,21 +443,10 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
               </div>
             )}
             <MarkdownRenderer content={message.content.trim()} />
-            {!isUser && !message.isStreaming && emotionBudgetAction && (
-              <EmotionBudgetAdjustCard
-                action={emotionBudgetAction}
+            {!isUser && !message.isStreaming && (emotionBudgetAction || smartRecommendationAction || collabTimelineAction) && (
+              <CardDeckFlow
                 trace={traceData}
-                sessionId={message.agent_session_id || emotionBudgetAction.session_id}
-              />
-            )}
-            {!isUser && !message.isStreaming && collabTimelineAction && (
-              <AgentCollabTimelineCard timeline={collabTimelineAction} />
-            )}
-            {!isUser && !message.isStreaming && smartRecommendationAction && (
-              <SmartRecommendationCard
-                action={smartRecommendationAction}
-                trace={traceData}
-                sessionId={message.agent_session_id || smartRecommendationAction.session_id}
+                sessionId={message.agent_session_id}
               />
             )}
             {!isUser && !message.isStreaming && planModeAction && (

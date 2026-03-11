@@ -223,6 +223,8 @@ class ApplyEmotionBudgetAdjustResponse(BaseModel):
     applied: Optional[int] = None
     capped: bool
     effective_goal: Optional[int] = None
+    goal_source: Optional[str] = None
+    goal_seeded: Optional[bool] = None
     used_provider: str
     mode: str
     message: str
@@ -1434,6 +1436,9 @@ def _build_emotion_followup_smart_action(
                 "plan_date": plan_date.isoformat(),
                 "dish_name": "鸡蛋豆腐蔬菜碗",
                 "calories": 420,
+                "protein": 28.0,
+                "fat": 14.0,
+                "carbs": 36.0,
             },
             {
                 "option_id": "protein",
@@ -1443,6 +1448,9 @@ def _build_emotion_followup_smart_action(
                 "plan_date": plan_date.isoformat(),
                 "dish_name": "鸡胸肉沙拉配酸奶",
                 "calories": 460,
+                "protein": 34.0,
+                "fat": 16.0,
+                "carbs": 32.0,
             },
             {
                 "option_id": "comfort",
@@ -1452,6 +1460,9 @@ def _build_emotion_followup_smart_action(
                 "plan_date": plan_date.isoformat(),
                 "dish_name": "燕麦酸奶水果杯",
                 "calories": 380,
+                "protein": 16.0,
+                "fat": 10.0,
+                "carbs": 52.0,
             },
         ],
         "relax_suggestions": _build_relax_suggestions(["breathing", "walk", "journaling"]),
@@ -1622,6 +1633,8 @@ async def apply_smart_action(
                     "applied": result.get("applied"),
                     "capped": bool(result.get("capped")),
                     "effective_goal": result.get("effective_goal"),
+                    "goal_source": result.get("goal_source"),
+                    "goal_seeded": result.get("goal_seeded"),
                 },
             }
         elif payload.action_kind == "apply_next_meal_plan":
@@ -1636,12 +1649,33 @@ async def apply_smart_action(
 
             dish_name = str(action_data.get("dish_name") or "").strip() or "智能推荐轻负担餐"
             calories = action_data.get("calories")
+            protein = action_data.get("protein")
+            fat = action_data.get("fat")
+            carbs = action_data.get("carbs")
             try:
                 calories_value = int(calories) if calories is not None else None
             except (TypeError, ValueError) as exc:
                 raise HTTPException(status_code=400, detail="calories 必须为整数") from exc
 
-            dishes = [{"name": dish_name, "calories": calories_value}]
+            try:
+                protein_value = float(protein) if protein is not None else None
+                fat_value = float(fat) if fat is not None else None
+                carbs_value = float(carbs) if carbs is not None else None
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail="protein/fat/carbs 必须为数字",
+                ) from exc
+
+            dishes = [
+                {
+                    "name": dish_name,
+                    "calories": calories_value,
+                    "protein": protein_value,
+                    "fat": fat_value,
+                    "carbs": carbs_value,
+                }
+            ]
             meal = await diet_service.add_meal(
                 user_id=str(user_id),
                 plan_date=plan_date,
@@ -1780,6 +1814,8 @@ async def apply_emotion_budget_adjust(
             applied=existing.get("applied"),
             capped=bool(existing.get("capped")),
             effective_goal=existing.get("effective_goal"),
+            goal_source=existing.get("goal_source"),
+            goal_seeded=existing.get("goal_seeded"),
             used_provider=str(existing.get("used_provider") or "unknown"),
             mode=str(existing.get("mode") or payload.mode),
             message=str(existing.get("message") or "调整已完成"),
@@ -1806,6 +1842,8 @@ async def apply_emotion_budget_adjust(
         "applied": result.get("applied"),
         "capped": bool(result.get("capped")),
         "effective_goal": result.get("effective_goal"),
+        "goal_source": result.get("goal_source"),
+        "goal_seeded": result.get("goal_seeded"),
         "used_provider": result.get("used_provider") or "unknown",
         "mode": payload.mode,
         "message": result.get("message") or "自动调整完成",

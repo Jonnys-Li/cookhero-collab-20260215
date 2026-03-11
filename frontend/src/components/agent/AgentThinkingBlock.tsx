@@ -3,7 +3,7 @@
  * Displays the AI agent execution trace with expandable steps
  */
 
-import { useEffect, useId, useState } from 'react';
+import { useId, useState } from 'react';
 import { ChevronDown, ChevronRight, ChevronUp, Loader2, CheckCircle2, Cpu, AlertCircle, Clock, Play, ArrowRight } from 'lucide-react';
 import { MarkdownRenderer } from '../chat/MarkdownRenderer';
 
@@ -38,7 +38,7 @@ export function AgentThinkingBlock({
   title = 'Thinking Process',
   subtitle,
 }: AgentThinkingBlockProps) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const traceId = useId();
   const hasSteps = trace.length > 0;
 
@@ -57,15 +57,6 @@ export function AgentThinkingBlock({
 
   // Always render when thinking is done (to show "Response Completed")
   const shouldRender = hasSteps || isThinking || (!isThinking && thinkingDuration !== undefined);
-
-  // Auto-collapse when thinking is done
-  useEffect(() => {
-    if (!isThinking) {
-      setIsOpen(false);
-    } else {
-      setIsOpen(true);
-    }
-  }, [isThinking]);
 
   if (!shouldRender) return null;
 

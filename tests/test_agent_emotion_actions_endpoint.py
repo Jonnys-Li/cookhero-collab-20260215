@@ -51,6 +51,8 @@ def test_apply_emotion_budget_adjust_success(monkeypatch):
             "applied": 100,
             "capped": False,
             "effective_goal": 2000,
+            "goal_source": "explicit",
+            "goal_seeded": False,
             "used_provider": "mcp",
         }
 
@@ -95,6 +97,8 @@ def test_apply_emotion_budget_adjust_success(monkeypatch):
     assert response.applied == 100
     assert response.used_provider == "mcp"
     assert response.effective_goal == 2000
+    assert response.goal_source == "explicit"
+    assert response.goal_seeded is False
     assert saved_messages
     assert saved_messages[0]["role"] == "assistant"
     assert saved_messages[0]["trace"][0]["action"] == "emotion_budget_adjust_result"

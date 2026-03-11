@@ -173,13 +173,21 @@ function MealCard({
           {/* Dishes */}
           <div className="text-sm text-gray-800 dark:text-gray-200">
             {meal.dishes?.map((dish, idx) => (
-              <div key={idx} className="truncate">
-                {dish.name}
-                {dish.calories && (
-                  <span className="text-xs text-gray-500 ml-1">
-                    ({dish.calories}kcal)
-                  </span>
-                )}
+              <div key={idx} className="mb-1 last:mb-0">
+                <div className="truncate">
+                  {dish.name}
+                  {dish.calories && (
+                    <span className="text-xs text-gray-500 ml-1">
+                      ({dish.calories}kcal)
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                  P {dish.protein?.toFixed(1) || '-'} · F {dish.fat?.toFixed(1) || '-'} · C {dish.carbs?.toFixed(1) || '-'}
+                  {dish.nutrition_source && (
+                    <span className="ml-1">· {dish.nutrition_source}</span>
+                  )}
+                </div>
               </div>
             )) || <span className="text-gray-400">无菜品</span>}
           </div>
