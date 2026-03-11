@@ -1211,6 +1211,26 @@ async def _upsert_week_plan_meals(
     if not planned_meals:
         raise HTTPException(status_code=400, detail="planned_meals 不能为空")
 
+    # Apply-week-plan should be fast and reliable. Avoid calling DietService.get_plan_by_week()
+    # here because that path may trigger nutrition backfill + DB writes.
+    macro_goal = "maintenance"
+    try:
+        pref = await diet_service.repository.get_user_preference(user_id)
+        macro_goal = diet_service._resolve_macro_goal_from_preference(pref)
+    except Exception:
+        macro_goal = "maintenance"
+
+    try:
+        from app.diet.macro_estimation import (
+            estimate_macros_from_calories,
+            AUTO_NUTRITION_CONFIDENCE,
+            AUTO_NUTRITION_SOURCE,
+        )
+    except Exception:
+        estimate_macros_from_calories = None  # type: ignore[assignment]
+        AUTO_NUTRITION_CONFIDENCE = 0.35  # type: ignore[misc]
+        AUTO_NUTRITION_SOURCE = "AUTO"  # type: ignore[misc]
+
     cache_by_week: dict[str, dict[tuple[str, str], dict[str, Any]]] = {}
     created_count = 0
     updated_count = 0
@@ -1226,6 +1246,16 @@ async def _upsert_week_plan_meals(
         raw_dishes = item.get("dishes")
         dishes = raw_dishes if isinstance(raw_dishes, list) else []
         sanitized_dishes: list[dict[str, Any]] = []
+
+        def _safe_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
+
         for dish in dishes:
             if not isinstance(dish, dict):
                 continue
@@ -1237,15 +1267,50 @@ async def _upsert_week_plan_meals(
                 calories_value = int(calories) if calories is not None else None
             except (TypeError, ValueError):
                 calories_value = None
+
+            protein_value = _safe_float(dish.get("protein"))
+            fat_value = _safe_float(dish.get("fat"))
+            carbs_value = _safe_float(dish.get("carbs"))
+            nutrition_source = _normalize_text(dish.get("nutrition_source"), max_length=20)
+            nutrition_confidence = _safe_float(dish.get("nutrition_confidence"))
+
+            # AUTO macro fill: when calories exist but P/F/C are missing, we can deterministically
+            # derive macros and avoid any slow RAG/LLM calls during write.
+            if (
+                estimate_macros_from_calories
+                and calories_value
+                and calories_value > 0
+                and (protein_value is None or fat_value is None or carbs_value is None)
+            ):
+                macros = estimate_macros_from_calories(calories_value, macro_goal)
+                if protein_value is None:
+                    protein_value = macros.get("protein_g")
+                if fat_value is None:
+                    fat_value = macros.get("fat_g")
+                if carbs_value is None:
+                    carbs_value = macros.get("carbs_g")
+                # Preserve existing source/confidence; only seed when absent.
+                if not nutrition_source:
+                    nutrition_source = str(macros.get("source") or AUTO_NUTRITION_SOURCE)
+                if nutrition_confidence is None:
+                    try:
+                        nutrition_confidence = float(
+                            macros.get("confidence") or AUTO_NUTRITION_CONFIDENCE
+                        )
+                    except (TypeError, ValueError):
+                        nutrition_confidence = AUTO_NUTRITION_CONFIDENCE
+
             sanitized_dishes.append(
                 {
                     "name": name,
                     "calories": calories_value,
-                    "protein": dish.get("protein"),
-                    "fat": dish.get("fat"),
-                    "carbs": dish.get("carbs"),
-                    "weight_g": dish.get("weight_g"),
-                    "unit": dish.get("unit"),
+                    "protein": protein_value,
+                    "fat": fat_value,
+                    "carbs": carbs_value,
+                    "nutrition_source": nutrition_source or None,
+                    "nutrition_confidence": nutrition_confidence,
+                    "weight_g": _safe_float(dish.get("weight_g")),
+                    "unit": _normalize_text(dish.get("unit"), max_length=20) or None,
                 }
             )
         if not sanitized_dishes:
@@ -1253,17 +1318,21 @@ async def _upsert_week_plan_meals(
 
         week_start = _get_week_start(plan_date).isoformat()
         if week_start not in cache_by_week:
-            plan = await diet_service.get_plan_by_week(user_id, _get_week_start(plan_date))
             existing_map: dict[tuple[str, str], dict[str, Any]] = {}
-            if plan and isinstance(plan.get("meals"), list):
-                for meal in plan["meals"]:
-                    if not isinstance(meal, dict):
-                        continue
-                    key = (
-                        str(meal.get("plan_date") or ""),
-                        str(meal.get("meal_type") or "").lower(),
-                    )
-                    existing_map[key] = meal
+            meals = await diet_service.repository.get_plan_meals_by_week(
+                user_id, _get_week_start(plan_date)
+            )
+            for meal in meals or []:
+                try:
+                    meal_dict = meal.to_dict()
+                except Exception:
+                    continue
+                key = (
+                    str(meal_dict.get("plan_date") or ""),
+                    str(meal_dict.get("meal_type") or "").lower(),
+                )
+                if key[0] and key[1]:
+                    existing_map[key] = meal_dict
             cache_by_week[week_start] = existing_map
 
         existing_map = cache_by_week[week_start]
@@ -1271,28 +1340,39 @@ async def _upsert_week_plan_meals(
         notes = _normalize_text(item.get("notes")) or "由 PlanMode 个性化推荐卡写入"
         existing = existing_map.get(key)
         if existing and existing.get("id"):
-            updated = await diet_service.update_meal(
-                meal_id=str(existing.get("id")),
-                user_id=user_id,
+            totals = diet_service._calculate_meal_totals(sanitized_dishes)
+            updated_model = await diet_service.repository.update_meal(
+                str(existing.get("id")),
                 plan_date=plan_date,
                 meal_type=meal_type,
                 dishes=sanitized_dishes,
+                total_calories=totals["total_calories"],
+                total_protein=totals["total_protein"],
+                total_fat=totals["total_fat"],
+                total_carbs=totals["total_carbs"],
                 notes=notes,
             )
-            if updated:
+            if updated_model:
+                updated = updated_model.to_dict()
                 existing_map[key] = updated
                 applied_meals.append(updated)
                 updated_count += 1
             continue
 
-        created = await diet_service.add_meal(
+        totals = diet_service._calculate_meal_totals(sanitized_dishes)
+        created_model = await diet_service.repository.add_meal_to_plan(
             user_id=user_id,
             plan_date=plan_date,
             meal_type=meal_type,
             dishes=sanitized_dishes,
+            total_calories=totals["total_calories"],
+            total_protein=totals["total_protein"],
+            total_fat=totals["total_fat"],
+            total_carbs=totals["total_carbs"],
             notes=notes,
         )
-        if created:
+        if created_model:
+            created = created_model.to_dict()
             existing_map[key] = created
             applied_meals.append(created)
             created_count += 1
