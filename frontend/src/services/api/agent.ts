@@ -1,6 +1,6 @@
 
 import { API_BASE } from '../../constants';
-import { createAuthHeaders, createJsonHeaders, parseErrorResponse } from './client';
+import { apiPost, createAuthHeaders, createJsonHeaders, parseErrorResponse } from './client';
 import type {
   AgentChatRequest,
   AgentSessionListResponse,
@@ -229,18 +229,11 @@ export async function applyEmotionBudgetAdjust(
   request: ApplyEmotionBudgetAdjustRequest,
   token?: string
 ): Promise<ApplyEmotionBudgetAdjustResponse> {
-  const response = await fetch(`${API_BASE}/agent/emotion-actions/apply-budget-adjust`, {
-    method: 'POST',
-    headers: createJsonHeaders(token),
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const msg = await parseErrorResponse(response);
-    throw new Error(msg || `HTTP error! status: ${response.status}`);
-  }
-
-  return response.json();
+  return apiPost<ApplyEmotionBudgetAdjustResponse, ApplyEmotionBudgetAdjustRequest>(
+    '/agent/emotion-actions/apply-budget-adjust',
+    request,
+    token
+  );
 }
 
 /**
@@ -250,18 +243,11 @@ export async function applySmartAction(
   request: ApplySmartActionRequest,
   token?: string
 ): Promise<ApplySmartActionResponse> {
-  const response = await fetch(`${API_BASE}/agent/smart-actions/apply`, {
-    method: 'POST',
-    headers: createJsonHeaders(token),
-    body: JSON.stringify(request),
-  });
-
-  if (!response.ok) {
-    const msg = await parseErrorResponse(response);
-    throw new Error(msg || `HTTP error! status: ${response.status}`);
-  }
-
-  return response.json();
+  return apiPost<ApplySmartActionResponse, ApplySmartActionRequest>(
+    '/agent/smart-actions/apply',
+    request,
+    token
+  );
 }
 
 /**

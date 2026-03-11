@@ -170,7 +170,25 @@ export async function parseErrorResponse(response: Response): Promise<string> {
     }
     
     // Not JSON; return raw text
-    return await response.text();
+    const text = (await response.text()) || '';
+    const normalized = text.trim();
+
+    // Vercel proxy / rewrite errors sometimes return an HTML error page with a short code.
+    // Surface a user-friendly message instead of dumping HTML into the UI.
+    if (normalized.includes('ROUTER_EXTERNAL_TARGET_ERROR')) {
+      return (
+        '当前前端代理无法连接后端服务（ROUTER_EXTERNAL_TARGET_ERROR）。'
+        + '这通常是后端冷启动或网络抖动导致，请稍后重试。'
+      );
+    }
+
+    if (normalized.toLowerCase().includes('<!doctype') || normalized.toLowerCase().includes('<html')) {
+      console.warn('[api] non-json error response (html):', normalized.slice(0, 500));
+      return '请求失败（服务返回了错误页面），请稍后重试。';
+    }
+
+    // Plain text error
+    return normalized || `HTTP error! status: ${response.status}`;
   } catch (e) {
     return String(e instanceof Error ? e.message : 'Unknown error');
   }
