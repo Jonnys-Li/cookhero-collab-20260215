@@ -311,3 +311,57 @@ def test_suggest_reply_rejects_shame_words(monkeypatch):
     with pytest.raises(ValueError):
         run(service.suggest_reply_for_post(user_id="u1", post_id="post-1"))
 
+
+def test_suggest_empathy_card_returns_text(monkeypatch):
+    repo = FakeRepo()
+    repo.posts["post-1"] = FakePost(
+        id="post-1",
+        user_id="u1",
+        author_display_name="匿名小厨0001",
+        is_anonymous=True,
+        post_type="check_in",
+        mood="anxious",
+        content="今天有点焦虑，晚饭没按计划吃。",
+        tags=["焦虑", "求建议"],
+        image_urls=[],
+        nutrition_snapshot=None,
+    )
+
+    service = CommunityService(repository=repo)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        service,
+        "_get_invoker",
+        lambda: FakeInvoker('{"card": "听起来你今天压力有点大，但你愿意记录已经很不容易。先做一次深呼吸，给自己一个小目标：下一顿选一份清淡高蛋白，再慢慢找回节奏。"}'),
+    )
+
+    card = run(service.suggest_empathy_card_for_post(user_id="u1", post_id="post-1"))
+    assert isinstance(card, str)
+    assert len(card) > 10
+
+
+def test_suggest_empathy_card_rejects_shame_words(monkeypatch):
+    repo = FakeRepo()
+    repo.posts["post-1"] = FakePost(
+        id="post-1",
+        user_id="u1",
+        author_display_name="匿名小厨0001",
+        is_anonymous=True,
+        post_type="check_in",
+        mood="guilty",
+        content="我今天吃多了很内疚。",
+        tags=["暴食后自责"],
+        image_urls=[],
+        nutrition_snapshot=None,
+    )
+
+    service = CommunityService(repository=repo)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        service,
+        "_get_invoker",
+        lambda: FakeInvoker('{"card": "你太差了，怎么又暴食？"}'),
+    )
+
+    with pytest.raises(ValueError):
+        run(service.suggest_empathy_card_for_post(user_id="u1", post_id="post-1"))

@@ -118,7 +118,7 @@ class DeleteResponse(BaseModel):
 
 
 class AISuggestRequest(BaseModel):
-    mode: Literal["tags", "reply"]
+    mode: Literal["tags", "reply", "card"]
     content: Optional[str] = Field(None, max_length=800)
     post_id: Optional[str] = None
 
@@ -130,6 +130,9 @@ class AISuggestRequest(BaseModel):
         if self.mode == "reply":
             if not (self.post_id and str(self.post_id).strip()):
                 raise ValueError("post_id is required for reply mode")
+        if self.mode == "card":
+            if not (self.post_id and str(self.post_id).strip()):
+                raise ValueError("post_id is required for card mode")
         return self
 
 
@@ -302,6 +305,18 @@ async def ai_suggest(payload: AISuggestRequest, request: Request) -> dict[str, A
             secured = await check_message_security(payload.content or "", request)
             tags = await community_service.suggest_tags(user_id=user_id, content=secured)
             return {"tags": tags}
+
+        if payload.mode == "card":
+            post = await community_service.repository.get_post(payload.post_id or "")
+            if not post:
+                raise HTTPException(status_code=404, detail="帖子不存在")
+            secured_post_content = await check_message_security(post.content, request)
+            card = await community_service.suggest_empathy_card_for_post(
+                user_id=user_id,
+                post_id=payload.post_id or "",
+                post_content_override=secured_post_content,
+            )
+            return {"card": card}
 
         # mode == "reply"
         # Fetch post content and run security check before sending to LLM.

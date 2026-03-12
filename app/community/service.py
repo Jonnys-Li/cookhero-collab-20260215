@@ -41,6 +41,10 @@ class ReplySuggestResult(BaseModel):
     reply: str
 
 
+class CardSuggestResult(BaseModel):
+    card: str
+
+
 def _make_anon_display_name() -> str:
     # 0000-9999; simple and non-identifying.
     suffix = f"{secrets.randbelow(10000):04d}"
@@ -438,6 +442,73 @@ class CommunityService:
         if len(reply) > 220:
             reply = reply[:220]
         return reply
+
+    async def suggest_empathy_card_for_post(
+        self,
+        *,
+        user_id: str,
+        post_id: str,
+        post_content_override: Optional[str] = None,
+    ) -> str:
+        """
+        Generate a short "empathetic coach card" for a post.
+
+        This is not a comment draft; it's an inline helper card for the feed UI.
+        """
+        post = await self.repository.get_post(post_id)
+        if not post:
+            raise ValueError("post not found")
+
+        post_content = (
+            str(post_content_override).strip()
+            if post_content_override is not None
+            else post.content
+        )
+
+        system_prompt = (
+            "你是一个互助打卡广场的共情式点评助手。"
+            "你的目标是用温和、非责备的语气，帮助对方降低焦虑，并给出一个低风险的小行动建议。"
+            "只输出严格 JSON，不要解释，不要 markdown。"
+        )
+        user_prompt = (
+            "请为下面这条帖子生成一段“共情点评小卡”。要求：\n"
+            "1) 中文；2) 不羞辱不评判；3) 不要给医疗诊断；4) 包含 1 个低风险行动建议；\n"
+            "5) 尽量 80-140 字；6) 不要提及你是 AI；7) 用一段话即可。\n\n"
+            f"帖子内容：{post_content}\n"
+            f"帖子情绪(mood)：{post.mood or 'unknown'}\n"
+            f"帖子标签(tags)：{post.tags or []}\n\n"
+            '输出 JSON 格式：{"card": "..." }'
+        )
+
+        invoker = self._get_invoker()
+        with llm_context("community_ai", user_id=user_id):
+            response = await invoker.ainvoke(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+
+        raw = str(getattr(response, "content", response))
+        payload = _extract_json(raw)
+        if not payload:
+            raise ValueError("AI response is not valid JSON")
+
+        try:
+            parsed = CardSuggestResult.model_validate(payload)
+        except ValidationError as exc:
+            raise ValueError(f"AI card payload invalid: {exc}") from exc
+
+        card = str(parsed.card or "").strip()
+        card = re.sub(r"\s+", " ", card)
+        if not card:
+            raise ValueError("AI card is empty")
+        if _contains_shame_words(card):
+            raise ValueError("AI card contains shame/blame words")
+        if len(card) > 240:
+            card = card[:240]
+        return card
 
 
 community_service = CommunityService()

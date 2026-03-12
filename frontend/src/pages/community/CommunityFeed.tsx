@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Heart, Loader2, MessageCircle, Plus, RefreshCcw, Users } from 'lucide-react';
+import { Heart, Loader2, MessageCircle, Plus, RefreshCcw, Sparkles, Users } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts';
-import { getCommunityFeed, toggleCommunityReaction } from '../../services/api/community';
+import { getCommunityFeed, suggestCommunityCard, toggleCommunityReaction } from '../../services/api/community';
 import type { CommunityPost } from '../../types/community';
 import { CreatePostModal } from './CreatePostModal';
 
@@ -52,6 +52,18 @@ export default function CommunityFeedPage() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const [aiCards, setAiCards] = useState<
+    Record<
+      string,
+      {
+        open: boolean;
+        loading: boolean;
+        text: string;
+        error: string | null;
+      }
+    >
+  >({});
 
   const canLoadMore = useMemo(() => posts.length < total, [posts.length, total]);
 
@@ -110,6 +122,111 @@ export default function CommunityFeedPage() {
       setError(msg);
     }
   };
+
+  const handleToggleAICard = useCallback(async (postId: string) => {
+    if (!token) return;
+
+    let shouldGenerate = false;
+    setAiCards(prev => {
+      const current = prev[postId];
+      if (current?.open) {
+        return { ...prev, [postId]: { ...current, open: false } };
+      }
+      const next = {
+        open: true,
+        loading: Boolean(current?.loading),
+        text: current?.text || '',
+        error: null,
+      };
+      if (!next.text && !next.loading) {
+        shouldGenerate = true;
+      }
+      return { ...prev, [postId]: next };
+    });
+
+    if (!shouldGenerate) return;
+
+    setAiCards(prev => ({
+      ...prev,
+      [postId]: {
+        ...(prev[postId] || { open: true, text: '' }),
+        open: true,
+        loading: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const card = await suggestCommunityCard(token, postId);
+      if (!card) {
+        throw new Error('AI 暂时没有给出有效点评，请稍后重试');
+      }
+      setAiCards(prev => ({
+        ...prev,
+        [postId]: {
+          ...(prev[postId] || { open: true }),
+          open: true,
+          loading: false,
+          text: card,
+          error: null,
+        },
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI 共情点评生成失败，请稍后重试';
+      setAiCards(prev => ({
+        ...prev,
+        [postId]: {
+          ...(prev[postId] || { open: true, text: '' }),
+          open: true,
+          loading: false,
+          text: '',
+          error: msg,
+        },
+      }));
+    }
+  }, [token]);
+
+  const handleRegenerateAICard = useCallback(async (postId: string) => {
+    if (!token) return;
+    setAiCards(prev => ({
+      ...prev,
+      [postId]: {
+        ...(prev[postId] || { open: true, text: '' }),
+        open: true,
+        loading: true,
+        error: null,
+      },
+    }));
+
+    try {
+      const card = await suggestCommunityCard(token, postId);
+      if (!card) {
+        throw new Error('AI 暂时没有给出有效点评，请稍后重试');
+      }
+      setAiCards(prev => ({
+        ...prev,
+        [postId]: {
+          ...(prev[postId] || { open: true }),
+          open: true,
+          loading: false,
+          text: card,
+          error: null,
+        },
+      }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'AI 共情点评生成失败，请稍后重试';
+      setAiCards(prev => ({
+        ...prev,
+        [postId]: {
+          ...(prev[postId] || { open: true, text: '' }),
+          open: true,
+          loading: false,
+          text: '',
+          error: msg,
+        },
+      }));
+    }
+  }, [token]);
 
   if (!token) {
     return (
@@ -241,6 +358,17 @@ export default function CommunityFeedPage() {
                         <Heart className={`w-3.5 h-3.5 ${post.liked_by_me ? 'fill-current' : ''}`} />
                         {post.like_count}
                       </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleAICard(post.id);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 text-xs transition-colors"
+                        title="点击生成共情点评小卡（不会自动消耗）"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        AI 共情点评
+                      </button>
                       <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-300">
                         <MessageCircle className="w-3.5 h-3.5" />
                         {post.comment_count}
@@ -262,6 +390,51 @@ export default function CommunityFeedPage() {
                           {tag}
                         </span>
                       ))}
+                    </div>
+                  )}
+
+                  {aiCards[post.id]?.open && (
+                    <div
+                      className="mt-4 rounded-2xl border border-orange-200/70 dark:border-orange-800/50 bg-orange-50/70 dark:bg-orange-900/10 p-4"
+                      onClick={(e) => e.stopPropagation()}
+                      role="presentation"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="inline-flex items-center gap-2 text-xs font-semibold text-orange-800 dark:text-orange-200">
+                          <Sparkles className="w-4 h-4" />
+                          AI 共情点评小卡
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRegenerateAICard(post.id);
+                          }}
+                          className="text-xs px-2.5 py-1 rounded-full border border-orange-200 dark:border-orange-800 bg-white/80 dark:bg-gray-900/30 text-orange-700 dark:text-orange-200 hover:bg-white dark:hover:bg-gray-900/50 transition-colors"
+                        >
+                          换一条
+                        </button>
+                      </div>
+
+                      <div className="mt-3">
+                        {aiCards[post.id]?.loading ? (
+                          <div className="flex items-center text-sm text-orange-700 dark:text-orange-200">
+                            <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            正在生成点评...
+                          </div>
+                        ) : aiCards[post.id]?.error ? (
+                          <div className="text-sm text-red-700 dark:text-red-200">
+                            {aiCards[post.id]?.error}
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-800 dark:text-gray-100 leading-relaxed">
+                            {aiCards[post.id]?.text}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                        仅供参考，不替代专业医疗建议。
+                      </div>
                     </div>
                   )}
                 </div>
@@ -293,4 +466,3 @@ export default function CommunityFeedPage() {
     </div>
   );
 }
-

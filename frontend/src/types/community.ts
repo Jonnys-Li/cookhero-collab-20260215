@@ -64,7 +64,7 @@ export interface ToggleCommunityReactionResponse {
   like_count: number;
 }
 
-export type CommunityAISuggestMode = 'tags' | 'reply';
+export type CommunityAISuggestMode = 'tags' | 'reply' | 'card';
 
 export interface CommunityAISuggestRequest {
   mode: CommunityAISuggestMode;
@@ -80,3 +80,6 @@ export interface CommunityAISuggestReplyResponse {
   reply: string;
 }
 
+export interface CommunityAISuggestCardResponse {
+  card: string;
+}

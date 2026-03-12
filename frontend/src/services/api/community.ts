@@ -11,6 +11,7 @@ import type {
   ToggleCommunityReactionResponse,
   CommunityAISuggestTagsResponse,
   CommunityAISuggestReplyResponse,
+  CommunityAISuggestCardResponse,
   CommunityAISuggestRequest,
 } from '../../types/community';
 
@@ -111,9 +112,11 @@ export async function deleteCommunityComment(
 export async function communityAiSuggest(
   token: string,
   payload: CommunityAISuggestRequest
-): Promise<CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse> {
+): Promise<
+  CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse | CommunityAISuggestCardResponse
+> {
   return apiPost<
-    CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse,
+    CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse | CommunityAISuggestCardResponse,
     CommunityAISuggestRequest
   >(`${COMMUNITY_BASE}/ai/suggest`, payload, token, {
     timeoutMs: 60000,
@@ -139,3 +142,11 @@ export async function suggestCommunityReply(
   return typeof reply === 'string' ? reply : '';
 }
 
+export async function suggestCommunityCard(
+  token: string,
+  postId: string
+): Promise<string> {
+  const result = await communityAiSuggest(token, { mode: 'card', post_id: postId });
+  const card = (result as CommunityAISuggestCardResponse).card;
+  return typeof card === 'string' ? card : '';
+}
