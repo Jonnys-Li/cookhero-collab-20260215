@@ -214,6 +214,12 @@ export async function parseErrorResponse(response: Response): Promise<string> {
     }
 
     // Plain text error
+    if (normalized === 'Not Found') {
+      return (
+        '接口不存在（404 Not Found）。这通常是后端尚未部署到最新版本或代理路由未生效导致，'
+        + '请刷新页面或稍后重试。'
+      );
+    }
     return normalized || `HTTP error! status: ${response.status}`;
   } catch (e) {
     return String(e instanceof Error ? e.message : 'Unknown error');
