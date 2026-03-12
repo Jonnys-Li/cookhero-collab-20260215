@@ -9,3 +9,4 @@ export * from './api';
 export * from './knowledge';
 export * from './evaluation';
 export * from './diet';
+export * from './community';

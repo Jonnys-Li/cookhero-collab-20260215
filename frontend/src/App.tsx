@@ -1,7 +1,7 @@
 // src/App.tsx
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type { ReactElement } from 'react';
-import { BarChart3, BookOpen, Menu, LogOut, Utensils, ChevronDown } from 'lucide-react';
+import { BarChart3, BookOpen, Menu, LogOut, Utensils, ChevronDown, Users } from 'lucide-react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ChatWindow, ChatInput, Sidebar, KnowledgePanel } from './components';
 import { AgentChatWindow, AgentChatInput } from './components/agent';
@@ -11,6 +11,8 @@ import RegisterPage from './pages/Register';
 import EvaluationPage from './pages/Evaluation';
 import LLMStatsPage from './pages/LLMStats';
 import DietManagementPage from './pages/diet/DietManagement';
+import CommunityFeedPage from './pages/community/CommunityFeed';
+import CommunityPostDetailPage from './pages/community/CommunityPostDetail';
 
 /**
  * Chat view component - handles both new chat and existing conversation
@@ -231,6 +233,7 @@ function MainLayout({ children }: { children: React.ReactNode }) {
   const isEvaluationView = location.pathname.includes('/evaluation');
   const isLLMStatsView = location.pathname.includes('/llm-stats');
   const isDietView = location.pathname.includes('/diet');
+  const isCommunityView = location.pathname.includes('/community');
   const isAnalyticsView = isEvaluationView || isLLMStatsView;
   const analyticsLabel = isEvaluationView ? '评估监控' : isLLMStatsView ? '模型统计' : '数据分析';
 
@@ -323,7 +326,7 @@ function MainLayout({ children }: { children: React.ReactNode }) {
             </div> */}
           </div>
           <div className="flex items-center gap-1.5 sm:gap-3 text-xs text-gray-600 dark:text-gray-300 overflow-visible">
-            {!isKnowledgeView && !isEvaluationView && !isLLMStatsView && !isDietView && conversationId && (
+            {!isKnowledgeView && !isEvaluationView && !isLLMStatsView && !isDietView && !isCommunityView && conversationId && (
               <span className="hidden sm:inline font-mono bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded truncate" title={conversationId}>
                 ID: {conversationId}
               </span>
@@ -371,6 +374,28 @@ function MainLayout({ children }: { children: React.ReactNode }) {
             >
               <BookOpen className="w-4 h-4" />
               <span className="hidden sm:inline">{isKnowledgeView ? '返回对话' : '知识库'}</span>
+            </button>
+            <button
+              onClick={() => {
+                if (isCommunityView) {
+                  const basePath = isAgentMode ? '/agent' : '/chat';
+                  if (conversationId && !conversationId.startsWith('temp-')) {
+                    navigate(`${basePath}/${conversationId}`);
+                  } else {
+                    navigate(basePath);
+                  }
+                } else {
+                  navigate(isAgentMode ? '/agent/community' : '/community');
+                }
+              }}
+              className={`flex items-center gap-1 px-2 sm:px-3 py-1 rounded-full border transition-colors shrink-0 ${
+                isCommunityView
+                  ? 'border-rose-400 bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-600'
+                  : 'border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'
+              }`}
+            >
+              <Users className="w-4 h-4" />
+              <span className="hidden sm:inline">{isCommunityView ? '返回对话' : '社区'}</span>
             </button>
             <div ref={analyticsMenuRef} className="relative">
               <button
@@ -578,6 +603,46 @@ function App() {
           <RequireAuth>
             <MainLayout>
               <DietManagementPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/community"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <CommunityFeedPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/community/:id"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <CommunityPostDetailPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/agent/community"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <CommunityFeedPage />
+            </MainLayout>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/agent/community/:id"
+        element={
+          <RequireAuth>
+            <MainLayout>
+              <CommunityPostDetailPage />
             </MainLayout>
           </RequireAuth>
         }

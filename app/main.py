@@ -18,6 +18,7 @@ from app.api.v1.endpoints import (
     llm_stats,
     agent,
     diet,
+    community,
     mcp,
 )
 from app.config import settings
@@ -366,6 +367,7 @@ app.include_router(
 )
 app.include_router(agent.router, prefix=settings.API_V1_STR, tags=["Agent"])
 app.include_router(diet.router, prefix=settings.API_V1_STR, tags=["Diet"])
+app.include_router(community.router, prefix=settings.API_V1_STR, tags=["Community"])
 app.include_router(mcp.router, prefix=settings.API_V1_STR, tags=["MCP"])
 
 
