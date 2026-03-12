@@ -14,18 +14,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  skip-non-main:
+  plan:
     runs-on: ubuntu-latest
-    if: ${{ github.ref != 'refs/heads/main' }}
+    outputs:
+      should_sync: ${{ steps.plan.outputs.should_sync }}
+      skip_reason: ${{ steps.plan.outputs.skip_reason }}
+      missing: ${{ steps.plan.outputs.missing }}
     steps:
-      - name: Skip non-main branch
+      - id: plan
+        name: Decide Whether To Sync
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          MCP_DIET_SERVICE_KEY: ${{ secrets.MCP_DIET_SERVICE_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RENDER_SERVICE_NAME: ${{ secrets.RENDER_SERVICE_NAME }}
         run: |
-          echo "::notice::Cloud config sync is restricted to main. Current ref=${GITHUB_REF}. Skipping."
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "should_sync=false" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=non_main" >> "$GITHUB_OUTPUT"
+            echo "missing=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          missing=()
+          [[ -z "${RENDER_API_KEY}" ]] && missing+=("RENDER_API_KEY")
+          [[ -z "${MCP_DIET_SERVICE_KEY}" ]] && missing+=("MCP_DIET_SERVICE_KEY")
+          if [[ -z "${RENDER_SERVICE_ID}" && -z "${RENDER_SERVICE_NAME}" ]]; then
+            missing+=("RENDER_SERVICE_ID|RENDER_SERVICE_NAME")
+          fi
+
+          if (( ${#missing[@]} > 0 )); then
+            missing_csv="$(IFS=,; echo "${missing[*]}")"
+            echo "should_sync=false" >> "$GITHUB_OUTPUT"
+            echo "skip_reason=missing_secrets" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing_csv}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_sync=true" >> "$GITHUB_OUTPUT"
+          echo "skip_reason=ok" >> "$GITHUB_OUTPUT"
+          echo "missing=" >> "$GITHUB_OUTPUT"
 
   sync-render-mcp-key:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ github.ref == 'refs/heads/main' && secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '') }}
+    needs: [plan]
+    if: ${{ needs.plan.outputs.should_sync == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,11 +76,23 @@ jobs:
           BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
         run: ./scripts/sync-render-env.sh --trigger-deploy --wait-seconds 360 --poll-interval-seconds 10
 
-  missing-cloud-sync-secrets:
+  skipped-cloud-sync:
     runs-on: ubuntu-latest
-    if: ${{ github.ref == 'refs/heads/main' && !(secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '')) }}
+    needs: [plan]
+    if: ${{ needs.plan.outputs.should_sync != 'true' }}
     steps:
-      - name: Report missing required secrets
+      - name: Report Skip Reason
         run: |
-          echo "::warning::Cloud config sync skipped because required secrets are missing."
-          echo "::warning::Required: RENDER_API_KEY, MCP_DIET_SERVICE_KEY, and one of RENDER_SERVICE_ID or RENDER_SERVICE_NAME."
+          if [[ "${{ needs.plan.outputs.skip_reason }}" == "non_main" ]]; then
+            echo "::notice::Cloud config sync is restricted to main. Current ref=${GITHUB_REF}. Skipping."
+            exit 0
+          fi
+
+          if [[ "${{ needs.plan.outputs.skip_reason }}" == "missing_secrets" ]]; then
+            echo "::warning::Cloud config sync skipped because required secrets are missing."
+            echo "::warning::Missing: ${{ needs.plan.outputs.missing }}"
+            echo "::warning::Required: RENDER_API_KEY, MCP_DIET_SERVICE_KEY, and one of RENDER_SERVICE_ID or RENDER_SERVICE_NAME."
+            exit 0
+          fi
+
+          echo "::notice::Cloud config sync skipped. reason=${{ needs.plan.outputs.skip_reason }}."
