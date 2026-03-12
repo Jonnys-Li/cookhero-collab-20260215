@@ -44,9 +44,13 @@ export async function createCommunityPost(
     data,
     token,
     {
-      // Write-like action: prefer Render direct + allow cold start and image upload latency.
+      // Write-like action: allow cold start and image upload latency.
+      //
+      // Note: preferFallback=true would call Render cross-origin first, which
+      // triggers CORS preflight. We keep the same-origin Vercel proxy as the
+      // primary path to avoid CORS surprises, and rely on the client's
+      // automatic fallback on timeout/5xx/network errors.
       timeoutMs: 60000,
-      preferFallback: true,
     }
   );
 }
@@ -76,7 +80,6 @@ export async function addCommunityComment(
     token,
     {
       timeoutMs: 60000,
-      preferFallback: true,
     }
   );
 }
@@ -91,7 +94,6 @@ export async function toggleCommunityReaction(
     token,
     {
       timeoutMs: 60000,
-      preferFallback: true,
     }
   );
 }
@@ -125,7 +127,6 @@ export async function communityAiSuggest(
     CommunityAISuggestRequest
   >(`${COMMUNITY_BASE}/ai/suggest`, payload, token, {
     timeoutMs: 60000,
-    preferFallback: true,
   });
 }
 
