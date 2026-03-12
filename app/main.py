@@ -284,6 +284,11 @@ async def security_headers_middleware(request: Request, call_next):
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     """Rate limiting middleware using Redis."""
+    # Always allow CORS preflight through. Browsers send OPTIONS without auth
+    # headers, and blocking it breaks cross-origin fallback requests.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     # Check rate limit
     rate_limit_response = await rate_limiter.check_rate_limit(request)
     if rate_limit_response:
@@ -301,6 +306,10 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.middleware("http")
 async def readiness_gate(request: Request, call_next):
     """Gate non-exempt routes when database is not ready."""
+    # Allow CORS preflight even during startup gates.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     if getattr(app.state, "db_ready", True):
         return await call_next(request)
 
@@ -324,6 +333,11 @@ async def readiness_gate(request: Request, call_next):
 @app.middleware("http")
 async def auth_gateway(request: Request, call_next):
     """Simple gateway: require JWT for all routes except login/register/docs/root."""
+    # Allow CORS preflight through without requiring auth.
+    # This is necessary for cross-origin fallback calls (e.g. direct Render URL).
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     path = request.url.path
     if (
         path in EXEMPT_PATHS
