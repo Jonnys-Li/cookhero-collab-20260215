@@ -159,8 +159,15 @@ export class UnauthorizedError extends Error {
  * and return a friendly message string.
  */
 export async function parseErrorResponse(response: Response): Promise<string> {
-  // Handle 401 Unauthorized - clear auth data
-  if (response.status === 401) {
+  // Handle 401 Unauthorized.
+  //
+  // Important: `/auth/login` can legitimately return 401 for invalid credentials.
+  // In that case we must NOT treat it as "token expired" (no token yet) and we
+  // want to surface the backend's `detail` message to the user instead of a
+  // generic "Unauthorized".
+  const responseUrl = response.url || '';
+  const isAuthLoginRequest = responseUrl.includes('/auth/login');
+  if (response.status === 401 && !isAuthLoginRequest) {
     localStorage.removeItem(STORAGE_KEYS.TOKEN);
     localStorage.removeItem(STORAGE_KEYS.USERNAME);
     // Dispatch custom event to notify auth context
