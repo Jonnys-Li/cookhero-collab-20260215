@@ -701,7 +701,9 @@ class AgentService:
                                 runtime=collab_runtime,
                                 session_id=actual_session_id,
                             )
-                        elif collab_runtime:
+                        elif collab_runtime and self._should_emit_smart_recommendation_card(
+                            collab_runtime
+                        ):
                             ui_action_payload = self._build_smart_recommendation_action(
                                 collab_runtime
                             )
@@ -736,7 +738,12 @@ class AgentService:
 
                         if not response_content and collab_runtime:
                             fallback_content = self._build_collab_fallback_content(
-                                collab_runtime
+                                collab_runtime,
+                                include_smart_card=bool(
+                                    isinstance(ui_action_payload, dict)
+                                    and ui_action_payload.get("action_type")
+                                    == "smart_recommendation_card"
+                                ),
                             )
                             if fallback_content:
                                 if thinking_end_time is None:
@@ -947,6 +954,7 @@ class AgentService:
             "weekly_progress_triggered": bool(
                 collab_plan.get("weekly_progress_triggered")
             ),
+            "planning_triggered": bool(collab_plan.get("planning_triggered")),
         }
 
     def _build_collab_timeline_payload(self, runtime: dict[str, Any]) -> dict[str, Any]:
@@ -1072,7 +1080,12 @@ class AgentService:
                 if not stage.get("reason"):
                     stage["reason"] = "本轮未触发该阶段"
 
-    def _build_collab_fallback_content(self, runtime: dict[str, Any]) -> str:
+    def _build_collab_fallback_content(
+        self,
+        runtime: dict[str, Any],
+        *,
+        include_smart_card: bool = True,
+    ) -> str:
         lines = ["我已经按你勾选的 Agent 跑完一轮协作，整理如下："]
         for stage in runtime.get("stages", []):
             label = stage.get("label") or stage.get("id")
@@ -1086,7 +1099,12 @@ class AgentService:
             elif status == "skipped":
                 reason = stage.get("reason") or "未触发"
                 lines.append(f"- {label}：⏭️ {reason}")
-        lines.append("\n你可以直接在下方推荐卡里选择“立即应用”来落地到饮食管理。")
+        if include_smart_card:
+            lines.append("\n你可以直接在下方推荐卡里选择“立即应用”来落地到饮食管理。")
+        else:
+            lines.append(
+                "\n如果你希望我给出下一餐纠偏建议，可以直接说“帮我纠偏下一餐”。"
+            )
         return "\n".join(lines)
 
     def _is_meal_plan_query(self, message: str) -> bool:
@@ -1210,6 +1228,26 @@ class AgentService:
         if hour < 21:
             return today, "snack"
         return today + timedelta(days=1), "breakfast"
+
+    def _should_emit_smart_recommendation_card(self, runtime: dict[str, Any]) -> bool:
+        """
+        Smart recommendation card is an *optional* UI enhancement.
+
+        We only auto-emit it when the user's intent is likely about:
+        - planning/correction (纠偏/下一餐/怎么吃)
+        - emotion support
+        - weekly progress review
+
+        For pure factual/calculation queries (e.g., calories lookup), do not emit
+        the card to avoid "answering the wrong question".
+        """
+        if not isinstance(runtime, dict):
+            return False
+        return bool(
+            runtime.get("planning_triggered")
+            or runtime.get("emotion_triggered")
+            or runtime.get("weekly_progress_triggered")
+        )
 
     def _build_smart_recommendation_action(
         self,

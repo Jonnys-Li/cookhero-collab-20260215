@@ -34,6 +34,31 @@ WEEKLY_PROGRESS_PATTERNS = [
     re.compile(r"(查看|看看|帮我看|分析).*(进度|完成度|偏差|执行)", re.IGNORECASE),
 ]
 
+PLANNING_TRIGGER_PATTERNS = [
+    # Explicit correction intent
+    re.compile(r"(纠偏|想纠偏|帮我纠偏|饮食纠偏)", re.IGNORECASE),
+    # Next-meal / next-step dietary guidance intent
+    re.compile(
+        r"(下一餐|下顿|下一顿).*(怎么吃|吃什么|怎么安排|如何安排|推荐|建议|规划|纠偏)",
+        re.IGNORECASE,
+    ),
+    # Meal-slot specific guidance intent
+    re.compile(
+        r"(早餐|午餐|晚餐|加餐|夜宵).*(吃什么|怎么吃|推荐|建议|安排|规划|纠偏)",
+        re.IGNORECASE,
+    ),
+    # Goal-driven dietary guidance intent
+    re.compile(
+        r"(减脂|增肌|控糖|低碳|高蛋白|低脂).*(怎么吃|吃什么|推荐|建议|安排|规划|纠偏)",
+        re.IGNORECASE,
+    ),
+    # Generic "please help plan" phrasing (must mention diet/meal context to avoid cooking-only queries)
+    re.compile(
+        r"(帮(我)?|请|给(我)?).*(安排|规划|制定|生成|推荐).*(饮食|餐食|餐|菜单|备餐|下一餐|下顿)",
+        re.IGNORECASE,
+    ),
+]
+
 PLANNER_SUBAGENT_TOOL = "subagent_diet_planner"
 EMOTION_SUBAGENT_TOOL = "subagent_emotion_support"
 
@@ -210,6 +235,11 @@ class AgentContextBuilder:
             return False
         return any(pattern.search(message) for pattern in WEEKLY_PROGRESS_PATTERNS)
 
+    def _should_trigger_planning(self, message: str) -> bool:
+        if not message:
+            return False
+        return any(pattern.search(message) for pattern in PLANNING_TRIGGER_PATTERNS)
+
     def _build_collab_plan(
         self,
         *,
@@ -217,7 +247,7 @@ class AgentContextBuilder:
         available_tool_names: list[str],
         has_images: bool,
     ) -> Optional[dict]:
-        if not available_tool_names:
+        if not available_tool_names and not has_images:
             return None
 
         selected_subagents = [
@@ -225,8 +255,15 @@ class AgentContextBuilder:
         ]
         emotion_triggered = self._should_force_emotion_subagent(current_message)
         weekly_progress_triggered = self._is_weekly_progress_query(current_message)
+        planning_triggered = self._should_trigger_planning(current_message)
 
-        if not selected_subagents and not weekly_progress_triggered:
+        should_enable_collab = (
+            has_images
+            or emotion_triggered
+            or weekly_progress_triggered
+            or planning_triggered
+        )
+        if not should_enable_collab:
             return None
 
         planner_selected = PLANNER_SUBAGENT_TOOL in available_tool_names
@@ -251,7 +288,7 @@ class AgentContextBuilder:
             }
         )
 
-        if planner_selected:
+        if planner_selected and planning_triggered:
             stages.append(
                 {
                     "id": "planning",
@@ -270,6 +307,15 @@ class AgentContextBuilder:
                     },
                 }
             )
+        elif planner_selected:
+            stages.append(
+                {
+                    "id": "planning",
+                    "label": "规划",
+                    "status": "skipped",
+                    "reason": "未触发纠偏/建议意图，跳过规划阶段",
+                }
+            )
         else:
             stages.append(
                 {
@@ -282,24 +328,34 @@ class AgentContextBuilder:
 
         for index, tool_name in enumerate(custom_selected):
             stage_id = f"custom_{index + 1}"
-            stages.append(
-                {
-                    "id": stage_id,
-                    "label": tool_name.replace("subagent_", ""),
-                    "status": "pending",
-                    "reason": "",
-                }
-            )
-            forced_calls.append(
-                {
-                    "stage_id": stage_id,
-                    "name": tool_name,
-                    "arguments": {
-                        "task": current_message,
-                        "background": "请按你的专业角色补充可执行建议。",
-                    },
-                }
-            )
+            if planning_triggered:
+                stages.append(
+                    {
+                        "id": stage_id,
+                        "label": tool_name.replace("subagent_", ""),
+                        "status": "pending",
+                        "reason": "",
+                    }
+                )
+                forced_calls.append(
+                    {
+                        "stage_id": stage_id,
+                        "name": tool_name,
+                        "arguments": {
+                            "task": current_message,
+                            "background": "请按你的专业角色补充可执行建议。",
+                        },
+                    }
+                )
+            else:
+                stages.append(
+                    {
+                        "id": stage_id,
+                        "label": tool_name.replace("subagent_", ""),
+                        "status": "skipped",
+                        "reason": "未触发纠偏/建议意图，跳过专家补充阶段",
+                    }
+                )
 
         weekly_progress_enabled = weekly_progress_triggered and "diet_analysis" in available_tool_names
         if weekly_progress_enabled:
@@ -383,6 +439,7 @@ class AgentContextBuilder:
             "force_tool_calls": forced_calls,
             "emotion_triggered": emotion_triggered,
             "weekly_progress_triggered": weekly_progress_triggered,
+            "planning_triggered": planning_triggered,
         }
 
     async def _process_images(self, images: list[dict]) -> list[dict]:
