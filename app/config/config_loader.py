@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlparse, unquote
 
 import yaml
 from dotenv import load_dotenv
@@ -98,9 +99,74 @@ def load_database_config() -> DatabaseConfig:
 
     # PostgreSQL config from database.postgres
     pg_data = dict(db_root.get("postgres", {}) or {})
-    db_password = os.getenv("DATABASE_PASSWORD")
-    if db_password:
-        pg_data["password"] = db_password
+
+    # ---------------------------------------------------------------------
+    # Environment overrides (deployment-friendly)
+    #
+    # Priority:
+    # 1) DATABASE_URL (single connection string, easiest for managed providers)
+    # 2) DATABASE_HOST / DATABASE_PORT / DATABASE_NAME / DATABASE_USER / DATABASE_PASSWORD
+    # 3) config.yml defaults
+    # ---------------------------------------------------------------------
+    database_url = (
+        os.getenv("DATABASE_URL")
+        or os.getenv("RENDER_DATABASE_URL")
+        or os.getenv("POSTGRES_URL")
+    )
+    if database_url:
+        normalized = database_url.strip()
+        if normalized.startswith("postgres://"):
+            normalized = "postgresql://" + normalized[len("postgres://") :]
+
+        pg_data["url"] = normalized
+
+        try:
+            parsed = urlparse(normalized)
+            if parsed.scheme.startswith("sqlite"):
+                pg_data["host"] = "sqlite"
+                # Keep database path as-is (strip leading slash) when possible.
+                if parsed.path:
+                    pg_data["database"] = parsed.path.lstrip("/") or pg_data.get("database")
+            else:
+                if parsed.hostname:
+                    pg_data["host"] = parsed.hostname
+                if parsed.port:
+                    pg_data["port"] = int(parsed.port)
+                if parsed.username:
+                    pg_data["user"] = unquote(parsed.username)
+                if parsed.password:
+                    pg_data["password"] = unquote(parsed.password)
+                if parsed.path and parsed.path.strip("/"):
+                    pg_data["database"] = parsed.path.lstrip("/")
+        except Exception:
+            # If parsing fails, we still keep pg_data["url"] so the application can
+            # attempt to use it. Any connection errors will be raised at runtime.
+            pass
+    else:
+        db_host = os.getenv("DATABASE_HOST") or os.getenv("PGHOST") or os.getenv("POSTGRES_HOST")
+        if db_host:
+            pg_data["host"] = db_host
+
+        db_port = os.getenv("DATABASE_PORT") or os.getenv("PGPORT") or os.getenv("POSTGRES_PORT")
+        if db_port:
+            try:
+                pg_data["port"] = int(db_port)
+            except ValueError:
+                # Ignore invalid port values; fall back to config.yml/default.
+                pass
+
+        db_name = os.getenv("DATABASE_NAME") or os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB")
+        if db_name:
+            pg_data["database"] = db_name
+
+        db_user = os.getenv("DATABASE_USER") or os.getenv("PGUSER") or os.getenv("POSTGRES_USER")
+        if db_user:
+            pg_data["user"] = db_user
+
+        db_password = os.getenv("DATABASE_PASSWORD") or os.getenv("PGPASSWORD") or os.getenv("POSTGRES_PASSWORD")
+        if db_password:
+            pg_data["password"] = db_password
+
     postgres_config = PostgresConfig.model_validate(pg_data)
 
     # Redis config from database.redis

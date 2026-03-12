@@ -22,8 +22,11 @@ from app.database.models import Base
 logger = logging.getLogger(__name__)
 
 # Create async engine
+db_async_url = settings.database.postgres.async_url
+is_sqlite = db_async_url.startswith("sqlite")
+
 engine_kwargs = {"echo": settings.database.postgres.echo}
-if settings.database.postgres.host != "sqlite":
+if not is_sqlite:
     engine_kwargs.update({
         "pool_size": settings.database.postgres.pool_size,
         "max_overflow": settings.database.postgres.max_overflow,
@@ -32,7 +35,7 @@ if settings.database.postgres.host != "sqlite":
     })
 
 _engine = create_async_engine(
-    settings.database.postgres.async_url,
+    db_async_url,
     **engine_kwargs
 )
 
@@ -64,7 +67,7 @@ def get_background_session_factory() -> async_sessionmaker[AsyncSession]:
 
     if _background_session_factory is None:
         bg_engine_kwargs = {"echo": False}
-        if settings.database.postgres.host != "sqlite":
+        if not is_sqlite:
             bg_engine_kwargs.update({
                 "pool_size": 2,
                 "max_overflow": 2,
@@ -73,7 +76,7 @@ def get_background_session_factory() -> async_sessionmaker[AsyncSession]:
             })
         
         _background_engine = create_async_engine(
-            settings.database.postgres.async_url,
+            db_async_url,
             **bg_engine_kwargs
         )
         _background_session_factory = async_sessionmaker(
@@ -120,7 +123,7 @@ async def init_db() -> None:
     except OperationalError as exc:
         err_text = str(exc).lower()
         is_sqlite_dup_index = (
-            settings.database.postgres.host == "sqlite"
+            is_sqlite
             and "index" in err_text
             and "already exists" in err_text
             and "ix_diet_log_items_log_id" in err_text
