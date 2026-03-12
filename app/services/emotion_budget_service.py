@@ -8,6 +8,7 @@ Provides a deterministic budget routing layer for emotion-support workflows:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import date
@@ -26,6 +27,29 @@ DELTA_TO_EMOTION_LEVEL = {
 
 class EmotionBudgetService:
     """Deterministic today-budget routing service."""
+
+    def _warm_load_diet_auto_adjust_in_background(self) -> None:
+        """Best-effort background warm-load for built-in diet_auto_adjust MCP tools.
+
+        This keeps request latency stable: we do not await the load here; we only
+        schedule it so subsequent calls can pick MCP-first.
+        """
+        try:
+            provider = AgentHub.get_provider("mcp")
+        except Exception:
+            return
+
+        try:
+            from app.agent.tools.providers.mcp import MCPToolProvider
+
+            if not isinstance(provider, MCPToolProvider):
+                return
+            if "diet_auto_adjust" not in provider.list_servers():
+                return
+            asyncio.create_task(provider.load_server_tools("diet_auto_adjust"))
+        except Exception:
+            # Never block or fail budget flow due to warm-load errors.
+            return
 
     def _list_tools(self, user_id: str) -> list[str]:
         try:
@@ -143,6 +167,8 @@ class EmotionBudgetService:
             preferred="mcp_diet_auto_adjust_get_today_budget",
             suffix="get_today_budget",
         )
+        if not mcp_tool:
+            self._warm_load_diet_auto_adjust_in_background()
         if mcp_tool:
             mcp_payload, mcp_error = await self._execute_tool(
                 user_id=user_id,
@@ -219,6 +245,8 @@ class EmotionBudgetService:
             preferred="mcp_diet_auto_adjust_auto_adjust_today_budget",
             suffix="auto_adjust_today_budget",
         )
+        if not mcp_tool:
+            self._warm_load_diet_auto_adjust_in_background()
         if mcp_tool:
             emotion_level = DELTA_TO_EMOTION_LEVEL[delta_calories]
             mcp_payload, mcp_error = await self._execute_tool(

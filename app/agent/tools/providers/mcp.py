@@ -218,8 +218,11 @@ class MCPToolProvider:
             - type: "mcp"
             - tools: list of tool info dicts
         """
-        # Group tools by server
-        servers: dict[str, list[dict]] = {}
+        # Group tools by server.
+        #
+        # Important: even if a server has not loaded tools yet, keep it visible so the
+        # frontend can show "configured/connecting" states (demo stability).
+        servers: dict[str, list[dict]] = {name: [] for name in self._servers.keys()}
         known_servers = sorted(self._servers.keys(), key=len, reverse=True)
 
         for t in self._tools.values():
@@ -245,12 +248,13 @@ class MCPToolProvider:
                 }
             )
 
-        # Convert to list format
+        # Convert to list format with stable ordering:
+        # - registered servers in alphabetical order
+        # - "unknown" (if any) at the end
+        ordered_names = sorted([name for name in servers.keys() if name != "unknown"])
+        if "unknown" in servers:
+            ordered_names.append("unknown")
         return [
-            {
-                "name": server_name,
-                "type": "mcp",
-                "tools": tools,
-            }
-            for server_name, tools in servers.items()
+            {"name": name, "type": "mcp", "tools": servers.get(name, [])}
+            for name in ordered_names
         ]

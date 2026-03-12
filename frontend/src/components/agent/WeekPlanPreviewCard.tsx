@@ -8,6 +8,7 @@ import type {
 import { useAuth } from '../../contexts';
 import { applySmartAction } from '../../services/api/agent';
 import type { TraceStep } from './AgentThinkingBlock';
+import { FlashcardCarousel, type FlashcardItem } from './FlashcardCarousel';
 
 interface WeekPlanPreviewCardProps {
   action: MealPlanPreviewAction;
@@ -74,6 +75,10 @@ export function WeekPlanPreviewCard({
   const [savedPreferenceOnly, setSavedPreferenceOnly] = useState(false);
   const [editablePlannedMeals, setEditablePlannedMeals] = useState(plannedMeals);
   const [candidateIndexByMeal, setCandidateIndexByMeal] = useState<Record<string, number>>({});
+  const [lastRequest, setLastRequest] = useState<{
+    actionKind: 'apply_week_plan' | 'fetch_weekly_progress';
+    payload: Record<string, unknown>;
+  } | null>(null);
 
   const traceResults = useMemo(
     () => parseExistingResults(trace, action.action_id),
@@ -173,7 +178,8 @@ export function WeekPlanPreviewCard({
 
   async function submitAction(
     actionKind: 'apply_week_plan' | 'fetch_weekly_progress',
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    isRetry: boolean = false
   ) {
     if (!token) {
       setError('请先登录后再操作。');
@@ -182,6 +188,9 @@ export function WeekPlanPreviewCard({
     if (!resolvedSessionId) {
       setError('会话 ID 缺失，请刷新后重试。');
       return;
+    }
+    if (!isRetry) {
+      setLastRequest({ actionKind, payload });
     }
     setLoadingKind(actionKind);
     setError(null);
@@ -208,30 +217,31 @@ export function WeekPlanPreviewCard({
   const weeklyProgressResult = results.fetch_weekly_progress;
   const hasPlannedMeals = editablePlannedMeals.length > 0;
   const canApplyWeekPlan = !applyWeekResult && loadingKind === null && hasPlannedMeals;
+  const isTimeoutError = Boolean(error && error.includes('重试获取结果'));
 
-  return (
-    <div className="mt-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3">
-      <div className="text-sm font-medium text-emerald-800 dark:text-emerald-200">{action.title}</div>
-      {action.description && (
-        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">{action.description}</p>
-      )}
-
-      <div className="mt-3 rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-        <div className="text-xs font-medium text-gray-800 dark:text-gray-200">本周策略</div>
-        <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
-          强度：{action.weekly_intensity_label} · {action.weekly_hint}
-        </div>
-        {action.llm_supplement && (
-          <div className="mt-2 inline-flex items-start gap-1.5 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-200">
-            <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            <span>{action.llm_supplement}</span>
+  const flashcards: FlashcardItem[] = [
+    {
+      id: 'strategy',
+      title: '本周策略',
+      content: (
+        <>
+          <div className="text-xs text-gray-600 dark:text-gray-300">
+            强度：{action.weekly_intensity_label} · {action.weekly_hint}
           </div>
-        )}
-      </div>
-
-      <div className="mt-3 rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-        <div className="text-xs font-medium text-gray-800 dark:text-gray-200">个性化周餐次预览</div>
-        <div className="mt-2 space-y-2 max-h-60 overflow-y-auto pr-1">
+          {action.llm_supplement && (
+            <div className="mt-2 inline-flex items-start gap-1.5 rounded-md bg-emerald-100/80 dark:bg-emerald-900/40 px-2 py-1 text-xs text-emerald-700 dark:text-emerald-200">
+              <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>{action.llm_supplement}</span>
+            </div>
+          )}
+        </>
+      ),
+    },
+    {
+      id: 'meals',
+      title: '个性化周餐次预览',
+      content: (
+        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
           {previewDays.length === 0 && (
             <div className="rounded-md border border-dashed border-gray-300 dark:border-gray-700 px-2 py-2 text-xs text-gray-500 dark:text-gray-400">
               暂无可展示的餐次，请返回上一步调整偏好后重试。
@@ -298,106 +308,135 @@ export function WeekPlanPreviewCard({
               </div>
             );
           })}
+          {!hasPlannedMeals && (
+            <div className="text-xs text-amber-600 dark:text-amber-300">
+              当前预览未生成可写入数据，暂不可提交本周计划。
+            </div>
+          )}
         </div>
-        {!hasPlannedMeals && (
-          <div className="mt-2 text-xs text-amber-600 dark:text-amber-300">
-            当前预览未生成可写入数据，暂不可提交本周计划。
+      ),
+    },
+    {
+      id: 'training',
+      title: '训练建议卡（仅建议）',
+      content: trainingPlan.length === 0 ? (
+        <div className="text-xs text-gray-500 dark:text-gray-400">暂未生成训练建议。</div>
+      ) : (
+        <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+          {trainingPlan.map((item) => (
+            <li key={`${item.date}-${item.title}`} className="list-disc ml-4">
+              {item.date} · {item.title}：{item.description}
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      id: 'relax',
+      title: '放松场景建议',
+      content: relaxSuggestions.length === 0 ? (
+        <div className="text-xs text-gray-500 dark:text-gray-400">暂未生成放松场景建议。</div>
+      ) : (
+        <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-300">
+          {relaxSuggestions.map((item, idx) => (
+            <li key={`${idx}-${item}`} className="list-disc ml-4">
+              {item}
+            </li>
+          ))}
+        </ul>
+      ),
+    },
+    {
+      id: 'actions',
+      title: '写入与周进度',
+      content: (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!canApplyWeekPlan}
+              onClick={() =>
+                submitAction('apply_week_plan', {
+                  planned_meals: editablePlannedMeals,
+                  weekly_intensity: action.weekly_intensity,
+                })
+              }
+              className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              确认写入本周计划
+            </button>
+            <button
+              type="button"
+              disabled={loadingKind !== null}
+              onClick={() => setSavedPreferenceOnly(true)}
+              className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              仅保存偏好
+            </button>
+            {applyWeekResult && (
+              <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {applyWeekResult.message}
+              </span>
+            )}
+            {savedPreferenceOnly && !applyWeekResult && (
+              <span className="text-xs text-emerald-700 dark:text-emerald-300">
+                已保留偏好设置，可稍后再写入本周计划。
+              </span>
+            )}
           </div>
-        )}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={!canApplyWeekPlan}
-            onClick={() =>
-              submitAction('apply_week_plan', {
-                planned_meals: editablePlannedMeals,
-                weekly_intensity: action.weekly_intensity,
-              })
-            }
-            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            确认写入本周计划
-          </button>
-          <button
-            type="button"
-            disabled={loadingKind !== null}
-            onClick={() => setSavedPreferenceOnly(true)}
-            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            仅保存偏好
-          </button>
-          {applyWeekResult && (
-            <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-300">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              {applyWeekResult.message}
-            </span>
-          )}
-          {savedPreferenceOnly && !applyWeekResult && (
-            <span className="text-xs text-emerald-700 dark:text-emerald-300">
-              已保留偏好设置，可稍后再写入本周计划。
-            </span>
-          )}
-        </div>
-      </div>
 
-      <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div className="rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-          <div className="text-xs font-medium text-gray-800 dark:text-gray-200">训练建议卡（仅建议）</div>
-          {trainingPlan.length === 0 ? (
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">暂未生成训练建议。</div>
-          ) : (
-            <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
-              {trainingPlan.map((item) => (
-                <li key={`${item.date}-${item.title}`} className="list-disc ml-4">
-                  {item.date} · {item.title}：{item.description}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-          <div className="text-xs font-medium text-gray-800 dark:text-gray-200">放松场景建议</div>
-          {relaxSuggestions.length === 0 ? (
-            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">暂未生成放松场景建议。</div>
-          ) : (
-            <ul className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
-              {relaxSuggestions.map((item, idx) => (
-                <li key={`${idx}-${item}`} className="list-disc ml-4">
-                  {item}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={loadingKind !== null}
+              onClick={() =>
+                submitAction('fetch_weekly_progress', {
+                  intensity_level: action.weekly_intensity,
+                })
+              }
+              className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
+            >
+              查看当前周进度
+            </button>
+            {weeklyProgressResult && (
+              <span className="text-xs text-emerald-700 dark:text-emerald-300">
+                {weeklyProgressResult.message}
+              </span>
+            )}
+          </div>
+        </>
+      ),
+    },
+  ];
 
-      <div className="mt-3 rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-        <div className="text-xs font-medium text-gray-800 dark:text-gray-200">周进度结果</div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            disabled={loadingKind !== null}
-            onClick={() =>
-              submitAction('fetch_weekly_progress', {
-                intensity_level: action.weekly_intensity,
-              })
-            }
-            className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
-          >
-            查看当前周进度
-          </button>
-          {weeklyProgressResult && (
-            <span className="text-xs text-emerald-700 dark:text-emerald-300">
-              {weeklyProgressResult.message}
-            </span>
-          )}
-        </div>
-      </div>
+  return (
+    <div className="mt-3 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-900/20 p-3">
+      <div className="text-sm font-medium text-emerald-800 dark:text-emerald-200">{action.title}</div>
+      {action.description && (
+        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-300">{action.description}</p>
+      )}
+
+      <FlashcardCarousel items={flashcards} className="mt-3" />
 
       {error && (
-        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
-          <TriangleAlert className="h-3.5 w-3.5" />
-          {error}
+        <div className="mt-2 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
+          <div className="inline-flex items-center gap-1.5">
+            <TriangleAlert className="h-3.5 w-3.5" />
+            {error}
+          </div>
+          {isTimeoutError && lastRequest && (
+            <div className="mt-2">
+              <button
+                type="button"
+                disabled={loadingKind !== null}
+                onClick={() => submitAction(lastRequest.actionKind, lastRequest.payload, true)}
+                className="rounded border border-red-300 bg-white/70 px-2 py-1 text-[11px] text-red-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-red-900/20 dark:text-red-200"
+              >
+                重试获取结果
+              </button>
+            </div>
+          )}
         </div>
       )}
 

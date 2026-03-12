@@ -579,12 +579,14 @@ export function ToolSelector({
   );
 
   const allTools = toolServers.flatMap((server) => server.tools);
-  const hasBuiltInDietAutoAdjust = toolServers.some(
-    (server) =>
-      server.type === 'mcp' &&
-      server.name === 'diet_auto_adjust' &&
-      server.tools.length > 0
+  const dietAutoAdjustServer = toolServers.find(
+    (server) => server.type === 'mcp' && server.name === 'diet_auto_adjust'
   );
+  const dietAutoAdjustStatus: 'missing' | 'connecting' | 'enabled' = dietAutoAdjustServer
+    ? dietAutoAdjustServer.tools.length > 0
+      ? 'enabled'
+      : 'connecting'
+    : 'missing';
   const allSelectedToolCount = allTools.filter((tool) =>
     selectedTools.includes(tool.name)
   ).length;
@@ -595,6 +597,45 @@ export function ToolSelector({
   const infoAgent = showingInfoAgent
     ? subagents.find(agent => agent.name === showingInfoAgent)
     : null;
+
+  // If built-in diet_auto_adjust MCP is registered but tools haven't loaded yet,
+  // retry tool fetch a few times to make the "connecting" state self-healing.
+  const dietAutoAdjustRetryRef = useRef<{ attempt: number; timer: number | null }>({
+    attempt: 0,
+    timer: null,
+  });
+  useEffect(() => {
+    // Clear any pending retry timer on status changes.
+    if (dietAutoAdjustRetryRef.current.timer) {
+      window.clearTimeout(dietAutoAdjustRetryRef.current.timer);
+      dietAutoAdjustRetryRef.current.timer = null;
+    }
+
+    if (!token) {
+      dietAutoAdjustRetryRef.current.attempt = 0;
+      return;
+    }
+
+    if (dietAutoAdjustStatus !== 'connecting') {
+      dietAutoAdjustRetryRef.current.attempt = 0;
+      return;
+    }
+
+    if (isLoading || error) return;
+    if (dietAutoAdjustRetryRef.current.attempt >= 5) return;
+
+    dietAutoAdjustRetryRef.current.timer = window.setTimeout(() => {
+      dietAutoAdjustRetryRef.current.attempt += 1;
+      loadTools();
+    }, 2000);
+
+    return () => {
+      if (dietAutoAdjustRetryRef.current.timer) {
+        window.clearTimeout(dietAutoAdjustRetryRef.current.timer);
+        dietAutoAdjustRetryRef.current.timer = null;
+      }
+    };
+  }, [dietAutoAdjustStatus, token, isLoading, error, loadTools]);
 
   return (
     <div className="mb-2">
@@ -677,9 +718,27 @@ export function ToolSelector({
         )}
       </div>
 
-      {hasBuiltInDietAutoAdjust && (
+      {dietAutoAdjustStatus === 'enabled' && (
         <div className="mb-2 rounded-lg border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-1.5 text-[11px] text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-900/30 dark:text-emerald-300">
           系统内置 MCP 已启用（diet_auto_adjust），无需手动添加。
+        </div>
+      )}
+      {dietAutoAdjustStatus === 'connecting' && (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-emerald-200/70 bg-emerald-50/80 px-2.5 py-1.5 text-[11px] text-emerald-700 dark:border-emerald-800/70 dark:bg-emerald-900/30 dark:text-emerald-200">
+          <span>
+            系统内置 MCP 已配置（diet_auto_adjust），正在连接中…（如暂不可用将自动降级）
+          </span>
+          <button
+            type="button"
+            disabled={isLoading}
+            onClick={() => {
+              dietAutoAdjustRetryRef.current.attempt = 0;
+              loadTools();
+            }}
+            className="rounded border border-emerald-300 bg-white/70 px-2 py-1 text-[11px] text-emerald-800 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-700 dark:bg-emerald-900/10 dark:text-emerald-200"
+          >
+            刷新工具
+          </button>
         </div>
       )}
 

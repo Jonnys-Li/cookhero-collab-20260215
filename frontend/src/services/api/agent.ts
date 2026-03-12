@@ -232,7 +232,12 @@ export async function applyEmotionBudgetAdjust(
   return apiPost<ApplyEmotionBudgetAdjustResponse, ApplyEmotionBudgetAdjustRequest>(
     '/agent/emotion-actions/apply-budget-adjust',
     request,
-    token
+    token,
+    {
+      // Write-like action: allow cold start and prefer direct Render connection.
+      timeoutMs: 60000,
+      preferFallback: true,
+    }
   );
 }
 
@@ -246,7 +251,13 @@ export async function applySmartAction(
   return apiPost<ApplySmartActionResponse, ApplySmartActionRequest>(
     '/agent/smart-actions/apply',
     request,
-    token
+    token,
+    {
+      // Smart actions include writes (week plan, next meal) and heavy reads (weekly progress).
+      // Treat as write path to avoid Vercel rewrite instability and allow Render cold start.
+      timeoutMs: 60000,
+      preferFallback: true,
+    }
   );
 }
 

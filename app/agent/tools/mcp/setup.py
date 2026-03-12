@@ -88,5 +88,6 @@ async def _register_diet_auto_adjust_mcp() -> None:
                 "Built-in diet_auto_adjust MCP registered but returned zero tools"
             )
     except Exception as exc:
+        # Keep the server registered even if initial load fails so the frontend can
+        # show "configured/connecting" state and the backend can retry later.
         logger.warning("Failed to load built-in diet_auto_adjust MCP: %s", exc)
-        mcp_provider.unregister_server("diet_auto_adjust")

@@ -10,6 +10,7 @@ import { useAuth } from '../../contexts';
 import { applySmartAction } from '../../services/api/agent';
 import type { TraceStep } from './AgentThinkingBlock';
 import { WeekPlanPreviewCard } from './WeekPlanPreviewCard';
+import { FlashcardCarousel, type FlashcardItem } from './FlashcardCarousel';
 
 interface PlanModeMealWizardCardProps {
   action: MealPlanPlanModeAction;
@@ -198,6 +199,229 @@ export function PlanModeMealWizardCard({
 
   const totalSteps = wizardSteps.length || 4;
   const isLastStep = stepIndex >= totalSteps - 1;
+  const isTimeoutError = Boolean(error && error.includes('重试获取结果'));
+
+  const flashcards: FlashcardItem[] = [
+    {
+      id: wizardSteps[0]?.id || 'goal_food',
+      title: `Step 1/${totalSteps} · ${wizardSteps[0]?.title || '饮食目标与食物类型'}`,
+      subtitle: wizardSteps[0]?.hint,
+      content: (
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">饮食目标</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {goalOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setGoal(option.value)}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    goal === option.value
+                      ? 'border-indigo-500 bg-indigo-500 text-white'
+                      : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">偏好食物类型</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {foodTypeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setFoodTypes((prev) => toggleArrayValue(prev, option.value))}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    foodTypes.includes(option.value)
+                      ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
+                      : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <input
+              value={foodTypeCustom}
+              onChange={(event) => setFoodTypeCustom(event.target.value)}
+              placeholder="其他食物偏好（可选）"
+              className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+            />
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: wizardSteps[1]?.id || 'restriction',
+      title: `Step 2/${totalSteps} · ${wizardSteps[1]?.title || '限制与过敏'}`,
+      subtitle: wizardSteps[1]?.hint,
+      content: (
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">饮食限制</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {restrictionOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setRestrictions((prev) => toggleArrayValue(prev, option.value))}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    restrictions.includes(option.value)
+                      ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
+                      : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input
+            value={restrictionCustom}
+            onChange={(event) => setRestrictionCustom(event.target.value)}
+            placeholder="其他限制（可选）"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+          />
+          <input
+            value={allergies}
+            onChange={(event) => setAllergies(event.target.value)}
+            placeholder="过敏原（可选，逗号分隔）"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+          />
+        </div>
+      ),
+    },
+    {
+      id: wizardSteps[2]?.id || 'relax',
+      title: `Step 3/${totalSteps} · ${wizardSteps[2]?.title || '放松场景方式'}`,
+      subtitle: wizardSteps[2]?.hint,
+      content: (
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">放松场景方式</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {relaxModeOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setRelaxModes((prev) => toggleArrayValue(prev, option.value))}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    relaxModes.includes(option.value)
+                      ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
+                      : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input
+            value={relaxCustom}
+            onChange={(event) => setRelaxCustom(event.target.value)}
+            placeholder="其他放松方式（可选）"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+          />
+        </div>
+      ),
+    },
+    {
+      id: wizardSteps[3]?.id || 'weekly_intensity',
+      title: `Step 4/${totalSteps} · ${wizardSteps[3]?.title || '周进度强度与训练偏好'}`,
+      subtitle: wizardSteps[3]?.hint,
+      content: (
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">周进度强度</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {weeklyIntensityOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setWeeklyIntensity(option.value)}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    weeklyIntensity === option.value
+                      ? 'border-indigo-500 bg-indigo-500 text-white'
+                      : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs font-medium text-gray-700 dark:text-gray-200">训练偏好</div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {trainingFocusOptions.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setTrainingFocus(option.value)}
+                  className={`rounded-full border px-2.5 py-1 text-xs ${
+                    trainingFocus === option.value
+                      ? 'border-indigo-500 bg-indigo-500 text-white'
+                      : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input
+              type="number"
+              min={10}
+              max={120}
+              value={trainingMinutesPerDay}
+              onChange={(event) => setTrainingMinutesPerDay(Number(event.target.value))}
+              placeholder="单日训练分钟"
+              className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+            />
+            <input
+              type="number"
+              min={1}
+              max={7}
+              value={trainingDaysPerWeek}
+              onChange={(event) => setTrainingDaysPerWeek(Number(event.target.value))}
+              placeholder="每周训练天数"
+              className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+            />
+            <input
+              type="number"
+              min={10}
+              max={180}
+              value={cookTimeMinutes}
+              onChange={(event) => setCookTimeMinutes(Number(event.target.value))}
+              placeholder="每日烹饪分钟"
+              className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+            />
+          </div>
+
+          <input
+            value={specialDays}
+            onChange={(event) => setSpecialDays(event.target.value)}
+            placeholder="特殊日程（聚餐/旅行等，可选）"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+          />
+          <input
+            value={trainingCustom}
+            onChange={(event) => setTrainingCustom(event.target.value)}
+            placeholder="训练备注（可选）"
+            className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
+          />
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="mt-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-900/20 p-3">
@@ -207,215 +431,13 @@ export function PlanModeMealWizardCard({
       )}
 
       {!previewAction && (
-        <div className="mt-3 rounded-lg border border-indigo-100 dark:border-indigo-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
-          <div className="text-xs font-medium text-gray-700 dark:text-gray-200">
-            Step {stepIndex + 1}/{totalSteps} · {wizardSteps[stepIndex]?.title || '个性化配置'}
-          </div>
-          {wizardSteps[stepIndex]?.hint && (
-            <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {wizardSteps[stepIndex].hint}
-            </div>
-          )}
-
-          {stepIndex === 0 && (
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">饮食目标</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {goalOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setGoal(option.value)}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        goal === option.value
-                          ? 'border-indigo-500 bg-indigo-500 text-white'
-                          : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">偏好食物类型</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {foodTypeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setFoodTypes((prev) => toggleArrayValue(prev, option.value))}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        foodTypes.includes(option.value)
-                          ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
-                          : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  value={foodTypeCustom}
-                  onChange={(event) => setFoodTypeCustom(event.target.value)}
-                  placeholder="其他食物偏好（可选）"
-                  className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                />
-              </div>
-            </div>
-          )}
-
-          {stepIndex === 1 && (
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">饮食限制</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {restrictionOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setRestrictions((prev) => toggleArrayValue(prev, option.value))}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        restrictions.includes(option.value)
-                          ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
-                          : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <input
-                value={restrictionCustom}
-                onChange={(event) => setRestrictionCustom(event.target.value)}
-                placeholder="其他限制（可选）"
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-              />
-              <input
-                value={allergies}
-                onChange={(event) => setAllergies(event.target.value)}
-                placeholder="过敏原（可选，逗号分隔）"
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-              />
-            </div>
-          )}
-
-          {stepIndex === 2 && (
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">放松场景方式</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {relaxModeOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setRelaxModes((prev) => toggleArrayValue(prev, option.value))}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        relaxModes.includes(option.value)
-                          ? 'border-indigo-500 bg-indigo-100 text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200'
-                          : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <input
-                value={relaxCustom}
-                onChange={(event) => setRelaxCustom(event.target.value)}
-                placeholder="其他放松方式（可选）"
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-              />
-            </div>
-          )}
-
-          {stepIndex === 3 && (
-            <div className="mt-3 space-y-3">
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">周进度强度</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {weeklyIntensityOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setWeeklyIntensity(option.value)}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        weeklyIntensity === option.value
-                          ? 'border-indigo-500 bg-indigo-500 text-white'
-                          : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs font-medium text-gray-700 dark:text-gray-200">训练偏好</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {trainingFocusOptions.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setTrainingFocus(option.value)}
-                      className={`rounded-full border px-2.5 py-1 text-xs ${
-                        trainingFocus === option.value
-                          ? 'border-indigo-500 bg-indigo-500 text-white'
-                          : 'border-indigo-300 text-indigo-700 dark:border-indigo-700 dark:text-indigo-300'
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <input
-                  type="number"
-                  min={10}
-                  max={120}
-                  value={trainingMinutesPerDay}
-                  onChange={(event) => setTrainingMinutesPerDay(Number(event.target.value))}
-                  placeholder="单日训练分钟"
-                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={7}
-                  value={trainingDaysPerWeek}
-                  onChange={(event) => setTrainingDaysPerWeek(Number(event.target.value))}
-                  placeholder="每周训练天数"
-                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                />
-                <input
-                  type="number"
-                  min={10}
-                  max={180}
-                  value={cookTimeMinutes}
-                  onChange={(event) => setCookTimeMinutes(Number(event.target.value))}
-                  placeholder="每日烹饪分钟"
-                  className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-                />
-              </div>
-              <input
-                value={specialDays}
-                onChange={(event) => setSpecialDays(event.target.value)}
-                placeholder="特殊日程（聚餐/旅行等，可选）"
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-              />
-              <input
-                value={trainingCustom}
-                onChange={(event) => setTrainingCustom(event.target.value)}
-                placeholder="训练备注（可选）"
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-700 dark:text-gray-200"
-              />
-            </div>
-          )}
-
+        <div className="mt-3">
+          <FlashcardCarousel
+            items={flashcards}
+            activeIndex={stepIndex}
+            onActiveIndexChange={(index) => setStepIndex(index)}
+            cardClassName="border-indigo-100 dark:border-indigo-800/60 bg-white/80 dark:bg-gray-900/50"
+          />
           <div className="mt-3 flex items-center justify-between gap-2">
             <button
               type="button"
@@ -476,9 +498,23 @@ export function PlanModeMealWizardCard({
       )}
 
       {error && (
-        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
-          <TriangleAlert className="h-3.5 w-3.5" />
-          {error}
+        <div className="mt-2 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
+          <div className="inline-flex items-center gap-1.5">
+            <TriangleAlert className="h-3.5 w-3.5" />
+            {error}
+          </div>
+          {isTimeoutError && (
+            <div className="mt-2">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleSubmitProfile}
+                className="rounded border border-red-300 bg-white/70 px-2 py-1 text-[11px] text-red-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-red-900/20 dark:text-red-200"
+              >
+                重试获取结果
+              </button>
+            </div>
+          )}
         </div>
       )}
 

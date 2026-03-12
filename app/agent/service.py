@@ -279,334 +279,397 @@ class AgentService:
                             recognition_timeline,
                         )
 
-            # 5. 获取 Agent
-            agent = self._get_agent_or_fallback(agent_name)
+            # PlanMode card-first: for meal-plan intent, return a wizard card immediately
+            # without invoking the main LLM pipeline (demo stability + lower latency).
+            if planmode_query_triggered:
+                now = time.time()
+                if thinking_end_time is None:
+                    thinking_end_time = now
 
-            # 6. 创建 LLM invoker
-            invoker = provider.create_invoker(
-                llm_type="fast",
-                streaming=streaming,
-            )
+                if collab_runtime:
+                    self._finalize_collab_stages(collab_runtime)
+                    final_timeline = self._build_collab_timeline_payload(collab_runtime)
+                    trace_steps.append(
+                        self._build_collab_trace_step(
+                            content=final_timeline,
+                            action="collab_timeline",
+                        )
+                    )
+                    yield self._format_event("collab_timeline", final_timeline)
 
-            # 7. 执行 Agent
-            if streaming:
-                agent_generator = agent.run_streaming(invoker, context)
+                planmode_action = self._build_meal_plan_planmode_action(
+                    runtime=collab_runtime,
+                    session_id=actual_session_id,
+                )
+                trace_steps.append(
+                    {
+                        "error": None,
+                        "action": "ui_action",
+                        "content": planmode_action,
+                        "iteration": 0,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "source": "subagent",
+                        "subagent_name": "diet_planner",
+                    }
+                )
+                yield self._format_event(
+                    "ui_action",
+                    {
+                        **planmode_action,
+                        "iteration": 0,
+                        "source": "subagent",
+                        "subagent_name": "diet_planner",
+                        "session_id": actual_session_id,
+                    },
+                )
+
+                intro = "我用 PlanMode 给你生成一周饮食计划，我们用卡片一步步完成。"
+                response_content = intro
+                yield self._format_event("text", {"content": intro})
+
+                answer_end_time = time.time()
+                yield self._format_event(
+                    "done",
+                    {
+                        "session_id": actual_session_id,
+                        "thinking_duration_ms": int(
+                            (thinking_end_time - thinking_start_time) * 1000
+                        ),
+                        "answer_duration_ms": int(
+                            (answer_end_time - thinking_end_time) * 1000
+                        ),
+                    },
+                )
+
             else:
-                agent_generator = agent.run(invoker, context)
+                # 5. 获取 Agent
+                agent = self._get_agent_or_fallback(agent_name)
 
-            async for chunk in agent_generator:
-                # 处理不同类型的 chunk
-                if chunk.type == AgentChunkType.CONTENT:
-                    # Track thinking end and answer start times on first content
-                    if thinking_end_time is None:
-                        thinking_end_time = time.time()
-                    response_content += chunk.data
-                    yield self._format_event(
-                        "text",
-                        {
-                            "content": chunk.data,
-                        },
-                    )
+                # 6. 创建 LLM invoker
+                invoker = provider.create_invoker(
+                    llm_type="fast",
+                    streaming=streaming,
+                )
 
-                elif chunk.type == AgentChunkType.TOOL_CALL:
-                    tool_call = chunk.data
-                    # Calculate iteration number
-                    iteration = len(
-                        [t for t in trace_steps if t.get("action") == "tool_call"]
-                    )
-                    tool_events.append(
-                        {
-                            "type": "tool_call",
-                            "id": tool_call.id,
-                            "name": tool_call.name,
-                            "arguments": tool_call.arguments,
-                        }
-                    )
-                    # Store tool call in trace
-                    trace_steps.append(
-                        {
-                            "error": None,
-                            "action": "tool_call",
-                            "content": None,
-                            "iteration": iteration,
-                            "timestamp": chunk.data.id
-                            if hasattr(chunk.data, "id")
-                            else None,
-                            "tool_calls": [
-                                {
-                                    "name": tool_call.name,
-                                    "arguments": tool_call.arguments,
-                                }
-                            ],
-                        }
-                    )
-                    yield self._format_event(
-                        "tool_call",
-                        {
-                            "id": tool_call.id,
-                            "name": tool_call.name,
-                            "arguments": tool_call.arguments,
-                            "iteration": iteration,
-                        },
-                    )
-                    if collab_runtime:
-                        forced_call = collab_runtime["forced_call_map"].get(tool_call.id)
-                        if forced_call:
-                            stage_id = str(forced_call.get("stage_id") or "")
-                            if stage_id:
-                                self._update_collab_stage(
-                                    collab_runtime,
-                                    stage_id=stage_id,
-                                    status="running",
-                                )
-                                timeline_payload = self._build_collab_timeline_payload(
-                                    collab_runtime
-                                )
-                                trace_steps.append(
-                                    self._build_collab_trace_step(
-                                        content=timeline_payload,
-                                        action="collab_timeline",
-                                    )
-                                )
-                                yield self._format_event(
-                                    "collab_timeline",
-                                    timeline_payload,
-                                )
+                # 7. 执行 Agent
+                if streaming:
+                    agent_generator = agent.run_streaming(invoker, context)
+                else:
+                    agent_generator = agent.run(invoker, context)
 
-                elif chunk.type == AgentChunkType.TOOL_RESULT:
-                    result = chunk.data
-                    # Calculate iteration number
-                    iteration = len(
-                        [t for t in trace_steps if t.get("action") == "tool_result"]
-                    )
-                    tool_events.append(
-                        {
-                            "type": "tool_result",
-                            "tool_call_id": result.tool_call_id,
-                            "name": result.name,
-                            "success": result.success,
-                            "result": result.result,
-                            "error": result.error,
-                        }
-                    )
-                    # Store tool result in trace
-                    trace_steps.append(
-                        {
-                            "error": result.error if not result.success else None,
-                            "action": "tool_result",
-                            "content": result.result,
-                            "iteration": iteration,
-                            "timestamp": None,
-                            "tool_calls": [
-                                {
-                                    "name": result.name,
-                                    "arguments": {},
-                                }
-                            ],
-                        }
-                    )
-                    yield self._format_event(
-                        "tool_result",
-                        {
-                            "name": result.name,
-                            "success": result.success,
-                            "result": result.result,
-                            "error": result.error,
-                            "iteration": iteration,
-                        },
-                    )
-                    if collab_runtime:
-                        forced_call = collab_runtime["forced_call_map"].get(
-                            result.tool_call_id
-                        )
-                        if forced_call:
-                            stage_id = str(forced_call.get("stage_id") or "")
-                            if stage_id:
-                                stage_success = bool(result.success)
-                                self._record_collab_tool_output(
-                                    collab_runtime,
-                                    stage_id=stage_id,
-                                    tool_name=result.name,
-                                    arguments=forced_call.get("arguments"),
-                                    result=result.result,
-                                    success=stage_success,
-                                )
-                                expected_count = collab_runtime["stage_expected"].get(
-                                    stage_id, 1
-                                )
-                                completed_count = collab_runtime["stage_completed"].get(
-                                    stage_id, 0
-                                )
-                                if stage_success:
-                                    completed_count += 1
-                                    collab_runtime["stage_completed"][
-                                        stage_id
-                                    ] = completed_count
-                                next_status = (
-                                    "completed"
-                                    if stage_success and completed_count >= expected_count
-                                    else "failed"
-                                    if not stage_success
-                                    else "running"
-                                )
-                                summary = (
-                                    self._build_result_summary(result.result)
-                                    if stage_success
-                                    else (result.error or "执行失败")
-                                )
-                                self._update_collab_stage(
-                                    collab_runtime,
-                                    stage_id=stage_id,
-                                    status=next_status,
-                                    summary=summary,
-                                )
-                                timeline_payload = self._build_collab_timeline_payload(
-                                    collab_runtime
-                                )
-                                trace_steps.append(
-                                    self._build_collab_trace_step(
-                                        content=timeline_payload,
-                                        action="collab_timeline",
-                                    )
-                                )
-                                yield self._format_event(
-                                    "collab_timeline",
-                                    timeline_payload,
-                                )
-
-                elif chunk.type == AgentChunkType.TRACE:
-                    trace_step = chunk.data
-                    trace_dict = asdict(trace_step)
-                    trace_steps.append(trace_dict)
-                    if trace_dict.get("action") == "ui_action":
-                        ui_payload = trace_dict.get("content")
-                        if isinstance(ui_payload, dict):
-                            yield self._format_event(
-                                "ui_action",
-                                {
-                                    **ui_payload,
-                                    "iteration": trace_dict.get("iteration", 0),
-                                    "source": trace_dict.get("source"),
-                                    "subagent_name": trace_dict.get("subagent_name"),
-                                    "session_id": actual_session_id,
-                                },
-                            )
-                    yield self._format_event("trace", trace_dict)
-
-                elif chunk.type == AgentChunkType.UI_ACTION:
-                    action_payload = chunk.data if isinstance(chunk.data, dict) else {}
-                    yield self._format_event(
-                        "ui_action",
-                        {
-                            **action_payload,
-                            "session_id": actual_session_id,
-                        },
-                    )
-
-                elif chunk.type == AgentChunkType.ERROR:
-                    yield self._format_event("error", chunk.data)
-
-                elif chunk.type == AgentChunkType.DONE:
-                    # Track answer end time
-                    answer_end_time = time.time()
-
-                    if collab_runtime:
-                        self._finalize_collab_stages(collab_runtime)
-                        final_timeline = self._build_collab_timeline_payload(
-                            collab_runtime
-                        )
-                        trace_steps.append(
-                            self._build_collab_trace_step(
-                                content=final_timeline,
-                                action="collab_timeline",
-                            )
-                        )
-                        yield self._format_event("collab_timeline", final_timeline)
-
-                    ui_action_payload: Optional[dict[str, Any]] = None
-                    if planmode_query_triggered:
-                        ui_action_payload = self._build_meal_plan_planmode_action(
-                            runtime=collab_runtime,
-                            session_id=actual_session_id,
-                        )
-                    elif collab_runtime:
-                        ui_action_payload = self._build_smart_recommendation_action(
-                            collab_runtime
+                async for chunk in agent_generator:
+                    # 处理不同类型的 chunk
+                    if chunk.type == AgentChunkType.CONTENT:
+                        # Track thinking end and answer start times on first content
+                        if thinking_end_time is None:
+                            thinking_end_time = time.time()
+                        response_content += chunk.data
+                        yield self._format_event(
+                            "text",
+                            {
+                                "content": chunk.data,
+                            },
                         )
 
-                    if ui_action_payload:
-                        ui_action_subagent = (
-                            "diet_planner"
-                            if planmode_query_triggered
-                            else "emotion_support"
+                    elif chunk.type == AgentChunkType.TOOL_CALL:
+                        tool_call = chunk.data
+                        # Calculate iteration number
+                        iteration = len(
+                            [t for t in trace_steps if t.get("action") == "tool_call"]
                         )
+                        tool_events.append(
+                            {
+                                "type": "tool_call",
+                                "id": tool_call.id,
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments,
+                            }
+                        )
+                        # Store tool call in trace
                         trace_steps.append(
                             {
                                 "error": None,
-                                "action": "ui_action",
-                                "content": ui_action_payload,
-                                "iteration": 0,
-                                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                                "source": "subagent",
-                                "subagent_name": ui_action_subagent,
+                                "action": "tool_call",
+                                "content": None,
+                                "iteration": iteration,
+                                "timestamp": chunk.data.id
+                                if hasattr(chunk.data, "id")
+                                else None,
+                                "tool_calls": [
+                                    {
+                                        "name": tool_call.name,
+                                        "arguments": tool_call.arguments,
+                                    }
+                                ],
                             }
                         )
                         yield self._format_event(
+                            "tool_call",
+                            {
+                                "id": tool_call.id,
+                                "name": tool_call.name,
+                                "arguments": tool_call.arguments,
+                                "iteration": iteration,
+                            },
+                        )
+                        if collab_runtime:
+                            forced_call = collab_runtime["forced_call_map"].get(tool_call.id)
+                            if forced_call:
+                                stage_id = str(forced_call.get("stage_id") or "")
+                                if stage_id:
+                                    self._update_collab_stage(
+                                        collab_runtime,
+                                        stage_id=stage_id,
+                                        status="running",
+                                    )
+                                    timeline_payload = self._build_collab_timeline_payload(
+                                        collab_runtime
+                                    )
+                                    trace_steps.append(
+                                        self._build_collab_trace_step(
+                                            content=timeline_payload,
+                                            action="collab_timeline",
+                                        )
+                                    )
+                                    yield self._format_event(
+                                        "collab_timeline",
+                                        timeline_payload,
+                                    )
+
+                    elif chunk.type == AgentChunkType.TOOL_RESULT:
+                        result = chunk.data
+                        # Calculate iteration number
+                        iteration = len(
+                            [t for t in trace_steps if t.get("action") == "tool_result"]
+                        )
+                        tool_events.append(
+                            {
+                                "type": "tool_result",
+                                "tool_call_id": result.tool_call_id,
+                                "name": result.name,
+                                "success": result.success,
+                                "result": result.result,
+                                "error": result.error,
+                            }
+                        )
+                        # Store tool result in trace
+                        trace_steps.append(
+                            {
+                                "error": result.error if not result.success else None,
+                                "action": "tool_result",
+                                "content": result.result,
+                                "iteration": iteration,
+                                "timestamp": None,
+                                "tool_calls": [
+                                    {
+                                        "name": result.name,
+                                        "arguments": {},
+                                    }
+                                ],
+                            }
+                        )
+                        yield self._format_event(
+                            "tool_result",
+                            {
+                                "name": result.name,
+                                "success": result.success,
+                                "result": result.result,
+                                "error": result.error,
+                                "iteration": iteration,
+                            },
+                        )
+                        if collab_runtime:
+                            forced_call = collab_runtime["forced_call_map"].get(
+                                result.tool_call_id
+                            )
+                            if forced_call:
+                                stage_id = str(forced_call.get("stage_id") or "")
+                                if stage_id:
+                                    stage_success = bool(result.success)
+                                    self._record_collab_tool_output(
+                                        collab_runtime,
+                                        stage_id=stage_id,
+                                        tool_name=result.name,
+                                        arguments=forced_call.get("arguments"),
+                                        result=result.result,
+                                        success=stage_success,
+                                    )
+                                    expected_count = collab_runtime["stage_expected"].get(
+                                        stage_id, 1
+                                    )
+                                    completed_count = collab_runtime["stage_completed"].get(
+                                        stage_id, 0
+                                    )
+                                    if stage_success:
+                                        completed_count += 1
+                                        collab_runtime["stage_completed"][
+                                            stage_id
+                                        ] = completed_count
+                                    next_status = (
+                                        "completed"
+                                        if stage_success and completed_count >= expected_count
+                                        else "failed"
+                                        if not stage_success
+                                        else "running"
+                                    )
+                                    summary = (
+                                        self._build_result_summary(result.result)
+                                        if stage_success
+                                        else (result.error or "执行失败")
+                                    )
+                                    self._update_collab_stage(
+                                        collab_runtime,
+                                        stage_id=stage_id,
+                                        status=next_status,
+                                        summary=summary,
+                                    )
+                                    timeline_payload = self._build_collab_timeline_payload(
+                                        collab_runtime
+                                    )
+                                    trace_steps.append(
+                                        self._build_collab_trace_step(
+                                            content=timeline_payload,
+                                            action="collab_timeline",
+                                        )
+                                    )
+                                    yield self._format_event(
+                                        "collab_timeline",
+                                        timeline_payload,
+                                    )
+
+                    elif chunk.type == AgentChunkType.TRACE:
+                        trace_step = chunk.data
+                        trace_dict = asdict(trace_step)
+                        trace_steps.append(trace_dict)
+                        if trace_dict.get("action") == "ui_action":
+                            ui_payload = trace_dict.get("content")
+                            if isinstance(ui_payload, dict):
+                                yield self._format_event(
+                                    "ui_action",
+                                    {
+                                        **ui_payload,
+                                        "iteration": trace_dict.get("iteration", 0),
+                                        "source": trace_dict.get("source"),
+                                        "subagent_name": trace_dict.get("subagent_name"),
+                                        "session_id": actual_session_id,
+                                    },
+                                )
+                        yield self._format_event("trace", trace_dict)
+
+                    elif chunk.type == AgentChunkType.UI_ACTION:
+                        action_payload = chunk.data if isinstance(chunk.data, dict) else {}
+                        yield self._format_event(
                             "ui_action",
                             {
-                                **ui_action_payload,
-                                "iteration": 0,
-                                "source": "subagent",
-                                "subagent_name": ui_action_subagent,
+                                **action_payload,
                                 "session_id": actual_session_id,
                             },
                         )
 
-                    if not response_content and collab_runtime:
-                        fallback_content = self._build_collab_fallback_content(
-                            collab_runtime
-                        )
-                        if fallback_content:
-                            if thinking_end_time is None:
-                                thinking_end_time = time.time()
-                            response_content = fallback_content
-                            yield self._format_event(
-                                "text",
+                    elif chunk.type == AgentChunkType.ERROR:
+                        yield self._format_event("error", chunk.data)
+
+                    elif chunk.type == AgentChunkType.DONE:
+                        # Track answer end time
+                        answer_end_time = time.time()
+
+                        if collab_runtime:
+                            self._finalize_collab_stages(collab_runtime)
+                            final_timeline = self._build_collab_timeline_payload(
+                                collab_runtime
+                            )
+                            trace_steps.append(
+                                self._build_collab_trace_step(
+                                    content=final_timeline,
+                                    action="collab_timeline",
+                                )
+                            )
+                            yield self._format_event("collab_timeline", final_timeline)
+
+                        ui_action_payload: Optional[dict[str, Any]] = None
+                        if planmode_query_triggered:
+                            ui_action_payload = self._build_meal_plan_planmode_action(
+                                runtime=collab_runtime,
+                                session_id=actual_session_id,
+                            )
+                        elif collab_runtime:
+                            ui_action_payload = self._build_smart_recommendation_action(
+                                collab_runtime
+                            )
+
+                        if ui_action_payload:
+                            ui_action_subagent = (
+                                "diet_planner"
+                                if planmode_query_triggered
+                                else "emotion_support"
+                            )
+                            trace_steps.append(
                                 {
-                                    "content": fallback_content,
+                                    "error": None,
+                                    "action": "ui_action",
+                                    "content": ui_action_payload,
+                                    "iteration": 0,
+                                    "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                    "source": "subagent",
+                                    "subagent_name": ui_action_subagent,
+                                }
+                            )
+                            yield self._format_event(
+                                "ui_action",
+                                {
+                                    **ui_action_payload,
+                                    "iteration": 0,
+                                    "source": "subagent",
+                                    "subagent_name": ui_action_subagent,
+                                    "session_id": actual_session_id,
                                 },
                             )
 
-                    # Calculate durations
-                    thinking_duration_ms = None
-                    answer_duration_ms = None
+                        if not response_content and collab_runtime:
+                            fallback_content = self._build_collab_fallback_content(
+                                collab_runtime
+                            )
+                            if fallback_content:
+                                if thinking_end_time is None:
+                                    thinking_end_time = time.time()
+                                response_content = fallback_content
+                                yield self._format_event(
+                                    "text",
+                                    {
+                                        "content": fallback_content,
+                                    },
+                                )
 
-                    # For Agent: thinking = all time before first CONTENT
-                    # If there was CONTENT, thinking = start to first CONTENT, answer = first CONTENT to end
-                    # If no CONTENT, all time is thinking
-                    if thinking_end_time is not None:
-                        thinking_duration_ms = int(
-                            (thinking_end_time - thinking_start_time) * 1000
-                        )
-                        answer_duration_ms = (
-                            int((answer_end_time - thinking_end_time) * 1000)
-                            if answer_end_time > thinking_end_time
-                            else 0
-                        )
-                    else:
-                        thinking_duration_ms = int(
-                            (answer_end_time - thinking_start_time) * 1000
-                        )
+                        # Calculate durations
+                        thinking_duration_ms = None
+                        answer_duration_ms = None
 
-                    yield self._format_event(
-                        "done",
-                        {
-                            "session_id": actual_session_id,
-                            "thinking_duration_ms": thinking_duration_ms,
-                            "answer_duration_ms": answer_duration_ms,
-                            **chunk.data,
-                        },
-                    )
+                        # For Agent: thinking = all time before first CONTENT
+                        # If there was CONTENT, thinking = start to first CONTENT, answer = first CONTENT to end
+                        # If no CONTENT, all time is thinking
+                        if thinking_end_time is not None:
+                            thinking_duration_ms = int(
+                                (thinking_end_time - thinking_start_time) * 1000
+                            )
+                            answer_duration_ms = (
+                                int((answer_end_time - thinking_end_time) * 1000)
+                                if answer_end_time > thinking_end_time
+                                else 0
+                            )
+                        else:
+                            thinking_duration_ms = int(
+                                (answer_end_time - thinking_start_time) * 1000
+                            )
+
+                        yield self._format_event(
+                            "done",
+                            {
+                                "session_id": actual_session_id,
+                                "thinking_duration_ms": thinking_duration_ms,
+                                "answer_duration_ms": answer_duration_ms,
+                                **chunk.data,
+                            },
+                        )
 
             # 8. 保存消息（所有执行过程都存储在 trace 中）
             # Calculate final timing if not already done

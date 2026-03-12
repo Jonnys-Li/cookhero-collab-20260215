@@ -12,6 +12,16 @@ const API_FALLBACK_BASE =
   'https://cookhero-collab-20260215.onrender.com/api/v1';
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
+type RequestOptions = {
+  timeoutMs?: number;
+  /**
+   * If true, prefer calling API_FALLBACK_BASE first (Render direct) and use API_BASE
+   * as the fallback. This is useful for write operations because Vercel rewrite may
+   * fail with ROUTER_EXTERNAL_TARGET_ERROR.
+   */
+  preferFallback?: boolean;
+};
+
 function normalizeBase(base: string): string {
   return base.endsWith('/') ? base.slice(0, -1) : base;
 }
@@ -41,9 +51,17 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
-function toNetworkErrorMessage(error: unknown): string {
+function toNetworkErrorMessage(error: unknown, timeoutMs: number): string {
   if (isTimeoutError(error)) {
-    return `请求超时（>${Math.round(API_TIMEOUT_MS / 1000)}秒），请稍后重试。`;
+    const seconds = Math.round(timeoutMs / 1000);
+    // For long-running write actions (PlanMode apply / next meal write), we want an
+    // "explainable" timeout that suggests idempotent retry to fetch the result.
+    if (seconds >= 60) {
+      return (
+        `请求超时（>${seconds}秒）。后端可能仍在后台写入中，你可以点击“重试获取结果”。`
+      );
+    }
+    return `请求超时（>${seconds}秒），请稍后重试。`;
   }
   if (error instanceof TypeError) {
     return '网络连接异常，请检查网络后重试。';
@@ -54,9 +72,10 @@ function toNetworkErrorMessage(error: unknown): string {
 async function fetchWithTimeout(
   url: string,
   init?: RequestInit,
+  timeoutMs: number = API_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       ...init,
@@ -70,12 +89,19 @@ async function fetchWithTimeout(
 async function requestWithFallback(
   endpoint: string,
   init?: RequestInit,
+  options?: RequestOptions,
 ): Promise<Response> {
-  const primaryUrl = buildRequestUrl(API_BASE, endpoint);
-  const fallbackUrl = getFallbackUrl(endpoint);
+  const timeoutMs = options?.timeoutMs ?? API_TIMEOUT_MS;
+  const preferFallback = Boolean(options?.preferFallback);
+
+  const baseUrl = buildRequestUrl(API_BASE, endpoint);
+  const fallbackBaseUrl = getFallbackUrl(endpoint);
+
+  const primaryUrl = preferFallback && fallbackBaseUrl ? fallbackBaseUrl : baseUrl;
+  const fallbackUrl = preferFallback && fallbackBaseUrl ? baseUrl : fallbackBaseUrl;
 
   try {
-    const primaryResponse = await fetchWithTimeout(primaryUrl, init);
+    const primaryResponse = await fetchWithTimeout(primaryUrl, init, timeoutMs);
     if (!fallbackUrl || !RETRYABLE_STATUS_CODES.has(primaryResponse.status)) {
       return primaryResponse;
     }
@@ -83,10 +109,10 @@ async function requestWithFallback(
     console.warn(
       `[api] primary request returned ${primaryResponse.status}, retrying via fallback: ${fallbackUrl}`,
     );
-    return await fetchWithTimeout(fallbackUrl, init);
+    return await fetchWithTimeout(fallbackUrl, init, timeoutMs);
   } catch (error) {
     if (!fallbackUrl || (!isTimeoutError(error) && !(error instanceof TypeError))) {
-      throw new Error(toNetworkErrorMessage(error));
+      throw new Error(toNetworkErrorMessage(error, timeoutMs));
     }
 
     console.warn(
@@ -94,9 +120,9 @@ async function requestWithFallback(
       error,
     );
     try {
-      return await fetchWithTimeout(fallbackUrl, init);
+      return await fetchWithTimeout(fallbackUrl, init, timeoutMs);
     } catch (fallbackError) {
-      throw new Error(toNetworkErrorMessage(fallbackError));
+      throw new Error(toNetworkErrorMessage(fallbackError, timeoutMs));
     }
   }
 }
@@ -211,9 +237,10 @@ function friendlyMessageFor(msg: string, ctx?: Record<string, unknown>): string 
  * Make a GET request
  */
 export async function apiGet<T>(endpoint: string, token?: string): Promise<T> {
-  const response = await requestWithFallback(endpoint, {
-    headers: createAuthHeaders(token),
-  });
+  const response = await requestWithFallback(
+    endpoint,
+    { headers: createAuthHeaders(token) },
+  );
 
   if (!response.ok) {
     const msg = await parseErrorResponse(response);
@@ -229,13 +256,18 @@ export async function apiGet<T>(endpoint: string, token?: string): Promise<T> {
 export async function apiPost<T, D = unknown>(
   endpoint: string,
   data: D,
-  token?: string
+  token?: string,
+  options?: RequestOptions,
 ): Promise<T> {
-  const response = await requestWithFallback(endpoint, {
-    method: 'POST',
-    headers: createJsonHeaders(token),
-    body: JSON.stringify(data),
-  });
+  const response = await requestWithFallback(
+    endpoint,
+    {
+      method: 'POST',
+      headers: createJsonHeaders(token),
+      body: JSON.stringify(data),
+    },
+    options,
+  );
 
   if (!response.ok) {
     const msg = await parseErrorResponse(response);
@@ -251,13 +283,18 @@ export async function apiPost<T, D = unknown>(
 export async function apiPut<T, D = unknown>(
   endpoint: string,
   data: D,
-  token?: string
+  token?: string,
+  options?: RequestOptions,
 ): Promise<T> {
-  const response = await requestWithFallback(endpoint, {
-    method: 'PUT',
-    headers: createJsonHeaders(token),
-    body: JSON.stringify(data),
-  });
+  const response = await requestWithFallback(
+    endpoint,
+    {
+      method: 'PUT',
+      headers: createJsonHeaders(token),
+      body: JSON.stringify(data),
+    },
+    options,
+  );
 
   if (!response.ok) {
     const msg = await parseErrorResponse(response);
@@ -271,10 +308,13 @@ export async function apiPut<T, D = unknown>(
  * Make a DELETE request
  */
 export async function apiDelete<T>(endpoint: string, token?: string): Promise<T> {
-  const response = await requestWithFallback(endpoint, {
-    method: 'DELETE',
-    headers: createAuthHeaders(token),
-  });
+  const response = await requestWithFallback(
+    endpoint,
+    {
+      method: 'DELETE',
+      headers: createAuthHeaders(token),
+    },
+  );
 
   if (!response.ok) {
     const msg = await parseErrorResponse(response);

@@ -427,9 +427,64 @@ async def list_available_tools(http_request: Request) -> ToolsListResponse:
     if not user_id:
         raise HTTPException(status_code=401, detail="需要登录")
 
+    # Ensure built-in diet_auto_adjust MCP is always visible even if tools are not loaded yet.
+    # This improves demo stability and allows on-demand tool loading via /agent/tools.
+    if settings.MCP_DIET_AUTO_REGISTER_ENABLED:
+        try:
+            from app.agent.tools.providers.mcp import MCPToolProvider
+
+            mcp_provider: MCPToolProvider = AgentHub.get_provider("mcp")  # type: ignore
+            if "diet_auto_adjust" not in mcp_provider.list_servers():
+                endpoint = settings.MCP_DIET_ENDPOINT.strip()
+                if endpoint:
+                    header_name = (
+                        settings.MCP_DIET_AUTH_HEADER_NAME.strip()
+                        or "X-MCP-Service-Key"
+                    )
+                    service_key = settings.MCP_DIET_SERVICE_KEY.strip()
+                    headers = {header_name: service_key} if service_key else None
+                    mcp_provider.register_server("diet_auto_adjust", endpoint, headers)
+        except Exception as exc:
+            logger.warning(
+                "Failed to ensure built-in diet_auto_adjust MCP server is registered: %s",
+                exc,
+            )
+
     # Get unified server list from AgentHub
     servers_data = AgentHub.list_all_servers(user_id=user_id)
     servers_data = [s for s in servers_data if s.get("type") != "subagent"]
+
+    # If the built-in diet_auto_adjust server exists but has not loaded tools yet,
+    # warm-load it in the background (do not block this request).
+    try:
+        diet_server = next(
+            (
+                s
+                for s in servers_data
+                if s.get("type") == "mcp" and s.get("name") == "diet_auto_adjust"
+            ),
+            None,
+        )
+        if diet_server:
+            tools_payload = diet_server.get("tools") or []
+            tool_names = []
+            if isinstance(tools_payload, list):
+                for tool in tools_payload:
+                    if isinstance(tool, dict) and tool.get("name"):
+                        tool_names.append(str(tool.get("name")))
+            required = {
+                "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_diet_auto_adjust_auto_adjust_today_budget",
+            }
+            missing_required = not required.issubset(set(tool_names))
+
+        if diet_server and missing_required:
+            from app.agent.tools.providers.mcp import MCPToolProvider
+
+            mcp_provider: MCPToolProvider = AgentHub.get_provider("mcp")  # type: ignore
+            asyncio.create_task(mcp_provider.load_server_tools("diet_auto_adjust"))
+    except Exception as exc:
+        logger.warning("Failed to warm-load diet_auto_adjust MCP tools: %s", exc)
 
     servers = [
         ServerInfo(
@@ -1764,6 +1819,56 @@ async def apply_smart_action(
                     detail="protein/fat/carbs 必须为数字",
                 ) from exc
 
+            # Fast write path: do NOT call DietService.add_meal here because it may trigger
+            # RAG/LLM nutrition enrichment. Smart-action writes must remain fast and stable
+            # for demo environments.
+            nutrition_source = _normalize_text(
+                action_data.get("nutrition_source"), max_length=20
+            )
+            nutrition_confidence = _safe_float(action_data.get("nutrition_confidence"))
+
+            # AUTO macros as deterministic fallback when missing.
+            try:
+                from app.diet.macro_estimation import (
+                    estimate_macros_from_calories,
+                    AUTO_NUTRITION_CONFIDENCE,
+                    AUTO_NUTRITION_SOURCE,
+                )
+            except Exception:
+                estimate_macros_from_calories = None  # type: ignore[assignment]
+                AUTO_NUTRITION_CONFIDENCE = 0.35  # type: ignore[misc]
+                AUTO_NUTRITION_SOURCE = "AUTO"  # type: ignore[misc]
+
+            macro_goal = "maintenance"
+            try:
+                pref = await diet_service.repository.get_user_preference(str(user_id))
+                macro_goal = diet_service._resolve_macro_goal_from_preference(pref)
+            except Exception:
+                macro_goal = "maintenance"
+
+            if (
+                estimate_macros_from_calories
+                and calories_value
+                and calories_value > 0
+                and (protein_value is None or fat_value is None or carbs_value is None)
+            ):
+                macros = estimate_macros_from_calories(calories_value, macro_goal)
+                if protein_value is None:
+                    protein_value = macros.get("protein_g")
+                if fat_value is None:
+                    fat_value = macros.get("fat_g")
+                if carbs_value is None:
+                    carbs_value = macros.get("carbs_g")
+                if not nutrition_source:
+                    nutrition_source = str(macros.get("source") or AUTO_NUTRITION_SOURCE)
+                if nutrition_confidence is None:
+                    try:
+                        nutrition_confidence = float(
+                            macros.get("confidence") or AUTO_NUTRITION_CONFIDENCE
+                        )
+                    except (TypeError, ValueError):
+                        nutrition_confidence = AUTO_NUTRITION_CONFIDENCE
+
             dishes = [
                 {
                     "name": dish_name,
@@ -1771,15 +1876,25 @@ async def apply_smart_action(
                     "protein": protein_value,
                     "fat": fat_value,
                     "carbs": carbs_value,
+                    "nutrition_source": nutrition_source or None,
+                    "nutrition_confidence": nutrition_confidence,
                 }
             ]
-            meal = await diet_service.add_meal(
+            totals = diet_service._calculate_meal_totals(dishes)
+            created = await diet_service.repository.add_meal_to_plan(
                 user_id=str(user_id),
                 plan_date=plan_date,
                 meal_type=meal_type,
                 dishes=dishes,
+                total_calories=totals["total_calories"],
+                total_protein=totals["total_protein"],
+                total_fat=totals["total_fat"],
+                total_carbs=totals["total_carbs"],
                 notes="来自智能推荐卡的一键纠偏建议",
             )
+            if not created:
+                raise HTTPException(status_code=500, detail="写入计划餐次失败")
+            meal = created.to_dict()
 
             response_data = {
                 "action_id": payload.action_id,

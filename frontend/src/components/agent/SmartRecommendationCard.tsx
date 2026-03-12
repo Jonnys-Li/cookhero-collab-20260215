@@ -69,6 +69,10 @@ export function SmartRecommendationCard({
   const [loadingKind, setLoadingKind] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [floatingFeedback, setFloatingFeedback] = useState<string | null>(null);
+  const [lastRequest, setLastRequest] = useState<{
+    actionKind: 'apply_budget_adjust' | 'apply_next_meal_plan' | 'fetch_weekly_progress';
+    payload: Record<string, unknown>;
+  } | null>(null);
 
   const traceResults = useMemo(
     () => parseExistingResults(trace, action.action_id),
@@ -122,7 +126,8 @@ export function SmartRecommendationCard({
 
   async function submitAction(
     actionKind: 'apply_budget_adjust' | 'apply_next_meal_plan' | 'fetch_weekly_progress',
-    payload: Record<string, unknown>
+    payload: Record<string, unknown>,
+    isRetry: boolean = false
   ) {
     if (!token) {
       setError('请先登录后再操作。');
@@ -131,6 +136,9 @@ export function SmartRecommendationCard({
     if (!resolvedSessionId) {
       setError('会话 ID 缺失，请刷新后重试。');
       return;
+    }
+    if (!isRetry) {
+      setLastRequest({ actionKind, payload });
     }
     setLoadingKind(actionKind);
     setError(null);
@@ -152,6 +160,8 @@ export function SmartRecommendationCard({
       setLoadingKind(null);
     }
   }
+
+  const isTimeoutError = Boolean(error && error.includes('重试获取结果'));
 
   return (
     <div className="relative mt-3 rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/70 dark:bg-violet-900/20 p-3">
@@ -308,9 +318,23 @@ export function SmartRecommendationCard({
       )}
 
       {error && (
-        <div className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
-          <TriangleAlert className="h-3.5 w-3.5" />
-          {error}
+        <div className="mt-2 rounded-lg bg-red-50 dark:bg-red-900/30 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
+          <div className="inline-flex items-center gap-1.5">
+            <TriangleAlert className="h-3.5 w-3.5" />
+            {error}
+          </div>
+          {isTimeoutError && lastRequest && (
+            <div className="mt-2">
+              <button
+                type="button"
+                disabled={loadingKind !== null}
+                onClick={() => submitAction(lastRequest.actionKind, lastRequest.payload, true)}
+                className="rounded border border-red-300 bg-white/70 px-2 py-1 text-[11px] text-red-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-red-900/20 dark:text-red-200"
+              >
+                重试获取结果
+              </button>
+            </div>
+          )}
         </div>
       )}
 

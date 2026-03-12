@@ -86,12 +86,25 @@ async def _run_non_blocking_startup_tasks() -> None:
     """Run non-critical startup tasks in background to avoid blocking port bind."""
     from app.agent import setup_mcp_servers
 
-    mcp_timeout = float(os.getenv("MCP_STARTUP_TIMEOUT_SECONDS", "15"))
+    mcp_timeout = float(os.getenv("MCP_STARTUP_TIMEOUT_SECONDS", "60"))
     metadata_timeout = float(os.getenv("METADATA_CACHE_TIMEOUT_SECONDS", "20"))
 
     logger.info("Registering MCP servers in background...")
     try:
-        await asyncio.wait_for(setup_mcp_servers(), timeout=mcp_timeout)
+        task = asyncio.create_task(setup_mcp_servers())
+
+        # Ensure task exceptions are always retrieved to avoid "Task exception was never retrieved".
+        def _consume_task_result(t: asyncio.Task) -> None:
+            try:
+                _ = t.exception()
+            except asyncio.CancelledError:
+                return
+
+        task.add_done_callback(_consume_task_result)
+
+        # This function already runs in a background task, so timeout should not cancel the
+        # underlying MCP setup. Shield keeps the MCP setup running even if we stop awaiting it.
+        await asyncio.wait_for(asyncio.shield(task), timeout=mcp_timeout)
         logger.info("MCP servers registered.")
     except asyncio.TimeoutError:
         logger.warning("MCP registration timed out after %.1fs; continuing.", mcp_timeout)
