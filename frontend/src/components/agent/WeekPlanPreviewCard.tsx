@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Loader2, Sparkles, TriangleAlert } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import type {
   ApplySmartActionResponse,
@@ -65,6 +66,8 @@ export function WeekPlanPreviewCard({
   sessionId,
 }: WeekPlanPreviewCardProps) {
   const { token } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const resolvedSessionId = sessionId || action.session_id;
   const previewDays = Array.isArray(action.preview_days) ? action.preview_days : [];
   const plannedMeals = Array.isArray(action.planned_meals) ? action.planned_meals : [];
@@ -214,10 +217,11 @@ export function WeekPlanPreviewCard({
   }
 
   const applyWeekResult = results.apply_week_plan;
-  const weeklyProgressResult = results.fetch_weekly_progress;
   const hasPlannedMeals = editablePlannedMeals.length > 0;
   const canApplyWeekPlan = !applyWeekResult && loadingKind === null && hasPlannedMeals;
   const isTimeoutError = Boolean(error && error.includes('重试获取结果'));
+  const dietProgressHref =
+    (location.pathname.startsWith('/agent') ? '/agent/diet' : '/diet') + '#diet-week-progress';
 
   const flashcards: FlashcardItem[] = [
     {
@@ -390,20 +394,11 @@ export function WeekPlanPreviewCard({
             <button
               type="button"
               disabled={loadingKind !== null}
-              onClick={() =>
-                submitAction('fetch_weekly_progress', {
-                  intensity_level: action.weekly_intensity,
-                })
-              }
+              onClick={() => navigate(dietProgressHref)}
               className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
             >
               查看当前周进度
             </button>
-            {weeklyProgressResult && (
-              <span className="text-xs text-emerald-700 dark:text-emerald-300">
-                {weeklyProgressResult.message}
-              </span>
-            )}
           </div>
         </>
       ),

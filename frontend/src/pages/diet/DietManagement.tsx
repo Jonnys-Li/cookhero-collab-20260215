@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   Calendar,
   ChevronLeft,
@@ -1084,6 +1085,7 @@ function SummaryPanel({ summary, isLoading }: SummaryPanelProps) {
  */
 export default function DietManagementPage() {
   const { token } = useAuth();
+  const location = useLocation();
   const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStartDate(new Date()));
   const [plan, setPlan] = useState<DietPlan | null>(null);
   const [logs, setLogs] = useState<Map<string, DietLog[]>>(new Map());
@@ -1106,6 +1108,19 @@ export default function DietManagementPage() {
   const [quickLogMealType, setQuickLogMealType] = useState<string | undefined>(undefined);
   const [editLogModalOpen, setEditLogModalOpen] = useState(false);
   const [editLogData, setEditLogData] = useState<DietLog | null>(null);
+
+  // Deep-link support: /agent/diet#diet-week-progress
+  // For weekly progress actions in Agent cards, we jump here and default to "log" view.
+  useEffect(() => {
+    if (location.hash !== '#diet-week-progress') return;
+    setViewMode('log');
+    if (isLoading) return;
+    const anchor = document.getElementById('diet-week-progress');
+    if (!anchor) return;
+    window.requestAnimationFrame(() => {
+      anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [location.hash, isLoading]);
 
   // Fetch plan and logs for the current week
   const fetchData = useCallback(async () => {
@@ -1492,7 +1507,7 @@ export default function DietManagementPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div id="diet-week-progress" className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">本周明细</div>
           <div className="flex rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-sm transition-shadow hover:shadow">
             <button

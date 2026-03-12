@@ -198,6 +198,115 @@ class AgentService:
                 },
             )
 
+            # ==========================================================================
+            # PlanMode card-first: early short-circuit for meal-plan intent.
+            #
+            # This MUST happen before building context or invoking the agent loop to
+            # avoid multi-iteration LLM output (which can look like duplicated
+            # questionnaires for plan requests).
+            # ==========================================================================
+            if self._is_meal_plan_query(message):
+                now = time.time()
+                thinking_end_time = now
+
+                trace_steps: list[dict[str, Any]] = []
+                planmode_action = self._build_meal_plan_planmode_action(
+                    runtime=None,
+                    session_id=actual_session_id,
+                )
+
+                trace_steps.append(
+                    {
+                        "error": None,
+                        "action": "ui_action",
+                        "content": planmode_action,
+                        "iteration": 0,
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "source": "subagent",
+                        "subagent_name": "diet_planner",
+                    }
+                )
+                yield self._format_event(
+                    "ui_action",
+                    {
+                        **planmode_action,
+                        "iteration": 0,
+                        "source": "subagent",
+                        "subagent_name": "diet_planner",
+                        "session_id": actual_session_id,
+                    },
+                )
+
+                intro = "我用 PlanMode 给你生成一周饮食计划，我们用卡片一步步完成。"
+                response_content = intro
+                yield self._format_event("text", {"content": intro})
+
+                answer_end_time = time.time()
+                yield self._format_event(
+                    "done",
+                    {
+                        "session_id": actual_session_id,
+                        "thinking_duration_ms": int(
+                            (thinking_end_time - thinking_start_time) * 1000
+                        ),
+                        "answer_duration_ms": int(
+                            (answer_end_time - thinking_end_time) * 1000
+                        ),
+                    },
+                )
+
+                # Save user + assistant messages (avoid any questionnaire long text).
+                user_trace = None
+                if images:
+                    try:
+                        processed_images = await self.context_builder._process_images(images)
+                    except Exception as exc:
+                        logger.warning(f"Failed to process images for planmode: {exc}")
+                        processed_images = None
+                    if processed_images:
+                        image_sources = []
+                        for img in processed_images:
+                            if img.get("url"):
+                                image_sources.append(
+                                    {
+                                        "type": "image",
+                                        "url": img.get("url"),
+                                        "display_url": img.get("display_url"),
+                                        "thumb_url": img.get("thumb_url"),
+                                    }
+                                )
+                        if image_sources:
+                            user_trace = image_sources
+
+                await self.repository.save_message(
+                    actual_session_id,
+                    "user",
+                    message,
+                    trace=user_trace,
+                )
+                await self.repository.save_message(
+                    actual_session_id,
+                    "assistant",
+                    response_content,
+                    trace=trace_steps if trace_steps else None,
+                    thinking_duration_ms=int(
+                        (thinking_end_time - thinking_start_time) * 1000
+                    ),
+                    answer_duration_ms=int(
+                        (answer_end_time - thinking_end_time) * 1000
+                    ),
+                )
+
+                # Compress in background (non-blocking).
+                asyncio.create_task(
+                    self.context_compressor.maybe_compress(
+                        actual_session_id,
+                        self.repository,
+                        user_id,
+                    )
+                )
+                return
+
             # 3. 组装上下文
             context = await self.context_builder.build(
                 session,

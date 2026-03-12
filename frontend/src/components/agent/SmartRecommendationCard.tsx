@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, Timer, TriangleAlert } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import type {
   ApplySmartActionResponse,
@@ -56,7 +57,11 @@ export function SmartRecommendationCard({
   showSkipButton = false,
 }: SmartRecommendationCardProps) {
   const { token } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const resolvedSessionId = sessionId || action.session_id;
+  const dietProgressHref =
+    (location.pathname.startsWith('/agent') ? '/agent/diet' : '/diet') + '#diet-week-progress';
   const defaultOption = action.next_meal_options?.[0];
   const [selectedOptionId, setSelectedOptionId] = useState(defaultOption?.option_id || '');
   const [selectedBudgetDelta, setSelectedBudgetDelta] = useState<number | null>(
@@ -257,16 +262,18 @@ export function SmartRecommendationCard({
               <button
                 type="button"
                 disabled={loadingKind !== null}
-                onClick={() => submitAction('fetch_weekly_progress', {})}
+                onClick={() => {
+                  navigate(dietProgressHref);
+                  if (!resolvedRef.current) {
+                    resolvedRef.current = true;
+                    onStepResolved?.('applied');
+                  }
+                  setFloatingFeedback('已打开周进度视图');
+                }}
                 className="rounded-lg border border-violet-300 px-3 py-1.5 text-xs text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-violet-700 dark:text-violet-300 dark:hover:bg-violet-900/30"
               >
-                查看周进度详情
+                打开周进度视图
               </button>
-              {results.fetch_weekly_progress && (
-                <span className="text-xs text-emerald-600 dark:text-emerald-300">
-                  {results.fetch_weekly_progress.message}
-                </span>
-              )}
             </div>
           </div>
 

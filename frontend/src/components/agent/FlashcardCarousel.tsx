@@ -26,10 +26,36 @@ export function FlashcardCarousel({
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [internalIndex, setInternalIndex] = useState(0);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
+  // During smooth programmatic scroll (dot/arrow click or "snap back" alignment),
+  // ignore onScroll-derived index updates. Otherwise the carousel can "bounce back"
+  // to the previous card because nearest-index calculations happen mid-animation.
+  const isProgrammaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const resolvedIndex = activeIndex ?? internalIndex;
   const total = items.length;
 
   const ids = useMemo(() => items.map((item) => item.id), [items]);
+
+  const markProgrammaticScroll = () => {
+    isProgrammaticScrollRef.current = true;
+    if (programmaticScrollTimerRef.current) {
+      window.clearTimeout(programmaticScrollTimerRef.current);
+    }
+    // Keep the window short; just long enough to cover the smooth scroll animation.
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, 480);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (programmaticScrollTimerRef.current) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (resolvedIndex < 0 || resolvedIndex >= total) return;
@@ -37,6 +63,7 @@ export function FlashcardCarousel({
     if (!track || isUserScrolling) return;
     const target = track.children.item(resolvedIndex) as HTMLElement | null;
     if (!target) return;
+    markProgrammaticScroll();
     track.scrollTo({
       left: target.offsetLeft,
       behavior: 'smooth',
@@ -54,6 +81,7 @@ export function FlashcardCarousel({
   const handleScroll = () => {
     const track = trackRef.current;
     if (!track || total <= 1) return;
+    if (isProgrammaticScrollRef.current) return;
     const scrollLeft = track.scrollLeft;
     let nearest = 0;
     let minDiff = Number.POSITIVE_INFINITY;
@@ -110,6 +138,7 @@ export function FlashcardCarousel({
       <div
         ref={trackRef}
         onScroll={() => {
+          if (isProgrammaticScrollRef.current) return;
           setIsUserScrolling(true);
           handleScroll();
         }}
