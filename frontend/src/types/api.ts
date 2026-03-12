@@ -85,3 +85,8 @@ export interface ApiError {
   detail: string | Array<{ loc: string[]; msg: string; type: string }>;
   message?: string;
 }
+
+export interface CapabilitiesResponse {
+  api_version?: string;
+  community_ai_modes?: string[];
+}

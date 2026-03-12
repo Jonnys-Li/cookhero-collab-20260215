@@ -3,6 +3,7 @@ import { Heart, Loader2, MessageCircle, Plus, RefreshCcw, Sparkles, Users } from
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts';
 import { getCommunityFeed, suggestCommunityCard, toggleCommunityReaction } from '../../services/api/community';
+import { getCapabilities } from '../../services/api/meta';
 import type { CommunityPost } from '../../types/community';
 import { CreatePostModal } from './CreatePostModal';
 
@@ -37,6 +38,95 @@ function formatTime(ts?: string | null): string {
   return d.toLocaleString();
 }
 
+function daysAgo(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d.toISOString();
+}
+
+const DEMO_COMMUNITY_POSTS: CommunityPost[] = [
+  {
+    id: 'demo-1',
+    user_id: 'demo',
+    author_display_name: '匿名小厨0421',
+    is_anonymous: true,
+    post_type: 'check_in',
+    mood: 'neutral',
+    content:
+      '今天按计划吃了三餐，外食也尽量选了清淡少油的搭配。虽然没做到完美，但能坚持记录就很不错了，明天继续。',
+    tags: ['坚持打卡', '外食'],
+    image_urls: [],
+    nutrition_snapshot: null,
+    like_count: 12,
+    comment_count: 3,
+    liked_by_me: false,
+    created_at: daysAgo(0),
+    updated_at: daysAgo(0),
+  },
+  {
+    id: 'demo-2',
+    user_id: 'demo',
+    author_display_name: '匿名小厨8190',
+    is_anonymous: true,
+    post_type: 'check_in',
+    mood: 'anxious',
+    content:
+      '今天工作压力有点大，晚饭想吃点甜的缓解情绪。有没有更容易坚持的替代方案？我不想靠自责来逼自己。',
+    tags: ['焦虑', '求建议'],
+    image_urls: [],
+    nutrition_snapshot: null,
+    like_count: 8,
+    comment_count: 5,
+    liked_by_me: false,
+    created_at: daysAgo(1),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: 'demo-3',
+    user_id: 'demo',
+    author_display_name: '匿名小厨1266',
+    is_anonymous: true,
+    post_type: 'check_in',
+    mood: 'guilty',
+    content:
+      '晚上没忍住吃多了，心里有点内疚。现在更想做的是把节奏找回来：先把下一顿安排得简单一点，不再和自己较劲。',
+    tags: ['暴食后自责', '想放弃'],
+    image_urls: [],
+    nutrition_snapshot: null,
+    like_count: 15,
+    comment_count: 7,
+    liked_by_me: false,
+    created_at: daysAgo(2),
+    updated_at: daysAgo(2),
+  },
+  {
+    id: 'demo-4',
+    user_id: 'demo',
+    author_display_name: '匿名小厨5502',
+    is_anonymous: true,
+    post_type: 'check_in',
+    mood: 'happy',
+    content:
+      '今天训练后补了高蛋白餐，感觉精神状态挺好。打卡一下，也想听听大家都怎么安排训练日的饮食。',
+    tags: ['高蛋白', '增肌'],
+    image_urls: [],
+    nutrition_snapshot: {
+      week_start_date: '2026-03-02',
+      week_end_date: '2026-03-08',
+      total_calories: 11250,
+      total_protein: 680,
+      total_fat: 320,
+      total_carbs: 980,
+      avg_daily_calories: 1607,
+    },
+    like_count: 20,
+    comment_count: 9,
+    liked_by_me: false,
+    created_at: daysAgo(4),
+    updated_at: daysAgo(4),
+  },
+];
+
 export default function CommunityFeedPage() {
   const { token } = useAuth();
   const location = useLocation();
@@ -53,6 +143,9 @@ export default function CommunityFeedPage() {
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+  const [communityAiModes, setCommunityAiModes] = useState<string[]>([]);
+
   const [aiCards, setAiCards] = useState<
     Record<
       string,
@@ -66,6 +159,18 @@ export default function CommunityFeedPage() {
   >({});
 
   const canLoadMore = useMemo(() => posts.length < total, [posts.length, total]);
+  const canUseAICard = useMemo(
+    () => communityAiModes.includes('card'),
+    [communityAiModes]
+  );
+
+  const demoPosts = useMemo(() => {
+    return DEMO_COMMUNITY_POSTS.filter((p) => {
+      if (selectedMood && String(p.mood || '') !== selectedMood) return false;
+      if (selectedTag && !(p.tags || []).includes(selectedTag)) return false;
+      return true;
+    });
+  }, [selectedMood, selectedTag]);
 
   const fetchFeed = useCallback(async (opts?: { append?: boolean }) => {
     if (!token) return;
@@ -102,6 +207,29 @@ export default function CommunityFeedPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, selectedTag, selectedMood]);
 
+  useEffect(() => {
+    if (!token) {
+      setCommunityAiModes([]);
+      return;
+    }
+
+    let cancelled = false;
+    setCapabilitiesLoading(true);
+    getCapabilities(token)
+      .then((res) => {
+        if (cancelled) return;
+        const modes = Array.isArray(res?.community_ai_modes) ? res.community_ai_modes : [];
+        setCommunityAiModes(modes.map(String));
+      })
+      .finally(() => {
+        if (!cancelled) setCapabilitiesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
   const handleOpenDetail = (postId: string) => {
     navigate(`${basePath}/${postId}`);
   };
@@ -125,6 +253,10 @@ export default function CommunityFeedPage() {
 
   const handleToggleAICard = useCallback(async (postId: string) => {
     if (!token) return;
+    if (!canUseAICard) {
+      setError('后端升级中，暂不支持 AI 共情点评，请稍后刷新重试。');
+      return;
+    }
 
     let shouldGenerate = false;
     setAiCards(prev => {
@@ -184,10 +316,14 @@ export default function CommunityFeedPage() {
         },
       }));
     }
-  }, [token]);
+  }, [token, canUseAICard]);
 
   const handleRegenerateAICard = useCallback(async (postId: string) => {
     if (!token) return;
+    if (!canUseAICard) {
+      setError('后端升级中，暂不支持 AI 共情点评，请稍后刷新重试。');
+      return;
+    }
     setAiCards(prev => ({
       ...prev,
       [postId]: {
@@ -226,7 +362,7 @@ export default function CommunityFeedPage() {
         },
       }));
     }
-  }, [token]);
+  }, [token, canUseAICard]);
 
   if (!token) {
     return (
@@ -309,11 +445,7 @@ export default function CommunityFeedPage() {
             <Loader2 className="w-5 h-5 animate-spin mr-2" />
             加载中...
           </div>
-        ) : posts.length === 0 ? (
-          <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/40 p-8 text-center text-gray-500 dark:text-gray-400">
-            还没有打卡内容。发一条, 给别人一点温暖, 也给自己一点力量。
-          </div>
-        ) : (
+        ) : posts.length > 0 ? (
           <div className="space-y-4">
             {posts.map(post => (
               <div
@@ -363,10 +495,19 @@ export default function CommunityFeedPage() {
                           e.stopPropagation();
                           handleToggleAICard(post.id);
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 text-xs transition-colors"
-                        title="点击生成共情点评小卡（不会自动消耗）"
+                        disabled={!canUseAICard || capabilitiesLoading}
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-xs transition-colors ${
+                          !canUseAICard || capabilitiesLoading
+                            ? 'border-gray-200 bg-white text-gray-400 opacity-60 cursor-not-allowed dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500'
+                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800'
+                        }`}
+                        title={
+                          capabilitiesLoading
+                            ? '正在检测后端能力...'
+                            : (!canUseAICard ? '后端升级中，稍后刷新' : '点击生成共情点评小卡（不会自动消耗）')
+                        }
                       >
-                        <Sparkles className="w-3.5 h-3.5" />
+                        {capabilitiesLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                         AI 共情点评
                       </button>
                       <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-300">
@@ -453,6 +594,126 @@ export default function CommunityFeedPage() {
                 </button>
               </div>
             )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white/70 dark:bg-gray-900/40 p-8 text-center text-gray-500 dark:text-gray-400">
+              还没有真实打卡内容。发一条, 给别人一点温暖, 也给自己一点力量。
+            </div>
+
+            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/50 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  示例数据（仅用于演示，不会写入）
+                </div>
+                <div className="text-xs text-gray-400">
+                  {demoPosts.length} 条
+                </div>
+              </div>
+              <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                这些卡片用于展示“打卡互助 + 共情干预”的交互形态，实际使用以真实数据为准。
+              </div>
+
+              {demoPosts.length === 0 ? (
+                <div className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+                  当前筛选条件下暂无示例数据。
+                </div>
+              ) : (
+                <div className="mt-4 space-y-4">
+                  {demoPosts.map((post) => (
+                    <div
+                      key={post.id}
+                      className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white/90 dark:bg-gray-900/60 shadow-sm"
+                      role="group"
+                    >
+                      <div className="p-5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                                {post.author_display_name || '匿名用户'}
+                              </span>
+                              <span className="text-[11px] px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400">
+                                示例
+                              </span>
+                              {post.mood && (
+                                <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+                                  {MOOD_OPTIONS.find(m => m.value === post.mood)?.label || String(post.mood)}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              {formatTime(post.created_at)}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
+                              <Heart className="w-3.5 h-3.5" />
+                              {post.like_count}
+                            </div>
+                            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              {post.comment_count}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 text-sm text-gray-800 dark:text-gray-200 leading-relaxed">
+                          {post.content}
+                        </div>
+
+                        {post.tags && post.tags.length > 0 && (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {post.tags.slice(0, 5).map(tag => (
+                              <span
+                                key={tag}
+                                className="text-xs px-2 py-0.5 rounded-full bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-200 border border-orange-200/60 dark:border-orange-800/60"
+                              >
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {post.nutrition_snapshot && (
+                          <div className="mt-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 p-4">
+                            <div className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">
+                              周摘要（示例）
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                              <div className="rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">总热量</div>
+                                <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                  {String((post.nutrition_snapshot as any).total_calories ?? '-')}
+                                </div>
+                              </div>
+                              <div className="rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">蛋白</div>
+                                <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                  {String((post.nutrition_snapshot as any).total_protein ?? '-')}
+                                </div>
+                              </div>
+                              <div className="rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">脂肪</div>
+                                <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                  {String((post.nutrition_snapshot as any).total_fat ?? '-')}
+                                </div>
+                              </div>
+                              <div className="rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">碳水</div>
+                                <div className="font-semibold text-gray-900 dark:text-gray-100">
+                                  {String((post.nutrition_snapshot as any).total_carbs ?? '-')}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

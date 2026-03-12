@@ -182,7 +182,14 @@ export async function parseErrorResponse(response: Response): Promise<string> {
           const msg = typeof err.msg === 'string' ? err.msg : JSON.stringify(err.msg);
           return `${capitalize(String(field))}: ${friendlyMessageFor(msg, err.ctx)}`.trim();
         });
-        return parts.join('\n');
+        const joined = parts.join('\n');
+        // Deployment skew guard: older backend only supports `tags|reply` but
+        // newer frontend may call `polish|card`. Convert the raw schema error
+        // into a product-facing hint.
+        if (joined.includes("Mode: Input should be 'tags' or 'reply'")) {
+          return '后端尚未升级到支持 AI 润色/点评，请稍后刷新重试。';
+        }
+        return joined;
       }
 
       // If detail is a string, return it

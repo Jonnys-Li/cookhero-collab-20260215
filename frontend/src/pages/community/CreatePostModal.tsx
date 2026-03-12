@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Loader2, Sparkles, X } from 'lucide-react';
 import { createCommunityPost, polishCommunityPost } from '../../services/api/community';
 import { getWeeklySummary } from '../../services/api/diet';
+import { getCapabilities } from '../../services/api/meta';
 import type { WeeklySummary } from '../../types/diet';
 import type { CommunityMood, CreateCommunityPostRequest } from '../../types/community';
 
@@ -81,8 +82,11 @@ export function CreatePostModal({
   const [error, setError] = useState<string | null>(null);
 
   const lastDraftBeforeAIRef = useRef<string | null>(null);
+  const [capabilitiesLoading, setCapabilitiesLoading] = useState(false);
+  const [communityAiModes, setCommunityAiModes] = useState<string[]>([]);
 
   const canSubmit = useMemo(() => content.trim().length > 0 && !isSaving, [content, isSaving]);
+  const canUsePolish = useMemo(() => communityAiModes.includes('polish'), [communityAiModes]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -99,6 +103,27 @@ export function CreatePostModal({
     setIsLoadingWeekly(false);
     lastDraftBeforeAIRef.current = null;
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!token) return;
+
+    let cancelled = false;
+    setCapabilitiesLoading(true);
+    getCapabilities(token)
+      .then((res) => {
+        if (cancelled) return;
+        const modes = Array.isArray(res?.community_ai_modes) ? res.community_ai_modes : [];
+        setCommunityAiModes(modes.map(String));
+      })
+      .finally(() => {
+        if (!cancelled) setCapabilitiesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, token]);
 
   const toggleTag = (tag: string) => {
     setTags(prev => {
@@ -146,6 +171,10 @@ export function CreatePostModal({
   const handlePolish = async () => {
     if (!content.trim()) {
       setError('请先写一点打卡内容，再让 AI 帮你润色');
+      return;
+    }
+    if (capabilitiesLoading || !canUsePolish) {
+      setError('后端升级中，暂不支持 AI 润色，请稍后刷新重试。');
       return;
     }
     setError(null);
@@ -328,7 +357,7 @@ export function CreatePostModal({
                   <button
                     type="button"
                     onClick={handleUndoPolish}
-                    disabled={isPolishing || isSaving}
+                    disabled={isPolishing || isSaving || capabilitiesLoading}
                     className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                   >
                     撤销
@@ -337,10 +366,19 @@ export function CreatePostModal({
                 <button
                   type="button"
                   onClick={handlePolish}
-                  disabled={isPolishing || isSaving}
-                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 hover:bg-orange-100/60 dark:hover:bg-orange-900/30 transition-colors"
+                  disabled={isPolishing || isSaving || capabilitiesLoading || !canUsePolish}
+                  title={
+                    capabilitiesLoading
+                      ? '正在检测后端能力...'
+                      : (!canUsePolish ? '后端升级中，稍后刷新' : '点击润色（不会自动消耗）')
+                  }
+                  className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                    isPolishing || isSaving || capabilitiesLoading || !canUsePolish
+                      ? 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-400 opacity-60 cursor-not-allowed'
+                      : 'border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 hover:bg-orange-100/60 dark:hover:bg-orange-900/30'
+                  }`}
                 >
-                  {isPolishing ? (
+                  {isPolishing || capabilitiesLoading ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   ) : (
                     <Sparkles className="w-3.5 h-3.5" />

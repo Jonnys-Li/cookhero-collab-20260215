@@ -11,6 +11,15 @@ from __future__ import annotations
 DEFAULT_POST_TYPE = "check_in"
 REACTION_LIKE = "like"
 
+# Supported AI suggest modes for the community module.
+# This is used for capability probing by the frontend to avoid deployment skew.
+COMMUNITY_AI_MODES: tuple[str, ...] = (
+    "tags",
+    "reply",
+    "card",
+    "polish",
+)
+
 # Default anonymous display name prefix.
 ANON_DISPLAY_PREFIX = "匿名小厨"
 
@@ -53,4 +62,3 @@ SHAME_WORDS: tuple[str, ...] = (
     "闭嘴",
     "蠢",
 )
-
