@@ -14,10 +14,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  skip-non-main:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref != 'refs/heads/main' }}
+    steps:
+      - name: Skip non-main branch
+        run: |
+          echo "::notice::Cloud config sync is restricted to main. Current ref=${GITHUB_REF}. Skipping."
+
   sync-render-mcp-key:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: ${{ secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '') }}
+    if: ${{ github.ref == 'refs/heads/main' && secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +44,7 @@ jobs:
 
   missing-cloud-sync-secrets:
     runs-on: ubuntu-latest
-    if: ${{ !(secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '')) }}
+    if: ${{ github.ref == 'refs/heads/main' && !(secrets.RENDER_API_KEY != '' && secrets.MCP_DIET_SERVICE_KEY != '' && (secrets.RENDER_SERVICE_ID != '' || secrets.RENDER_SERVICE_NAME != '')) }}
     steps:
       - name: Report missing required secrets
         run: |
