@@ -45,6 +45,10 @@ class CardSuggestResult(BaseModel):
     card: str
 
 
+class PolishSuggestResult(BaseModel):
+    polished: str
+
+
 def _make_anon_display_name() -> str:
     # 0000-9999; simple and non-identifying.
     suffix = f"{secrets.randbelow(10000):04d}"
@@ -378,6 +382,58 @@ class CommunityService:
             raise ValueError("AI tags empty after normalization")
         # Ensure at most 5 tags; keep first ones.
         return normalized[:5]
+
+    async def polish_post_content(self, *, user_id: str, content: str) -> str:
+        """
+        Polish the user's post content for better clarity and a less self-blaming tone.
+
+        This is a drafting aid: user will still edit before posting.
+        """
+        content = str(content or "").strip()
+        if not content:
+            raise ValueError("content cannot be empty")
+
+        system_prompt = (
+            "你是一个写作润色助手，服务于“互助打卡广场”。"
+            "你的目标是帮用户把原话润色得更清晰、更温和、更容易获得共情与建议。"
+            "只输出严格 JSON，不要解释，不要 markdown。"
+        )
+        user_prompt = (
+            "请将下面这段“用户准备发布的打卡内容”进行润色改写。要求：\n"
+            "1) 保持第一人称；2) 不要改变事实与核心意思；3) 不要编造新的信息；\n"
+            "4) 语气温和、减少自责/羞辱；5) 不要加标签/话题/emoji；6) 尽量 60-180 字；\n"
+            "7) 最长不超过 800 字；8) 不要提及你是 AI。\n\n"
+            f"原文：{content}\n\n"
+            '输出 JSON 格式：{"polished": "润色后的文本"}'
+        )
+
+        invoker = self._get_invoker()
+        with llm_context("community_ai", user_id=user_id):
+            response = await invoker.ainvoke(
+                [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+            )
+
+        raw = str(getattr(response, "content", response))
+        payload = _extract_json(raw)
+        if not payload:
+            raise ValueError("AI response is not valid JSON")
+
+        try:
+            parsed = PolishSuggestResult.model_validate(payload)
+        except ValidationError as exc:
+            raise ValueError(f"AI polish payload invalid: {exc}") from exc
+
+        polished = str(parsed.polished or "").strip()
+        polished = re.sub(r"\s+", " ", polished)
+        if not polished:
+            raise ValueError("AI polished content is empty")
+        if len(polished) > 800:
+            polished = polished[:800]
+        return polished
 
     async def suggest_reply_for_post(
         self,

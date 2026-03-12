@@ -118,7 +118,7 @@ class DeleteResponse(BaseModel):
 
 
 class AISuggestRequest(BaseModel):
-    mode: Literal["tags", "reply", "card"]
+    mode: Literal["tags", "reply", "card", "polish"]
     content: Optional[str] = Field(None, max_length=800)
     post_id: Optional[str] = None
 
@@ -133,6 +133,9 @@ class AISuggestRequest(BaseModel):
         if self.mode == "card":
             if not (self.post_id and str(self.post_id).strip()):
                 raise ValueError("post_id is required for card mode")
+        if self.mode == "polish":
+            if not (self.content and str(self.content).strip()):
+                raise ValueError("content is required for polish mode")
         return self
 
 
@@ -301,6 +304,14 @@ async def ai_suggest(payload: AISuggestRequest, request: Request) -> dict[str, A
     user_id = _get_user_id(request)
 
     try:
+        if payload.mode == "polish":
+            secured = await check_message_security(payload.content or "", request)
+            polished = await community_service.polish_post_content(
+                user_id=user_id,
+                content=secured,
+            )
+            return {"polished": polished}
+
         if payload.mode == "tags":
             secured = await check_message_security(payload.content or "", request)
             tags = await community_service.suggest_tags(user_id=user_id, content=secured)

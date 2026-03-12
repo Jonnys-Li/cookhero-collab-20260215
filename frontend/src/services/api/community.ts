@@ -12,6 +12,7 @@ import type {
   CommunityAISuggestTagsResponse,
   CommunityAISuggestReplyResponse,
   CommunityAISuggestCardResponse,
+  CommunityAISuggestPolishResponse,
   CommunityAISuggestRequest,
 } from '../../types/community';
 
@@ -114,9 +115,13 @@ export async function communityAiSuggest(
   payload: CommunityAISuggestRequest
 ): Promise<
   CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse | CommunityAISuggestCardResponse
+  | CommunityAISuggestPolishResponse
 > {
   return apiPost<
-    CommunityAISuggestTagsResponse | CommunityAISuggestReplyResponse | CommunityAISuggestCardResponse,
+    CommunityAISuggestTagsResponse
+    | CommunityAISuggestReplyResponse
+    | CommunityAISuggestCardResponse
+    | CommunityAISuggestPolishResponse,
     CommunityAISuggestRequest
   >(`${COMMUNITY_BASE}/ai/suggest`, payload, token, {
     timeoutMs: 60000,
@@ -149,4 +154,13 @@ export async function suggestCommunityCard(
   const result = await communityAiSuggest(token, { mode: 'card', post_id: postId });
   const card = (result as CommunityAISuggestCardResponse).card;
   return typeof card === 'string' ? card : '';
+}
+
+export async function polishCommunityPost(
+  token: string,
+  content: string
+): Promise<string> {
+  const result = await communityAiSuggest(token, { mode: 'polish', content });
+  const polished = (result as CommunityAISuggestPolishResponse).polished;
+  return typeof polished === 'string' ? polished : '';
 }

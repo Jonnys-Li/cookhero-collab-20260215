@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ImagePlus, Loader2, Sparkles, X } from 'lucide-react';
-import { createCommunityPost, suggestCommunityTags } from '../../services/api/community';
+import { createCommunityPost, polishCommunityPost } from '../../services/api/community';
 import { getWeeklySummary } from '../../services/api/diet';
 import type { WeeklySummary } from '../../types/diet';
 import type { CommunityMood, CreateCommunityPostRequest } from '../../types/community';
@@ -76,9 +76,11 @@ export function CreatePostModal({
   const [images, setImages] = useState<LocalImage[]>([]);
 
   const [isSaving, setIsSaving] = useState(false);
-  const [isGeneratingTags, setIsGeneratingTags] = useState(false);
+  const [isPolishing, setIsPolishing] = useState(false);
   const [isLoadingWeekly, setIsLoadingWeekly] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const lastDraftBeforeAIRef = useRef<string | null>(null);
 
   const canSubmit = useMemo(() => content.trim().length > 0 && !isSaving, [content, isSaving]);
 
@@ -93,8 +95,9 @@ export function CreatePostModal({
     setWeeklySnapshot(null);
     setImages([]);
     setIsSaving(false);
-    setIsGeneratingTags(false);
+    setIsPolishing(false);
     setIsLoadingWeekly(false);
+    lastDraftBeforeAIRef.current = null;
   }, [isOpen]);
 
   const toggleTag = (tag: string) => {
@@ -140,27 +143,33 @@ export function CreatePostModal({
     setImages(prev => prev.filter((_, i) => i !== idx));
   };
 
-  const handleGenerateTags = async () => {
+  const handlePolish = async () => {
     if (!content.trim()) {
-      setError('请先写一点打卡内容，再让 AI 生成标签');
+      setError('请先写一点打卡内容，再让 AI 帮你润色');
       return;
     }
     setError(null);
-    setIsGeneratingTags(true);
+    setIsPolishing(true);
     try {
-      const suggested = await suggestCommunityTags(token, content.trim());
-      const filtered = suggested.filter(t => TAG_OPTIONS.includes(t)).slice(0, 5);
-      if (!filtered.length) {
-        setError('AI 暂时没有给出合适标签，你可以手动选择');
+      lastDraftBeforeAIRef.current = content;
+      const polished = await polishCommunityPost(token, content.trim());
+      if (!polished.trim()) {
+        setError('AI 暂时没有给出有效润色结果，你可以稍后再试');
         return;
       }
-      setTags(filtered);
+      setContent(polished.slice(0, 800));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'AI 生成标签失败，请稍后重试';
+      const msg = err instanceof Error ? err.message : 'AI 润色失败，请稍后重试';
       setError(msg);
     } finally {
-      setIsGeneratingTags(false);
+      setIsPolishing(false);
     }
+  };
+
+  const handleUndoPolish = () => {
+    if (!lastDraftBeforeAIRef.current) return;
+    setContent(lastDraftBeforeAIRef.current);
+    lastDraftBeforeAIRef.current = null;
   };
 
   const handleToggleWeekly = async (next: boolean) => {
@@ -314,14 +323,31 @@ export function CreatePostModal({
           <div>
             <div className="flex items-center justify-between mb-1">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-300">内容</span>
-              <button
-                onClick={handleGenerateTags}
-                disabled={isGeneratingTags || isSaving}
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 hover:bg-orange-100/60 dark:hover:bg-orange-900/30 transition-colors"
-              >
-                {isGeneratingTags ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                AI 生成标签
-              </button>
+              <div className="flex items-center gap-2">
+                {lastDraftBeforeAIRef.current && (
+                  <button
+                    type="button"
+                    onClick={handleUndoPolish}
+                    disabled={isPolishing || isSaving}
+                    className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                  >
+                    撤销
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handlePolish}
+                  disabled={isPolishing || isSaving}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 hover:bg-orange-100/60 dark:hover:bg-orange-900/30 transition-colors"
+                >
+                  {isPolishing ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  AI 润色
+                </button>
+              </div>
             </div>
             <textarea
               value={content}
@@ -426,4 +452,3 @@ export function CreatePostModal({
     </div>
   );
 }
-

@@ -365,3 +365,18 @@ def test_suggest_empathy_card_rejects_shame_words(monkeypatch):
 
     with pytest.raises(ValueError):
         run(service.suggest_empathy_card_for_post(user_id="u1", post_id="post-1"))
+
+
+def test_polish_post_content_returns_text(monkeypatch):
+    repo = FakeRepo()
+    service = CommunityService(repository=repo)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        service,
+        "_get_invoker",
+        lambda: FakeInvoker('{"polished": "今天状态一般，但我还是记录了饮食。希望大家给我一些更容易坚持的小建议，我也会慢慢调整节奏。"}'),
+    )
+
+    polished = run(service.polish_post_content(user_id="u1", content="我好难受"))
+    assert isinstance(polished, str)
+    assert len(polished) > 10
