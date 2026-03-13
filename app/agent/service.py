@@ -64,7 +64,8 @@ DIET_LOG_QUERY_PATTERNS = [
 ]
 
 DIET_NUTRITION_QUERY_PATTERNS = [
-    re.compile(r"(卡路里|热量|kcal|千卡)", re.IGNORECASE),
+    # Calories / energy questions (kcal/kJ/J).
+    re.compile(r"(卡路里|热量|能量|大卡|kcal|千卡|千焦|kj|焦耳)", re.IGNORECASE),
     re.compile(r"(宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
 ]
 
@@ -508,7 +509,7 @@ class AgentService:
                         parsed = await diet_service.parse_diet_input(
                             user_id=str(user_id),
                             text=context.current_message,
-                            images=None,
+                            images=context.images,
                         )
                         if isinstance(parsed, dict):
                             raw_type = parsed.get("meal_type")
@@ -562,44 +563,79 @@ class AgentService:
                         )
                         yield self._format_event("collab_timeline", final_timeline)
 
-                    confirm_action = self._build_meal_log_confirm_action(
-                        session_id=actual_session_id,
-                        suggested_log_date=date.today().isoformat(),
-                        suggested_meal_type=self._infer_meal_type_for_log(
-                            suggested_meal_type
-                        ),
-                        items=items_to_confirm,
-                    )
-                    trace_steps.append(
-                        {
-                            "error": None,
-                            "action": "ui_action",
-                            "content": confirm_action,
-                            "iteration": 0,
-                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            "source": "agent",
-                        }
-                    )
-                    yield self._format_event(
-                        "ui_action",
-                        {
-                            **confirm_action,
-                            "iteration": 0,
-                            "source": "agent",
-                            "session_id": actual_session_id,
-                        },
+                    inferred_meal_type = self._infer_meal_type_for_log(
+                        suggested_meal_type
                     )
 
                     if items_to_confirm:
-                        intro = (
-                            "我已经把这次的热量与宏量营养估算整理成卡片了。"
-                            "要把它记录到饮食管理吗？确认日期与餐次后点击“记录本餐”即可写入。"
+                        confirm_action = self._build_meal_log_confirm_action(
+                            session_id=actual_session_id,
+                            suggested_log_date=date.today().isoformat(),
+                            suggested_meal_type=inferred_meal_type,
+                            items=items_to_confirm,
                         )
+                        trace_steps.append(
+                            {
+                                "error": None,
+                                "action": "ui_action",
+                                "content": confirm_action,
+                                "iteration": 0,
+                                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                                "source": "agent",
+                            }
+                        )
+                        yield self._format_event(
+                            "ui_action",
+                            {
+                                **confirm_action,
+                                "iteration": 0,
+                                "source": "agent",
+                                "session_id": actual_session_id,
+                            },
+                        )
+
+                        include_kj = bool(
+                            re.search(r"(千焦|kj|焦耳)", context.current_message, re.IGNORECASE)
+                        )
+                        totals = self._calculate_nutrition_totals(items_to_confirm)
+                        totals_text = self._format_nutrition_totals_text(
+                            totals,
+                            include_kj=include_kj,
+                        )
+
+                        answer_prefix = (
+                            "按你提供的分量估算："
+                            if nutrition_query_triggered
+                            else "本餐估算："
+                        )
+                        answer_line = f"{answer_prefix}{totals_text}"
+
+                        meal_label = {
+                            "breakfast": "早餐",
+                            "lunch": "午餐",
+                            "dinner": "晚餐",
+                            "snack": "加餐",
+                        }.get(inferred_meal_type, "这餐")
+
+                        follow_up = (
+                            f"这是你今天的{meal_label}吗？"
+                            "要不要我帮你记入饮食管理？"
+                            "确认后点下方卡片“记录本餐”才会写入（你也可以在卡片里改日期/餐次）。"
+                        )
+
+                        intro = f"{answer_line}\n\n{follow_up}"
                     else:
-                        intro = (
-                            "我可以帮你把它记录到饮食管理，但我还没识别到可写入的食物明细。"
-                            "你补充一句「吃了什么 + 大概分量」，我会再生成确认卡片让你一键写入。"
-                        )
+                        if nutrition_query_triggered:
+                            intro = (
+                                "我可以帮你估算热量/宏量并生成可记录卡片，但我还缺少可解析的食物明细。\n\n"
+                                "你补充一句「吃了什么 + 分量」（例如：鸡胸肉 100g / 米饭 1 碗 / 鸡蛋 2 个），"
+                                "我就会给你热量估算并让你一键记入饮食管理。"
+                            )
+                        else:
+                            intro = (
+                                "我可以帮你把它记录到饮食管理，但我还没识别到可写入的食物明细。\n\n"
+                                "你补充一句「吃了什么 + 大概分量」，我会再生成确认卡片让你一键写入。"
+                            )
                     response_content = intro
                     yield self._format_event("text", {"content": intro})
 
@@ -1373,6 +1409,23 @@ class AgentService:
             return False
         return any(pattern.search(message) for pattern in DIET_LOG_QUERY_PATTERNS)
 
+    def _has_concrete_food_quantity(self, message: str) -> bool:
+        """Detect "digits + unit" quantities that are likely tied to food amount.
+
+        We intentionally keep this conservative to avoid spamming confirm cards on
+        generic knowledge questions (e.g. "鸡胸肉热量多少") or goal/budget numbers.
+        """
+        if not message:
+            return False
+        text = str(message)
+        return bool(
+            re.search(
+                r"\d+(?:\.\d+)?\s*(?:g|克|公克|kg|千克|公斤|mg|毫克|ml|mL|毫升|l|L|升|斤|两|份|个|颗|只|块|片|包|碗|杯|勺|条|根)",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
     def _is_diet_nutrition_query(self, message: str) -> bool:
         """Heuristic to detect simple "food nutrition" questions.
 
@@ -1385,9 +1438,10 @@ class AgentService:
         # Exclude budget/goal management questions to avoid spamming confirm cards.
         if re.search(r"(预算|目标|上限|剩余|调整|cap)", text, re.IGNORECASE):
             return False
-        # Require at least one number so we don't trigger on generic "鸡肉热量多少"
-        # (we can answer first and ask for quantity).
-        if not re.search(r"\d", text):
+        # Require a concrete quantity (digits + unit) so we don't trigger on generic
+        # "鸡肉热量多少" (we can answer first and ask for quantity), and avoid
+        # triggering on plan/budget numbers.
+        if not self._has_concrete_food_quantity(text):
             return False
         return any(pattern.search(text) for pattern in DIET_NUTRITION_QUERY_PATTERNS)
 
@@ -1441,6 +1495,81 @@ class AgentService:
                     }
                 )
         return items
+
+    def _calculate_nutrition_totals(
+        self, items: list[dict[str, Any]]
+    ) -> dict[str, float | None]:
+        """Sum calories/macros from structured items.
+
+        Guardrail: do NOT treat missing values as 0 for display; we return None
+        when no reliable values are present for a given field.
+        """
+        if not items:
+            return {"calories": None, "protein": None, "fat": None, "carbs": None}
+
+        def _sum_field(field: str) -> float | None:
+            total = 0.0
+            seen_any = False
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                raw = item.get(field)
+                if raw is None:
+                    continue
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value <= 0:
+                    continue
+                total += value
+                seen_any = True
+            return total if seen_any else None
+
+        calories = _sum_field("calories")
+        # Calories are typically displayed as integers.
+        calories = float(round(calories)) if calories is not None else None
+
+        return {
+            "calories": calories,
+            "protein": _sum_field("protein"),
+            "fat": _sum_field("fat"),
+            "carbs": _sum_field("carbs"),
+        }
+
+    def _format_nutrition_totals_text(
+        self,
+        totals: dict[str, float | None],
+        *,
+        include_kj: bool = False,
+    ) -> str:
+        """Format totals as a compact line.
+
+        Example: "约 120 kcal（约 502 kJ） · P 20.0 · F 3.0 · C 1.0"
+        """
+        calories = totals.get("calories")
+        protein = totals.get("protein")
+        fat = totals.get("fat")
+        carbs = totals.get("carbs")
+
+        has_any = any(v is not None for v in (calories, protein, fat, carbs))
+        if not has_any:
+            return "热量与宏量营养暂无法可靠估算"
+
+        calories_text = "--" if calories is None else f"{calories:.0f}"
+        protein_text = "--" if protein is None else f"{protein:.1f}"
+        fat_text = "--" if fat is None else f"{fat:.1f}"
+        carbs_text = "--" if carbs is None else f"{carbs:.1f}"
+
+        kj_part = ""
+        if include_kj and calories is not None:
+            kj_value = calories * 4.184
+            kj_part = f"（约 {kj_value:.0f} kJ）"
+
+        return (
+            f"约 {calories_text} kcal{kj_part} · "
+            f"P {protein_text} · F {fat_text} · C {carbs_text}"
+        )
 
     def _infer_meal_type_for_log(self, meal_type: Optional[str]) -> str:
         normalized = str(meal_type or "").strip().lower()

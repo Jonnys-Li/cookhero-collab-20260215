@@ -301,7 +301,7 @@ export function EmotionBudgetAdjustCard({
 
       {dismissed && !result && (
         <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-          已跳过自动调整，你仍可在饮食管理页手动调整今日预算。
+          已暂不调整。你仍可在饮食管理页手动调整今日预算。
         </div>
       )}
 

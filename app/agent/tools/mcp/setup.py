@@ -82,12 +82,21 @@ async def _register_diet_auto_adjust_mcp() -> None:
     try:
         loaded = await mcp_provider.load_server_tools("diet_auto_adjust")
         if loaded:
-            logger.info("Loaded %s tools from built-in diet_auto_adjust MCP", len(loaded))
+            logger.info(
+                "Loaded %s tools from built-in diet_auto_adjust MCP", len(loaded)
+            )
         else:
             logger.warning(
                 "Built-in diet_auto_adjust MCP registered but returned zero tools"
             )
     except Exception as exc:
-        # Keep the server registered even if initial load fails so the frontend can
-        # show "configured/connecting" state and the backend can retry later.
         logger.warning("Failed to load built-in diet_auto_adjust MCP: %s", exc)
+        # Unregister on load failure to avoid leaving a broken server config in memory.
+        # (This also keeps unit tests deterministic.)
+        try:
+            mcp_provider.unregister_server("diet_auto_adjust")
+        except Exception as unregister_exc:
+            logger.warning(
+                "Failed to unregister built-in diet_auto_adjust MCP after load failure: %s",
+                unregister_exc,
+            )

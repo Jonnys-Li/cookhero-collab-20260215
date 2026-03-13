@@ -6,6 +6,20 @@ Tests the MCP client and registry functionality.
 Run from project root: python -m tests.test_mcp
 """
 
+# NOTE:
+# This file is a manual smoke-test script (it may require network access and
+# external API keys). When running the unit test suite via pytest, we skip the
+# entire module to keep CI deterministic.
+import sys
+
+if "pytest" in sys.modules:
+    import pytest
+
+    pytest.skip(
+        "MCP smoke tests are intended to be run manually (python -m tests.test_mcp)",
+        allow_module_level=True,
+    )
+
 import asyncio
 import logging
 import sys

@@ -230,7 +230,17 @@ export async function getDietBudget(
   const query = targetDate ? `?target_date=${targetDate}` : '';
   // Prefer the fallback base (Render direct) because some Vercel rewrite setups
   // may not proxy newly-added endpoints and return 404.
-  return apiGet(`${DIET_BASE}/budget${query}`, token, { preferFallback: true });
+  try {
+    return await apiGet(`${DIET_BASE}/budget${query}`, token, { preferFallback: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Deployment skew guard: if the fallback base is stale (missing the new endpoint),
+    // retry via the primary base once before surfacing the error.
+    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
+      return apiGet(`${DIET_BASE}/budget${query}`, token, { preferFallback: false });
+    }
+    throw err;
+  }
 }
 
 // ==================== Preference APIs ====================

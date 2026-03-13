@@ -201,7 +201,16 @@ export async function parseErrorResponse(response: Response): Promise<string> {
 
       // If detail is a string, return it
       if (typeof body.detail === 'string') {
-        return body.detail;
+        const detail = body.detail.trim();
+        // FastAPI default 404 is usually JSON: {"detail":"Not Found"}.
+        // Convert it into a product-facing hint instead of showing raw "Not Found".
+        if (detail === 'Not Found') {
+          return (
+            '接口不存在（404 Not Found）。这通常是后端尚未部署到最新版本或前后端版本未同步导致，'
+            + '请刷新页面或稍后重试。'
+          );
+        }
+        return detail;
       }
 
       // Fallback to message or stringified body
