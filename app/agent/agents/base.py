@@ -5,6 +5,8 @@ BaseAgent 和 AgentLoop
 Agent 的核心执行逻辑，实现 ReAct 模式的自主执行循环。
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging

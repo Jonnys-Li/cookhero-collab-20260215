@@ -38,6 +38,7 @@ import {
   updateLog,
   deleteLog,
   getWeeklySummary,
+  getDietBudget,
 } from '../../services/api/diet';
 import type {
   Dish,
@@ -46,6 +47,7 @@ import type {
   DietLog,
   WeeklySummary,
   DailySummary,
+  DietBudgetSnapshot,
 } from '../../types';
 
 // Meal type icons
@@ -250,12 +252,13 @@ interface LogCardProps {
   logs?: DietLog[];
   mealType: string;
   date: Date;
+  highlighted?: boolean;
   onAddLog: () => void;
   onEditLog: (log: DietLog) => void;
   onDeleteLog: (logId: string) => void;
 }
 
-function LogCard({ logs, mealType, date, onAddLog, onEditLog, onDeleteLog }: LogCardProps) {
+function LogCard({ logs, mealType, date, highlighted = false, onAddLog, onEditLog, onDeleteLog }: LogCardProps) {
   const mealLogs = logs?.filter(log => log.meal_type === mealType) || [];
   const hasLog = mealLogs.length > 0;
   const isToday = formatDate(date) === formatDate(new Date());
@@ -283,7 +286,9 @@ function LogCard({ logs, mealType, date, onAddLog, onEditLog, onDeleteLog }: Log
         hasLog
           ? 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700'
           : 'bg-gray-50 dark:bg-gray-900/50 border-dashed border-gray-300 dark:border-gray-700'
-      } ${isToday ? 'ring-2 ring-amber-400/60 dark:ring-amber-500/60' : ''}`}
+      } ${isToday ? 'ring-2 ring-amber-400/60 dark:ring-amber-500/60' : ''} ${
+        highlighted ? 'ring-2 ring-emerald-400 dark:ring-emerald-500 animate-pulse' : ''
+      }`}
     >
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
@@ -1091,8 +1096,13 @@ export default function DietManagementPage() {
   const [logs, setLogs] = useState<Map<string, DietLog[]>>(new Map());
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
   const [dailySummaries, setDailySummaries] = useState<Record<string, DailySummary>>({});
+  const [budgetSnapshot, setBudgetSnapshot] = useState<DietBudgetSnapshot | null>(null);
+  const [budgetLoading, setBudgetLoading] = useState(false);
+  const [budgetError, setBudgetError] = useState<string | null>(null);
+  const [budgetHighlighted, setBudgetHighlighted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
 
   // Modal states
   const [mealModalOpen, setMealModalOpen] = useState(false);
@@ -1121,6 +1131,45 @@ export default function DietManagementPage() {
       anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   }, [location.hash, isLoading]);
+
+  // Deep-link support: /agent/diet#diet-budget
+  // Used by emotion-support budget adjust card to show immediate change visibility.
+  useEffect(() => {
+    if (location.hash !== '#diet-budget') return;
+    // Default to today's day when deep-linking budget view.
+    const today = new Date();
+    setCurrentWeekStart(getWeekStartDate(today));
+    setActiveDayIndex(getDayIndex(today));
+    const anchor = document.getElementById('diet-budget');
+    if (!anchor) return;
+    window.requestAnimationFrame(() => {
+      anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    setBudgetHighlighted(true);
+    const timer = window.setTimeout(() => setBudgetHighlighted(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
+
+  // Focus/highlight support from Agent "record meal" flow:
+  // /agent/diet?focus_date=YYYY-MM-DD&focus_meal=lunch#diet-week-progress
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const focusDateStr = params.get('focus_date');
+    if (!focusDateStr) return;
+    const focusMeal = params.get('focus_meal') || '';
+
+    const focusDate = new Date(`${focusDateStr}T00:00:00`);
+    if (Number.isNaN(focusDate.getTime())) return;
+
+    setCurrentWeekStart(getWeekStartDate(focusDate));
+    setActiveDayIndex(getDayIndex(focusDate));
+    setViewMode('log');
+    if (focusMeal) {
+      setHighlightKey(`${focusDateStr}-${focusMeal}`);
+      const timer = window.setTimeout(() => setHighlightKey(null), 4500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [location.search]);
 
   // Fetch plan and logs for the current week
   const fetchData = useCallback(async () => {
@@ -1168,6 +1217,22 @@ export default function DietManagementPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Fetch budget snapshot for the active day (default: today via deep-link, otherwise the selected day)
+  useEffect(() => {
+    if (!token) return;
+    const dateStr = formatDate(addDays(currentWeekStart, activeDayIndex));
+    setBudgetLoading(true);
+    setBudgetError(null);
+    getDietBudget(token, dateStr)
+      .then((snapshot) => setBudgetSnapshot(snapshot))
+      .catch((err) => {
+        console.error('Failed to load diet budget:', err);
+        setBudgetSnapshot(null);
+        setBudgetError(err instanceof Error ? err.message : '加载预算失败');
+      })
+      .finally(() => setBudgetLoading(false));
+  }, [token, currentWeekStart, activeDayIndex]);
 
   useEffect(() => {
     const weeklyData = weeklySummary?.daily_data;
@@ -1453,6 +1518,79 @@ export default function DietManagementPage() {
             </div>
           </div>
 
+          {/* Daily Budget Panel (visible feedback for emotion-support adjustments) */}
+          <div
+            id="diet-budget"
+            className={`mt-5 rounded-2xl border bg-gradient-to-br from-emerald-50/70 via-white to-amber-50/40 dark:from-emerald-900/15 dark:via-slate-900 dark:to-slate-900 p-4 transition-all ${
+              budgetHighlighted
+                ? 'border-emerald-200 dark:border-emerald-800 ring-2 ring-emerald-400 dark:ring-emerald-500 animate-pulse'
+                : 'border-gray-100 dark:border-gray-800'
+            }`}
+          >
+            {(() => {
+              const date = getActiveDayDate();
+              const goalSourceText = (() => {
+                const source = budgetSnapshot?.goal_source;
+                if (source === 'explicit') return '用户目标';
+                if (source === 'avg7d') return '近7天均值';
+                if (source === 'default1800') return '系统默认 1800';
+                return source ? String(source) : '未标注';
+              })();
+              const todayAdjustment =
+                budgetSnapshot?.today_adjustment === null || budgetSnapshot?.today_adjustment === undefined
+                  ? null
+                  : Number(budgetSnapshot.today_adjustment);
+              const todayAdjText =
+                todayAdjustment === null ? '--' : `${todayAdjustment >= 0 ? '+' : ''}${todayAdjustment}`;
+
+              return (
+                <>
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs text-emerald-700 dark:text-emerald-200">
+                        当日预算 · {formatDateShort(date)}
+                      </div>
+                      <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
+                        {budgetSnapshot?.effective_goal ?? '--'}{' '}
+                        <span className="text-sm font-normal text-gray-500 ml-1">kcal</span>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-600 dark:text-gray-300">
+                        基线 {budgetSnapshot?.base_goal ?? '--'} kcal · 今日调整 {todayAdjText} kcal
+                        <span className="ml-1 text-[11px] text-gray-500 dark:text-gray-400">
+                          （来源：{goalSourceText}
+                          {budgetSnapshot?.goal_seeded ? '，系统兜底' : ''}）
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-100 dark:border-emerald-900/50 bg-white/70 dark:bg-gray-900/50 px-3 py-2">
+                      <div className="text-[11px] text-gray-500">剩余可调</div>
+                      <div className="mt-0.5 text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+                        {budgetSnapshot?.remaining_adjustment_cap ?? '--'} kcal
+                      </div>
+                      <div className="text-[11px] text-gray-500">
+                        单日上限 {budgetSnapshot?.adjustment_cap ?? '--'} kcal
+                      </div>
+                    </div>
+                  </div>
+
+                  {budgetLoading && (
+                    <div className="mt-3 inline-flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      正在加载预算...
+                    </div>
+                  )}
+                  {budgetError && !budgetLoading && (
+                    <div className="mt-3 inline-flex items-start gap-2 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-900/20 px-2.5 py-2 text-xs text-red-600 dark:text-red-300">
+                      <span className="font-medium">预算加载失败</span>
+                      <span className="text-red-600/90 dark:text-red-300/90">{budgetError}</span>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
             {(() => {
               const date = getActiveDayDate();
@@ -1595,6 +1733,7 @@ export default function DietManagementPage() {
                           logs={logs.get(dateStr)}
                           mealType={mealType}
                           date={date}
+                          highlighted={highlightKey === `${dateStr}-${mealType}`}
                           onAddLog={() => openQuickLogForDate(date, mealType)}
                           onEditLog={handleEditLog}
                           onDeleteLog={handleDeleteLog}

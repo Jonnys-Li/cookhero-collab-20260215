@@ -241,6 +241,7 @@ class ApplySmartActionRequest(BaseModel):
             "^("
             "apply_budget_adjust|"
             "apply_next_meal_plan|"
+            "create_diet_log|"
             "fetch_weekly_progress|"
             "submit_plan_profile|"
             "apply_week_plan"
@@ -322,6 +323,8 @@ async def _find_smart_ui_action(
         "smart_recommendation_card",
         "meal_plan_planmode_card",
         "meal_plan_preview_card",
+        # Confirm-card for deterministic diet log writes (create_diet_log smart-action).
+        "meal_log_confirm_card",
     }
     messages = await agent_service.repository.get_messages(session_id, limit=200)
     for msg in reversed(messages):
@@ -1657,6 +1660,9 @@ async def apply_smart_action(
     if payload.action_kind in {"submit_plan_profile", "apply_week_plan"}:
         if action_type not in {"meal_plan_planmode_card", "meal_plan_preview_card"}:
             raise HTTPException(status_code=400, detail="该 action_id 不支持 PlanMode 提交")
+    if payload.action_kind == "create_diet_log":
+        if action_type not in {"meal_log_confirm_card"}:
+            raise HTTPException(status_code=400, detail="该 action_id 不支持饮食记录写入")
 
     existing = await _find_existing_smart_action_result(
         payload.session_id,
@@ -1692,6 +1698,15 @@ async def apply_smart_action(
         action_data = payload.payload or {}
         if not isinstance(action_data, dict):
             raise HTTPException(status_code=400, detail="payload 必须是对象")
+
+        def _safe_positive_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
 
         if payload.action_kind == "submit_plan_profile":
             profile = _build_plan_profile(action_data)
@@ -1825,7 +1840,9 @@ async def apply_smart_action(
             nutrition_source = _normalize_text(
                 action_data.get("nutrition_source"), max_length=20
             )
-            nutrition_confidence = _safe_float(action_data.get("nutrition_confidence"))
+            nutrition_confidence = _safe_positive_float(
+                action_data.get("nutrition_confidence")
+            )
 
             # AUTO macros as deterministic fallback when missing.
             try:
@@ -1909,6 +1926,85 @@ async def apply_smart_action(
                     "meal": meal,
                 },
             }
+        elif payload.action_kind == "create_diet_log":
+            log_date = _parse_iso_date(action_data.get("log_date"))
+            if not log_date:
+                raise HTTPException(status_code=400, detail="log_date 需要 YYYY-MM-DD")
+
+            meal_type = str(action_data.get("meal_type") or "").strip().lower()
+            if meal_type not in MEAL_TYPE_VALUES:
+                raise HTTPException(
+                    status_code=400,
+                    detail="meal_type 仅支持 breakfast/lunch/dinner/snack",
+                )
+
+            raw_items = action_data.get("items")
+            if not isinstance(raw_items, list) or not raw_items:
+                raise HTTPException(
+                    status_code=400,
+                    detail="items 必须为数组且至少包含 1 个食物",
+                )
+
+            normalized_items: list[dict[str, Any]] = []
+
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                food_name = _normalize_text(item.get("food_name"), max_length=80)
+                if not food_name:
+                    continue
+
+                weight_g = _safe_positive_float(item.get("weight_g"))
+                unit = _normalize_text(item.get("unit"), max_length=20) or None
+
+                calories_value: int | None = None
+                calories = item.get("calories")
+                if calories is not None:
+                    try:
+                        calories_value = int(calories)
+                    except (TypeError, ValueError):
+                        calories_value = None
+
+                normalized_items.append(
+                    {
+                        "food_name": food_name,
+                        "weight_g": weight_g,
+                        "unit": unit,
+                        "calories": calories_value if calories_value and calories_value > 0 else None,
+                        "protein": _safe_positive_float(item.get("protein")),
+                        "fat": _safe_positive_float(item.get("fat")),
+                        "carbs": _safe_positive_float(item.get("carbs")),
+                    }
+                )
+
+            if not normalized_items:
+                raise HTTPException(
+                    status_code=400,
+                    detail="items 中未找到有效食物名称，请补充后重试",
+                )
+
+            notes = _normalize_text(action_data.get("notes"), max_length=120) or None
+            log = await diet_service.log_meal(
+                user_id=str(user_id),
+                log_date=log_date,
+                meal_type=meal_type,
+                items=normalized_items,
+                notes=notes,
+            )
+
+            response_data = {
+                "action_id": payload.action_id,
+                "action_kind": payload.action_kind,
+                "mode": payload.mode,
+                "applied": True,
+                "used_provider": "local",
+                "message": "已记录本餐，可在饮食管理中查看",
+                "result": {
+                    "log_date": log_date.isoformat(),
+                    "meal_type": meal_type,
+                    "log": log,
+                },
+            }
         elif payload.action_kind == "fetch_weekly_progress":
             week_start = _parse_iso_date(action_data.get("week_start_date"))
             if not week_start:
@@ -1951,6 +2047,8 @@ async def apply_smart_action(
     trace_subagent_name = (
         "diet_planner"
         if payload.action_kind in {"submit_plan_profile", "apply_week_plan"}
+        else "diet_logger"
+        if payload.action_kind == "create_diet_log"
         else "emotion_support"
     )
     trace_step = {

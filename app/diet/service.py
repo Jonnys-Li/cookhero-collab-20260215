@@ -534,6 +534,51 @@ class DietService:
             "used_vision": used_vision,
         }
 
+    async def parse_diet_input(
+        self,
+        user_id: str,
+        text: str = "",
+        images: Optional[list] = None,
+    ) -> dict:
+        """Parse diet input into structured items without side effects.
+
+        This method is intentionally "parse-only" and does not write any diet logs.
+        It is used by Agent UI flows to show a confirmation card before persisting.
+
+        Returns:
+            {"meal_type": Optional[str], "items": List[dict], "used_vision": bool}
+        """
+        try:
+            parsed = await self._parse_diet_input_with_ai(
+                user_id=user_id,
+                text=text,
+                images=images,
+            )
+        except Exception as exc:
+            logger.warning("Failed to parse diet input (parse-only): %s", exc)
+            return {
+                "meal_type": None,
+                "items": [],
+                "used_vision": False,
+            }
+
+        if not isinstance(parsed, dict):
+            return {
+                "meal_type": None,
+                "items": [],
+                "used_vision": False,
+            }
+
+        items = parsed.get("items")
+        if not isinstance(items, list):
+            items = []
+
+        return {
+            "meal_type": parsed.get("meal_type"),
+            "items": items,
+            "used_vision": bool(parsed.get("used_vision")),
+        }
+
     async def recognize_meal_from_images(
         self,
         user_id: str,

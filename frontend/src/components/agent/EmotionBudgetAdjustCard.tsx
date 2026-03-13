@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, Timer, TriangleAlert } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import type {
   ApplyEmotionBudgetAdjustResponse,
@@ -65,6 +66,8 @@ export function EmotionBudgetAdjustCard({
   showSkipButton = true,
 }: EmotionBudgetAdjustCardProps) {
   const { token } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const resolvedSessionId = sessionId || action.session_id;
   const [selectedDelta, setSelectedDelta] = useState<50 | 100 | 150>(
     action.default_delta_calories
@@ -171,6 +174,7 @@ export function EmotionBudgetAdjustCard({
 
   const budgetSnapshot = action.budget_snapshot;
   const showActionArea = !result && !dismissed;
+  const dietBudgetHref = (location.pathname.startsWith('/agent') ? '/agent/diet' : '/diet') + '#diet-budget';
   const goalSourceText = (() => {
     const source = budgetSnapshot?.goal_source;
     if (source === 'explicit') return '用户目标';
@@ -283,6 +287,15 @@ export function EmotionBudgetAdjustCard({
               {result.goal_seeded ? '（系统自动兜底）' : ''}
             </div>
           )}
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => navigate(dietBudgetHref)}
+              className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 dark:border-emerald-700 dark:text-emerald-300 dark:hover:bg-emerald-900/30"
+            >
+              打开饮食管理查看预算变化
+            </button>
+          </div>
         </div>
       )}
 

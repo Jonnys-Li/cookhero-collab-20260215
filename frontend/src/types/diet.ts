@@ -201,3 +201,14 @@ export interface UpdatePreferenceRequest {
   fat_goal?: number;
   carbs_goal?: number;
 }
+
+export interface DietBudgetSnapshot {
+  date: string;
+  base_goal?: number | null;
+  today_adjustment?: number | null;
+  effective_goal?: number | null;
+  remaining_adjustment_cap?: number | null;
+  adjustment_cap?: number | null;
+  goal_source?: 'explicit' | 'avg7d' | 'default1800' | string | null;
+  goal_seeded?: boolean | null;
+}

@@ -513,6 +513,20 @@ async def add_item_to_log(
 
 # ==================== Analysis Endpoints ====================
 
+@router.get("/diet/budget")
+async def get_budget(
+    request: Request,
+    target_date: Optional[date] = Query(None, description="目标日期（默认今天）"),
+) -> Dict[str, Any]:
+    """
+    Get daily calorie budget snapshot (base goal + today's adjustment).
+
+    This is used to provide immediate, visible feedback after emotion-support
+    budget adjustments.
+    """
+    user_id = get_user_id(request)
+    return await diet_service.get_today_budget(user_id, target_date)
+
 
 @router.get("/diet/analysis/daily")
 async def get_daily_summary(

@@ -10,7 +10,7 @@ import logging
 import re
 import time
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from dataclasses import asdict
 from typing import Any, AsyncGenerator, Optional
 
@@ -49,6 +49,17 @@ MEAL_PLAN_QUERY_PATTERNS = [
         re.IGNORECASE,
     ),
 ]
+
+DIET_LOG_QUERY_PATTERNS = [
+    re.compile(
+        r"(帮我|帮忙|麻烦)?(记录|记一下|记下|记住|写入|同步).*(饮食管理|饮食|这餐|本餐|早餐|午餐|晚餐|加餐)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(log|track)\b.*\b(meal|food|lunch|dinner|breakfast)\b", re.IGNORECASE),
+    re.compile(r"(记录|记一下|写入).*(卡路里|热量|宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
+]
+
+MEAL_TYPE_VALUES = {"breakfast", "lunch", "dinner", "snack"}
 
 
 def _truncate_value(
@@ -451,6 +462,224 @@ class AgentService:
                 )
 
             else:
+                # Diet log confirm card-first:
+                # When user intent looks like "record this meal" (or they provided
+                # food images that the vision step parsed into items), emit a UI
+                # confirmation card and avoid claiming data was recorded without a
+                # deterministic write path.
+                diet_log_query_triggered = self._is_diet_log_query(
+                    context.current_message
+                )
+                vision_items = self._extract_log_items_from_vision_analysis(
+                    context.vision_analysis
+                )
+                should_offer_log_confirm = bool(vision_items) or diet_log_query_triggered
+
+                items_to_confirm: list[dict[str, Any]] = []
+                suggested_meal_type: Optional[str] = None
+
+                if vision_items:
+                    items_to_confirm = vision_items
+                    if isinstance(context.vision_analysis, dict):
+                        raw_type = context.vision_analysis.get("meal_type")
+                        suggested_meal_type = (
+                            str(raw_type).strip().lower() if raw_type else None
+                        )
+                elif diet_log_query_triggered:
+                    try:
+                        from app.diet.service import diet_service
+
+                        parsed = await diet_service.parse_diet_input(
+                            user_id=str(user_id),
+                            text=context.current_message,
+                            images=None,
+                        )
+                        if isinstance(parsed, dict):
+                            raw_type = parsed.get("meal_type")
+                            suggested_meal_type = (
+                                str(raw_type).strip().lower() if raw_type else None
+                            )
+                            parsed_items = parsed.get("items")
+                            if isinstance(parsed_items, list):
+                                for item in parsed_items:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    food_name = str(item.get("food_name") or "").strip()
+                                    if not food_name:
+                                        continue
+                                    items_to_confirm.append(
+                                        {
+                                            "food_name": food_name,
+                                            "weight_g": item.get("weight_g"),
+                                            "unit": item.get("unit"),
+                                            "calories": item.get("calories"),
+                                            "protein": item.get("protein"),
+                                            "fat": item.get("fat"),
+                                            "carbs": item.get("carbs"),
+                                        }
+                                    )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to parse diet input for confirm card: %s", exc
+                        )
+
+                if should_offer_log_confirm and items_to_confirm:
+                    now = time.time()
+                    if thinking_end_time is None:
+                        thinking_end_time = now
+
+                    if collab_runtime:
+                        self._finalize_collab_stages(collab_runtime)
+                        final_timeline = self._build_collab_timeline_payload(
+                            collab_runtime
+                        )
+                        trace_steps.append(
+                            self._build_collab_trace_step(
+                                content=final_timeline,
+                                action="collab_timeline",
+                            )
+                        )
+                        yield self._format_event("collab_timeline", final_timeline)
+
+                    confirm_action = self._build_meal_log_confirm_action(
+                        session_id=actual_session_id,
+                        suggested_log_date=date.today().isoformat(),
+                        suggested_meal_type=self._infer_meal_type_for_log(
+                            suggested_meal_type
+                        ),
+                        items=items_to_confirm,
+                    )
+                    trace_steps.append(
+                        {
+                            "error": None,
+                            "action": "ui_action",
+                            "content": confirm_action,
+                            "iteration": 0,
+                            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            "source": "agent",
+                        }
+                    )
+                    yield self._format_event(
+                        "ui_action",
+                        {
+                            **confirm_action,
+                            "iteration": 0,
+                            "source": "agent",
+                            "session_id": actual_session_id,
+                        },
+                    )
+
+                    intro = (
+                        "我已经把本餐的热量与宏量营养估算整理成卡片了。"
+                        "要把这餐记录到饮食管理吗？确认日期与餐次后点击“记录本餐”即可写入。"
+                    )
+                    response_content = intro
+                    yield self._format_event("text", {"content": intro})
+
+                    answer_end_time = time.time()
+                    yield self._format_event(
+                        "done",
+                        {
+                            "session_id": actual_session_id,
+                            "thinking_duration_ms": int(
+                                (thinking_end_time - thinking_start_time) * 1000
+                            ),
+                            "answer_duration_ms": int(
+                                (answer_end_time - thinking_end_time) * 1000
+                            ),
+                        },
+                    )
+
+                    # Persist messages for this short-circuit path and exit early.
+                    user_trace = None
+                    if context.images:
+                        image_sources = []
+                        for img in context.images:
+                            if img.get("url"):
+                                image_sources.append(
+                                    {
+                                        "type": "image",
+                                        "url": img.get("url"),
+                                        "display_url": img.get("display_url"),
+                                        "thumb_url": img.get("thumb_url"),
+                                    }
+                                )
+                        if image_sources:
+                            user_trace = image_sources
+
+                    await self.repository.save_message(
+                        actual_session_id,
+                        "user",
+                        message,
+                        trace=user_trace,
+                    )
+
+                    for event in tool_events:
+                        if event.get("type") == "tool_call":
+                            tool_calls = [
+                                {
+                                    "id": event.get("id") or "",
+                                    "type": "function",
+                                    "function": {
+                                        "name": event.get("name") or "",
+                                        "arguments": json.dumps(
+                                            event.get("arguments") or {},
+                                            ensure_ascii=False,
+                                            default=str,
+                                        ),
+                                    },
+                                }
+                            ]
+                            await self.repository.save_message(
+                                actual_session_id,
+                                "assistant",
+                                "",
+                                tool_calls=tool_calls,
+                            )
+                        elif event.get("type") == "tool_result":
+                            if event.get("success"):
+                                result_content = json.dumps(
+                                    event.get("result"),
+                                    ensure_ascii=False,
+                                    default=str,
+                                )
+                            else:
+                                result_content = (
+                                    f"Error: {event.get('error') or 'Unknown error'}"
+                                )
+                            await self.repository.save_message(
+                                actual_session_id,
+                                "tool",
+                                result_content,
+                                tool_call_id=event.get("tool_call_id"),
+                                tool_name=event.get("name"),
+                            )
+
+                    final_thinking_ms = int(
+                        (thinking_end_time - thinking_start_time) * 1000
+                    )
+                    final_answer_ms = int(
+                        (answer_end_time - thinking_end_time) * 1000
+                    )
+
+                    await self.repository.save_message(
+                        actual_session_id,
+                        "assistant",
+                        response_content,
+                        trace=trace_steps if trace_steps else None,
+                        thinking_duration_ms=final_thinking_ms,
+                        answer_duration_ms=final_answer_ms,
+                    )
+
+                    asyncio.create_task(
+                        self.context_compressor.maybe_compress(
+                            actual_session_id,
+                            self.repository,
+                            user_id,
+                        )
+                    )
+                    return
+
                 # 5. 获取 Agent
                 agent = self._get_agent_or_fallback(agent_name)
 
@@ -1111,6 +1340,93 @@ class AgentService:
         if not message:
             return False
         return any(pattern.search(message) for pattern in MEAL_PLAN_QUERY_PATTERNS)
+
+    def _is_diet_log_query(self, message: str) -> bool:
+        if not message:
+            return False
+        return any(pattern.search(message) for pattern in DIET_LOG_QUERY_PATTERNS)
+
+    def _infer_meal_type_for_log(self, meal_type: Optional[str]) -> str:
+        normalized = str(meal_type or "").strip().lower()
+        if normalized in MEAL_TYPE_VALUES:
+            return normalized
+
+        # Simple local-time heuristic as fallback.
+        now = datetime.now()
+        if now.hour < 10:
+            return "breakfast"
+        if now.hour < 15:
+            return "lunch"
+        if now.hour < 21:
+            return "dinner"
+        return "snack"
+
+    def _extract_log_items_from_vision_analysis(
+        self, vision_analysis: Optional[dict]
+    ) -> list[dict[str, Any]]:
+        if not isinstance(vision_analysis, dict):
+            return []
+        raw_items = vision_analysis.get("items")
+        if not isinstance(raw_items, list):
+            return []
+
+        def _safe_float(value: Any) -> float | None:
+            if value is None:
+                return None
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
+
+        def _safe_int(value: Any) -> int | None:
+            if value is None:
+                return None
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return None
+            return parsed if parsed > 0 else None
+
+        items: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            food_name = str(item.get("food_name") or "").strip()
+            if not food_name:
+                continue
+            items.append(
+                {
+                    "food_name": food_name,
+                    "weight_g": _safe_float(item.get("weight_g")),
+                    "unit": str(item.get("unit") or "").strip() or None,
+                    "calories": _safe_int(item.get("calories")),
+                    "protein": _safe_float(item.get("protein")),
+                    "fat": _safe_float(item.get("fat")),
+                    "carbs": _safe_float(item.get("carbs")),
+                }
+            )
+        return items
+
+    def _build_meal_log_confirm_action(
+        self,
+        *,
+        session_id: str,
+        suggested_log_date: str,
+        suggested_meal_type: str,
+        items: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "action_id": f"meal-log-confirm-{uuid.uuid4().hex}",
+            "action_type": "meal_log_confirm_card",
+            "title": "确认记录本餐",
+            "description": "点击确认后才会写入饮食管理，避免误记录。",
+            "suggested_log_date": suggested_log_date,
+            "suggested_meal_type": suggested_meal_type,
+            "items": items,
+            "source": "agent_diet_log_pipeline",
+            "session_id": session_id,
+        }
 
     def _infer_planmode_default_intensity(
         self,

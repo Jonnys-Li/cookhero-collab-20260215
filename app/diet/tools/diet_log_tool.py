@@ -77,6 +77,24 @@ class DietLogTool(BaseTool):
                 "type": "string",
                 "description": "自然语言饮食描述（用于 log_from_text），例如：'今天中午吃了牛肉面和一个苹果'",
             },
+            "images": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "string",
+                            "description": "base64 图片数据（不含 data URL 前缀）",
+                        },
+                        "mime_type": {
+                            "type": "string",
+                            "description": "图片 MIME 类型，例如 image/jpeg",
+                        },
+                    },
+                    "required": ["data"],
+                },
+                "description": "图片列表（用于 log_from_text，可选，最多 4 张）",
+            },
             "items": {
                 "type": "array",
                 "items": {
@@ -139,6 +157,7 @@ class DietLogTool(BaseTool):
         log_date: Optional[str] = None,
         meal_type: Optional[str] = None,
         text: Optional[str] = None,
+        images: Optional[list] = None,
         items: Optional[List[dict]] = None,
         food_name: Optional[str] = None,
         weight_g: Optional[float] = None,
@@ -196,6 +215,7 @@ class DietLogTool(BaseTool):
                     text=text,
                     log_date=actual_date,
                     meal_type=meal_type,
+                    images=images,
                 )
                 return ToolResult(
                     success=True,

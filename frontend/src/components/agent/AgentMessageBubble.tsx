@@ -8,6 +8,7 @@ import { Clock, Loader2, BookOpen, Globe, ExternalLink } from 'lucide-react';
 import type {
   CollabTimelineAction,
   EmotionBudgetUIAction,
+  MealLogConfirmAction,
   MealPlanPlanModeAction,
   MealPlanPreviewAction,
   Message,
@@ -17,6 +18,7 @@ import type {
 import { MarkdownRenderer } from '../chat/MarkdownRenderer';
 import { AgentThinkingBlock, type TraceStep } from './AgentThinkingBlock';
 import { CardDeckFlow } from './CardDeckFlow';
+import { MealLogConfirmCard } from './MealLogConfirmCard';
 import { PlanModeMealWizardCard } from './PlanModeMealWizardCard';
 import { WeekPlanPreviewCard } from './WeekPlanPreviewCard';
 import { CopyButton } from '../common';
@@ -143,6 +145,19 @@ function parseSmartRecommendationAction(trace: TraceStep[]): SmartRecommendation
     if (payload.action_type !== 'smart_recommendation_card') continue;
     if (!payload.action_id) continue;
     return payload as unknown as SmartRecommendationAction;
+  }
+  return null;
+}
+
+function parseMealLogConfirmAction(trace: TraceStep[]): MealLogConfirmAction | null {
+  const reversed = [...trace].reverse();
+  for (const step of reversed) {
+    if (step.action !== 'ui_action') continue;
+    if (!step.content || typeof step.content !== 'object') continue;
+    const payload = step.content as Record<string, unknown>;
+    if (payload.action_type !== 'meal_log_confirm_card') continue;
+    if (!payload.action_id) continue;
+    return payload as unknown as MealLogConfirmAction;
   }
   return null;
 }
@@ -313,6 +328,7 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
   const emotionBudgetAction = parseEmotionBudgetAction(traceData);
   const collabTimelineAction = parseCollabTimelineAction(traceData);
   const smartRecommendationAction = parseSmartRecommendationAction(traceData);
+  const mealLogConfirmAction = parseMealLogConfirmAction(traceData);
   const planModeAction = parsePlanModeAction(traceData);
   const weekPlanPreviewAction = parseWeekPlanPreviewAction(traceData);
   const hasTrace = mainTrace.length > 0;
@@ -474,6 +490,14 @@ export function AgentMessageBubble({ message, hasError = false }: AgentMessageBu
             <MarkdownRenderer content={message.content.trim()} />
           ) : (
             !message.isStreaming && <MarkdownRenderer content={message.content.trim()} />
+          )}
+
+          {!isUser && !message.isStreaming && mealLogConfirmAction && (
+            <MealLogConfirmCard
+              action={mealLogConfirmAction}
+              trace={traceData}
+              sessionId={message.agent_session_id || mealLogConfirmAction.session_id}
+            />
           )}
 
           {!isUser && !message.isStreaming && (emotionBudgetAction || smartRecommendationAction || collabTimelineAction) && (

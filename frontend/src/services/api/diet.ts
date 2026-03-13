@@ -10,6 +10,7 @@ import type {
   DailySummary,
   WeeklySummary,
   DeviationAnalysis,
+  DietBudgetSnapshot,
   UserFoodPreference,
   AddMealRequest,
   UpdateMealRequest,
@@ -217,6 +218,17 @@ export async function getDeviationAnalysis(
 ): Promise<DeviationAnalysis> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
   return apiGet(`${DIET_BASE}/analysis/deviation${query}`, token);
+}
+
+/**
+ * Get daily budget snapshot (base goal + today's adjustment)
+ */
+export async function getDietBudget(
+  token: string,
+  targetDate?: string
+): Promise<DietBudgetSnapshot> {
+  const query = targetDate ? `?target_date=${targetDate}` : '';
+  return apiGet(`${DIET_BASE}/budget${query}`, token);
 }
 
 // ==================== Preference APIs ====================

@@ -175,6 +175,26 @@ export interface SmartRecommendationAction {
   session_id?: string;
 }
 
+export interface MealLogConfirmAction {
+  action_id: string;
+  action_type: 'meal_log_confirm_card';
+  title: string;
+  description?: string;
+  suggested_log_date?: string;
+  suggested_meal_type?: 'breakfast' | 'lunch' | 'dinner' | 'snack' | string;
+  items: Array<{
+    food_name: string;
+    weight_g?: number | null;
+    unit?: string | null;
+    calories?: number | null;
+    protein?: number | null;
+    fat?: number | null;
+    carbs?: number | null;
+  }>;
+  source?: string;
+  session_id?: string;
+}
+
 export interface PlanModeWizardStep {
   id: string;
   title: string;
@@ -291,6 +311,7 @@ export interface ApplySmartActionRequest {
   session_id: string;
   action_id: string;
   action_kind:
+    | 'create_diet_log'
     | 'apply_budget_adjust'
     | 'apply_next_meal_plan'
     | 'fetch_weekly_progress'
