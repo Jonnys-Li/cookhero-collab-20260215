@@ -256,10 +256,15 @@ function friendlyMessageFor(msg: string, ctx?: Record<string, unknown>): string 
 /**
  * Make a GET request
  */
-export async function apiGet<T>(endpoint: string, token?: string): Promise<T> {
+export async function apiGet<T>(
+  endpoint: string,
+  token?: string,
+  options?: RequestOptions,
+): Promise<T> {
   const response = await requestWithFallback(
     endpoint,
     { headers: createAuthHeaders(token) },
+    options,
   );
 
   if (!response.ok) {

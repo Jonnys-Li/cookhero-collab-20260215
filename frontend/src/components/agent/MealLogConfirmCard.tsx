@@ -65,6 +65,8 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
   const defaultMealType = action.suggested_meal_type || 'snack';
   const [logDate, setLogDate] = useState(defaultDate);
   const [mealType, setMealType] = useState(defaultMealType);
+  const items = useMemo(() => (Array.isArray(action.items) ? action.items : []), [action.items]);
+  const hasItems = items.length > 0;
 
   useEffect(() => {
     // If we got a persisted result from trace, keep local state in sync.
@@ -72,7 +74,6 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
   }, [traceResult]);
 
   const totals = useMemo(() => {
-    const items = Array.isArray(action.items) ? action.items : [];
     return items.reduce(
       (acc, item) => {
         acc.calories += Number(item.calories || 0);
@@ -111,8 +112,7 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
       setError('请选择餐次。');
       return;
     }
-    const items = Array.isArray(action.items) ? action.items : [];
-    if (items.length === 0) {
+    if (!hasItems) {
       setError('未识别到食物明细，请补充描述或重新上传图片。');
       return;
     }
@@ -177,20 +177,26 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
       <div className="mt-3 rounded-lg border border-emerald-100 dark:border-emerald-800/60 bg-white/80 dark:bg-gray-900/50 p-2.5">
         <div className="text-xs font-medium text-gray-800 dark:text-gray-200">识别结果（可在饮食管理里再编辑）</div>
         <div className="mt-2 space-y-1 text-xs text-gray-700 dark:text-gray-300">
-          {(action.items || []).map((item, idx) => (
-            <div key={idx} className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{item.food_name || '-'}</div>
-                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                  {item.weight_g ? `${item.weight_g} g` : item.unit ? item.unit : '分量未知'}
-                  {item.calories ? ` · ${item.calories} kcal` : ''}
+          {hasItems ? (
+            items.map((item, idx) => (
+              <div key={idx} className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{item.food_name || '-'}</div>
+                  <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                    {item.weight_g ? `${item.weight_g} g` : item.unit ? item.unit : '分量未知'}
+                    {item.calories ? ` · ${item.calories} kcal` : ''}
+                  </div>
+                </div>
+                <div className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400">
+                  P {item.protein ?? '-'} · F {item.fat ?? '-'} · C {item.carbs ?? '-'}
                 </div>
               </div>
-              <div className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400">
-                P {item.protein ?? '-'} · F {item.fat ?? '-'} · C {item.carbs ?? '-'}
-              </div>
+            ))
+          ) : (
+            <div className="rounded-lg border border-amber-200/70 bg-amber-50/70 px-2.5 py-2 text-[11px] text-amber-800 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">
+              我还没识别到可写入的食物明细。你可以补充一句「我吃了什么 + 大概分量」，或重新上传图片后再点“记录本餐”。
             </div>
-          ))}
+          )}
         </div>
         <div className="mt-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-2.5 py-2 text-xs text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200">
           合计 {totals.calories ? totals.calories.toFixed(0) : '-'} kcal · P {totals.protein.toFixed(1)} · F {totals.fat.toFixed(1)} · C {totals.carbs.toFixed(1)}
@@ -227,7 +233,7 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
         <button
           type="button"
           onClick={handleSubmit}
-          disabled={isSubmitting || !!result?.applied}
+          disabled={isSubmitting || !!result?.applied || !hasItems}
           className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isSubmitting ? '记录中...' : result?.applied ? '已记录' : '记录本餐'}
@@ -273,4 +279,3 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
     </div>
   );
 }
-

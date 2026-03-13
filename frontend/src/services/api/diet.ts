@@ -228,7 +228,9 @@ export async function getDietBudget(
   targetDate?: string
 ): Promise<DietBudgetSnapshot> {
   const query = targetDate ? `?target_date=${targetDate}` : '';
-  return apiGet(`${DIET_BASE}/budget${query}`, token);
+  // Prefer the fallback base (Render direct) because some Vercel rewrite setups
+  // may not proxy newly-added endpoints and return 404.
+  return apiGet(`${DIET_BASE}/budget${query}`, token, { preferFallback: true });
 }
 
 // ==================== Preference APIs ====================

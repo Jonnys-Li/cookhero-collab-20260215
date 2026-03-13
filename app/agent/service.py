@@ -55,8 +55,17 @@ DIET_LOG_QUERY_PATTERNS = [
         r"(帮我|帮忙|麻烦)?(记录|记一下|记下|记住|写入|同步).*(饮食管理|饮食|这餐|本餐|早餐|午餐|晚餐|加餐)",
         re.IGNORECASE,
     ),
+    re.compile(
+        r"(帮我|帮忙|麻烦|请)?(加到|加入|添加|算到|算进|计入|记到|记入|录入|同步|写入).*(饮食管理|饮食|今日|今天|这餐|本餐|早餐|午餐|晚餐|加餐)",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(log|track)\b.*\b(meal|food|lunch|dinner|breakfast)\b", re.IGNORECASE),
     re.compile(r"(记录|记一下|写入).*(卡路里|热量|宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
+]
+
+DIET_NUTRITION_QUERY_PATTERNS = [
+    re.compile(r"(卡路里|热量|kcal|千卡)", re.IGNORECASE),
+    re.compile(r"(宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
 ]
 
 MEAL_TYPE_VALUES = {"breakfast", "lunch", "dinner", "snack"}
@@ -470,10 +479,17 @@ class AgentService:
                 diet_log_query_triggered = self._is_diet_log_query(
                     context.current_message
                 )
+                nutrition_query_triggered = self._is_diet_nutrition_query(
+                    context.current_message
+                )
                 vision_items = self._extract_log_items_from_vision_analysis(
                     context.vision_analysis
                 )
-                should_offer_log_confirm = bool(vision_items) or diet_log_query_triggered
+                should_offer_log_confirm = (
+                    bool(vision_items)
+                    or diet_log_query_triggered
+                    or nutrition_query_triggered
+                )
 
                 items_to_confirm: list[dict[str, Any]] = []
                 suggested_meal_type: Optional[str] = None
@@ -485,7 +501,7 @@ class AgentService:
                         suggested_meal_type = (
                             str(raw_type).strip().lower() if raw_type else None
                         )
-                elif diet_log_query_triggered:
+                elif diet_log_query_triggered or nutrition_query_triggered:
                     try:
                         from app.diet.service import diet_service
 
@@ -523,7 +539,12 @@ class AgentService:
                             "Failed to parse diet input for confirm card: %s", exc
                         )
 
-                if should_offer_log_confirm and items_to_confirm:
+                if should_offer_log_confirm and not items_to_confirm:
+                    items_to_confirm = self._extract_simple_food_items_from_text(
+                        context.current_message
+                    )
+
+                if should_offer_log_confirm:
                     now = time.time()
                     if thinking_end_time is None:
                         thinking_end_time = now
@@ -569,10 +590,16 @@ class AgentService:
                         },
                     )
 
-                    intro = (
-                        "我已经把本餐的热量与宏量营养估算整理成卡片了。"
-                        "要把这餐记录到饮食管理吗？确认日期与餐次后点击“记录本餐”即可写入。"
-                    )
+                    if items_to_confirm:
+                        intro = (
+                            "我已经把这次的热量与宏量营养估算整理成卡片了。"
+                            "要把它记录到饮食管理吗？确认日期与餐次后点击“记录本餐”即可写入。"
+                        )
+                    else:
+                        intro = (
+                            "我可以帮你把它记录到饮食管理，但我还没识别到可写入的食物明细。"
+                            "你补充一句「吃了什么 + 大概分量」，我会再生成确认卡片让你一键写入。"
+                        )
                     response_content = intro
                     yield self._format_event("text", {"content": intro})
 
@@ -1345,6 +1372,75 @@ class AgentService:
         if not message:
             return False
         return any(pattern.search(message) for pattern in DIET_LOG_QUERY_PATTERNS)
+
+    def _is_diet_nutrition_query(self, message: str) -> bool:
+        """Heuristic to detect simple "food nutrition" questions.
+
+        This is used to optionally show a "log this" confirm card even when the
+        user only asked for calories/macros (e.g. "20g 鸡胸肉多少卡路里？").
+        """
+        if not message:
+            return False
+        text = str(message)
+        # Exclude budget/goal management questions to avoid spamming confirm cards.
+        if re.search(r"(预算|目标|上限|剩余|调整|cap)", text, re.IGNORECASE):
+            return False
+        # Require at least one number so we don't trigger on generic "鸡肉热量多少"
+        # (we can answer first and ask for quantity).
+        if not re.search(r"\d", text):
+            return False
+        return any(pattern.search(text) for pattern in DIET_NUTRITION_QUERY_PATTERNS)
+
+    def _extract_simple_food_items_from_text(self, message: str) -> list[dict[str, Any]]:
+        """Best-effort local parser as a fallback when AI parse fails.
+
+        Supports patterns like:
+        - "鸡胸肉 20g"
+        - "20g 鸡胸肉"
+        """
+        if not message:
+            return []
+        text = str(message)
+        patterns = [
+            re.compile(
+                r"(?P<name>[\u4e00-\u9fffA-Za-z]{1,20})\s*(?P<weight>\d+(?:\.\d+)?)\s*(?:g|克)\b",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"(?P<weight>\d+(?:\.\d+)?)\s*(?:g|克)\s*(?P<name>[\u4e00-\u9fffA-Za-z]{1,20})",
+                re.IGNORECASE,
+            ),
+        ]
+        items: list[dict[str, Any]] = []
+        seen: set[tuple[str, float | None]] = set()
+        for pattern in patterns:
+            for match in pattern.finditer(text):
+                name = str(match.group("name") or "").strip()
+                weight_raw = match.group("weight")
+                weight_g: float | None = None
+                if weight_raw:
+                    try:
+                        weight_g = float(weight_raw)
+                    except (TypeError, ValueError):
+                        weight_g = None
+                if not name:
+                    continue
+                key = (name, weight_g)
+                if key in seen:
+                    continue
+                seen.add(key)
+                items.append(
+                    {
+                        "food_name": name,
+                        "weight_g": weight_g,
+                        "unit": "g" if weight_g else None,
+                        "calories": None,
+                        "protein": None,
+                        "fat": None,
+                        "carbs": None,
+                    }
+                )
+        return items
 
     def _infer_meal_type_for_log(self, meal_type: Optional[str]) -> str:
         normalized = str(meal_type or "").strip().lower()
