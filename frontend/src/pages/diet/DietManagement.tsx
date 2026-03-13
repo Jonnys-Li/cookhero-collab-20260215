@@ -72,18 +72,43 @@ const DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', 
 /**
  * Get week start date (Monday) for a given date
  */
+function startOfLocalDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
 function getWeekStartDate(date: Date): Date {
-  const d = new Date(date);
+  const d = startOfLocalDay(date);
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-  return new Date(d.setDate(diff));
+  const weekStart = new Date(d);
+  weekStart.setDate(diff);
+  return startOfLocalDay(weekStart);
 }
 
 /**
  * Format date as YYYY-MM-DD
  */
 function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = startOfLocalDay(date);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function parseLocalYMD(dateStr: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
 }
 
 /**
@@ -97,7 +122,7 @@ function formatDateShort(date: Date): string {
  * Add days to a date
  */
 function addDays(date: Date, days: number): Date {
-  const result = new Date(date);
+  const result = startOfLocalDay(date);
   result.setDate(result.getDate() + days);
   return result;
 }
@@ -1211,8 +1236,8 @@ export default function DietManagementPage() {
     if (!focusDateStr) return;
     const focusMeal = params.get('focus_meal') || '';
 
-    const focusDate = new Date(`${focusDateStr}T00:00:00`);
-    if (Number.isNaN(focusDate.getTime())) return;
+    const focusDate = parseLocalYMD(focusDateStr);
+    if (!focusDate) return;
 
     setCurrentWeekStart(getWeekStartDate(focusDate));
     setActiveDayIndex(getDayIndex(focusDate));
@@ -1636,6 +1661,29 @@ export default function DietManagementPage() {
           >
             {(() => {
               const date = getActiveDayDate();
+              const dateStr = formatDate(date);
+              const actualTotals = getDayActualTotals(dateStr);
+              const budgetGoal =
+                budgetSnapshot?.effective_goal === null ||
+                budgetSnapshot?.effective_goal === undefined
+                  ? null
+                  : Number(budgetSnapshot.effective_goal);
+              const remainingDelta =
+                budgetGoal !== null && actualTotals.calories !== null
+                  ? budgetGoal - actualTotals.calories
+                  : null;
+              const remainingLine = (() => {
+                if (remainingDelta === null) return '今日剩余 -- kcal';
+                const absText = Math.abs(remainingDelta).toFixed(0);
+                if (remainingDelta >= 0) return `今日剩余 ${absText} kcal`;
+                return `已超出 ${absText} kcal`;
+              })();
+              const remainingClass =
+                remainingDelta === null
+                  ? 'text-gray-600 dark:text-gray-300'
+                  : remainingDelta >= 0
+                    ? 'text-emerald-700 dark:text-emerald-300'
+                    : 'text-rose-700 dark:text-rose-300';
               const goalSourceText = (() => {
                 const source = budgetSnapshot?.goal_source;
                 if (source === 'explicit') return '用户目标';
@@ -1644,11 +1692,14 @@ export default function DietManagementPage() {
                 return source ? String(source) : '未标注';
               })();
               const todayAdjustment =
-                budgetSnapshot?.today_adjustment === null || budgetSnapshot?.today_adjustment === undefined
+                budgetSnapshot?.today_adjustment === null ||
+                budgetSnapshot?.today_adjustment === undefined
                   ? null
                   : Number(budgetSnapshot.today_adjustment);
               const todayAdjText =
-                todayAdjustment === null ? '--' : `${todayAdjustment >= 0 ? '+' : ''}${todayAdjustment}`;
+                todayAdjustment === null
+                  ? '--'
+                  : `${todayAdjustment >= 0 ? '+' : ''}${todayAdjustment}`;
 
               return (
                 <>
@@ -1668,6 +1719,7 @@ export default function DietManagementPage() {
                           {budgetSnapshot?.goal_seeded ? '，系统兜底' : ''}）
                         </span>
                       </div>
+                      <div className={`mt-2 text-xs ${remainingClass}`}>{remainingLine}</div>
                     </div>
 
                     <div className="rounded-xl border border-emerald-100 dark:border-emerald-900/50 bg-white/70 dark:bg-gray-900/50 px-3 py-2">
@@ -1698,50 +1750,62 @@ export default function DietManagementPage() {
             })()}
           </div>
 
-	          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-	            {(() => {
-	              const date = getActiveDayDate();
-	              const dateStr = formatDate(date);
-	              const planTotals = getDayPlanTotals(dateStr);
-	              const actualTotals = getDayActualTotals(dateStr);
-	              const daySummary = dailySummaries[dateStr];
-	              const actualLogs = logs.get(dateStr) || [];
-	              const adherence =
-	                planTotals.calories !== null &&
-	                planTotals.calories > 0 &&
-	                actualTotals.calories !== null
-	                  ? Math.min(100, (actualTotals.calories / planTotals.calories) * 100)
-	                  : 0;
+          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {(() => {
+              const date = getActiveDayDate();
+              const dateStr = formatDate(date);
+              const planTotals = getDayPlanTotals(dateStr);
+              const actualTotals = getDayActualTotals(dateStr);
+              const daySummary = dailySummaries[dateStr];
+              const actualLogs = logs.get(dateStr) || [];
+              const adherence =
+                planTotals.calories !== null &&
+                planTotals.calories > 0 &&
+                actualTotals.calories !== null
+                  ? Math.min(100, (actualTotals.calories / planTotals.calories) * 100)
+                  : 0;
 
-	              return (
-	                <>
-	                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-amber-50/60 dark:bg-amber-900/10 p-4">
-	                    <div className="text-xs text-amber-700 dark:text-amber-200">{formatDateShort(date)} · 计划目标</div>
-	                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-	                      {planTotals.calories !== null ? `${planTotals.calories.toFixed(0)} kcal` : '未设置'}
-	                    </div>
-	                    <div className="text-xs text-gray-500 mt-1">
-	                      蛋白 {planTotals.protein !== null ? planTotals.protein.toFixed(1) : '--'}g · 脂肪 {planTotals.fat !== null ? planTotals.fat.toFixed(1) : '--'}g · 碳水 {planTotals.carbs !== null ? planTotals.carbs.toFixed(1) : '--'}g
-	                    </div>
-	                    <div className="mt-3 text-xs text-gray-500">
-	                      计划餐次 {plan?.meals?.filter(meal => meal.plan_date === dateStr).length || 0} 餐
-	                    </div>
-	                  </div>
+              return (
+                <>
+                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-amber-50/60 dark:bg-amber-900/10 p-4">
+                    <div className="text-xs text-amber-700 dark:text-amber-200">
+                      {formatDateShort(date)} · 计划目标
+                    </div>
+                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+                      {planTotals.calories !== null ? `${planTotals.calories.toFixed(0)} kcal` : '未设置'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      蛋白 {planTotals.protein !== null ? planTotals.protein.toFixed(1) : '--'}g · 脂肪{' '}
+                      {planTotals.fat !== null ? planTotals.fat.toFixed(1) : '--'}g · 碳水{' '}
+                      {planTotals.carbs !== null ? planTotals.carbs.toFixed(1) : '--'}g
+                    </div>
+                    <div className="mt-3 text-xs text-gray-500">
+                      计划餐次 {plan?.meals?.filter(meal => meal.plan_date === dateStr).length || 0} 餐
+                    </div>
+                  </div>
 
-	                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
-	                    <div className="text-xs text-gray-500">实际摄入</div>
-	                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-	                      {actualTotals.calories !== null ? `${actualTotals.calories.toFixed(0)} kcal` : '暂无记录'}
-	                    </div>
-	                    <div className="text-xs text-gray-500 mt-1">
-	                      蛋白 {actualTotals.protein !== null ? actualTotals.protein.toFixed(1) : '--'}g · 脂肪 {actualTotals.fat !== null ? actualTotals.fat.toFixed(1) : '--'}g · 碳水 {actualTotals.carbs !== null ? actualTotals.carbs.toFixed(1) : '--'}g
-	                    </div>
-	                    <div className="mt-3 text-xs text-gray-500">
-	                      记录餐次 {actualLogs.length} · 完成度 {planTotals.calories !== null && planTotals.calories > 0 && actualTotals.calories !== null ? adherence.toFixed(0) : 0}%
-	                    </div>
-	                    <div className="mt-3 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
-	                      <div
-	                        className="h-2 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400"
+                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+                    <div className="text-xs text-gray-500">实际摄入</div>
+                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+                      {actualTotals.calories !== null ? `${actualTotals.calories.toFixed(0)} kcal` : '暂无记录'}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      蛋白 {actualTotals.protein !== null ? actualTotals.protein.toFixed(1) : '--'}g · 脂肪{' '}
+                      {actualTotals.fat !== null ? actualTotals.fat.toFixed(1) : '--'}g · 碳水{' '}
+                      {actualTotals.carbs !== null ? actualTotals.carbs.toFixed(1) : '--'}g
+                    </div>
+                    <div className="mt-3 text-xs text-gray-500">
+                      记录餐次 {actualLogs.length} · 完成度{' '}
+                      {planTotals.calories !== null &&
+                      planTotals.calories > 0 &&
+                      actualTotals.calories !== null
+                        ? adherence.toFixed(0)
+                        : 0}
+                      %
+                    </div>
+                    <div className="mt-3 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400"
                         style={{ width: `${Math.min(100, adherence)}%` }}
                       />
                     </div>
