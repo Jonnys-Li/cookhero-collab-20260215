@@ -1,6 +1,9 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from app.api.v1.endpoints import agent as agent_endpoint
 
 
@@ -372,17 +375,15 @@ def test_apply_smart_action_create_diet_log_success_and_idempotent(monkeypatch):
         assert kwargs["log_date"].isoformat() == "2026-03-06"
         assert kwargs["meal_type"] == "lunch"
         assert kwargs.get("notes") is None
-        assert kwargs["items"] == [
-            {
-                "food_name": "鸡胸肉",
-                "weight_g": 20.0,
-                "unit": None,
-                "calories": 100,
-                "protein": 10.0,
-                "fat": 1.0,
-                "carbs": None,
-            }
-        ]
+        assert len(kwargs["items"]) == 1
+        item = kwargs["items"][0]
+        assert item["food_name"] == "鸡胸肉"
+        assert item["weight_g"] == 20.0
+        assert item["unit"] is None
+        assert item["calories"] == 100
+        assert item["protein"] == 10.0
+        assert item["fat"] == 1.0
+        assert item["carbs"] is not None
         return {
             "id": "log-1",
             "user_id": kwargs["user_id"],
@@ -444,3 +445,173 @@ def test_apply_smart_action_create_diet_log_success_and_idempotent(monkeypatch):
     assert response2.applied is True
     assert len(log_meal_calls) == 1
     assert len(saved_messages) == 1
+
+
+def test_apply_smart_action_create_diet_log_rejects_missing_nutrition(monkeypatch):
+    log_meal_calls = []
+
+    async def fake_get_session(session_id: str):
+        return {"id": session_id, "user_id": "u1"}
+
+    async def fake_find_action(session_id: str, action_id: str):
+        return {"action_id": action_id, "action_type": "meal_log_confirm_card"}
+
+    async def fake_find_existing(session_id: str, action_id: str, action_kind: str):
+        return None
+
+    async def fake_log_meal(**kwargs):
+        log_meal_calls.append(kwargs)
+        raise AssertionError("log_meal should not be called when nutrition is missing")
+
+    async def fake_save_message(session_id: str, role: str, content: str, trace=None):
+        return SimpleNamespace()
+
+    monkeypatch.setattr(agent_endpoint.agent_service, "get_session", fake_get_session)
+    monkeypatch.setattr(agent_endpoint, "_find_smart_ui_action", fake_find_action)
+    monkeypatch.setattr(
+        agent_endpoint,
+        "_find_existing_smart_action_result",
+        fake_find_existing,
+    )
+    monkeypatch.setattr(agent_endpoint.diet_service, "log_meal", fake_log_meal)
+    monkeypatch.setattr(
+        agent_endpoint.agent_service.repository,
+        "save_message",
+        fake_save_message,
+    )
+
+    payload = build_payload(
+        action_kind="create_diet_log",
+        payload={
+            "log_date": "2026-03-06",
+            "meal_type": "lunch",
+            "items": [
+                {
+                    "food_name": "鸡肉",
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        run(agent_endpoint.apply_smart_action(payload, build_request()))
+    assert exc.value.status_code == 400
+    assert not log_meal_calls
+
+
+def test_apply_smart_action_create_diet_log_parses_unit_strings(monkeypatch):
+    log_meal_calls = []
+
+    async def fake_get_session(session_id: str):
+        return {"id": session_id, "user_id": "u1"}
+
+    async def fake_find_action(session_id: str, action_id: str):
+        return {"action_id": action_id, "action_type": "meal_log_confirm_card"}
+
+    async def fake_find_existing(session_id: str, action_id: str, action_kind: str):
+        return None
+
+    async def fake_log_meal(**kwargs):
+        log_meal_calls.append(kwargs)
+        assert kwargs["items"][0]["weight_g"] == 20.0
+        assert kwargs["items"][0]["calories"] == 120
+        assert kwargs["items"][0]["protein"] == 10.0
+        assert kwargs["items"][0]["fat"] == 1.0
+        assert kwargs["items"][0]["carbs"] == 2.0
+        return {"id": "log-1"}
+
+    async def fake_save_message(session_id: str, role: str, content: str, trace=None):
+        return SimpleNamespace()
+
+    monkeypatch.setattr(agent_endpoint.agent_service, "get_session", fake_get_session)
+    monkeypatch.setattr(agent_endpoint, "_find_smart_ui_action", fake_find_action)
+    monkeypatch.setattr(
+        agent_endpoint,
+        "_find_existing_smart_action_result",
+        fake_find_existing,
+    )
+    monkeypatch.setattr(agent_endpoint.diet_service, "log_meal", fake_log_meal)
+    monkeypatch.setattr(
+        agent_endpoint.agent_service.repository,
+        "save_message",
+        fake_save_message,
+    )
+
+    payload = build_payload(
+        action_kind="create_diet_log",
+        payload={
+            "log_date": "2026-03-06",
+            "meal_type": "lunch",
+            "items": [
+                {
+                    "food_name": "鸡胸肉",
+                    "weight_g": "20g",
+                    "calories": "120kcal",
+                    "protein": "10g",
+                    "fat": "1g",
+                    "carbs": "2g",
+                }
+            ],
+        },
+    )
+
+    response = run(agent_endpoint.apply_smart_action(payload, build_request()))
+    assert response.applied is True
+    assert log_meal_calls
+
+
+def test_apply_smart_action_create_diet_log_fills_macros_from_calories(monkeypatch):
+    log_meal_calls = []
+
+    async def fake_get_session(session_id: str):
+        return {"id": session_id, "user_id": "u1"}
+
+    async def fake_find_action(session_id: str, action_id: str):
+        return {"action_id": action_id, "action_type": "meal_log_confirm_card"}
+
+    async def fake_find_existing(session_id: str, action_id: str, action_kind: str):
+        return None
+
+    async def fake_log_meal(**kwargs):
+        log_meal_calls.append(kwargs)
+        item = kwargs["items"][0]
+        assert item["calories"] == 200
+        assert item["protein"] is not None and item["protein"] > 0
+        assert item["fat"] is not None and item["fat"] > 0
+        assert item["carbs"] is not None and item["carbs"] > 0
+        return {"id": "log-1"}
+
+    async def fake_save_message(session_id: str, role: str, content: str, trace=None):
+        return SimpleNamespace()
+
+    monkeypatch.setattr(agent_endpoint.agent_service, "get_session", fake_get_session)
+    monkeypatch.setattr(agent_endpoint, "_find_smart_ui_action", fake_find_action)
+    monkeypatch.setattr(
+        agent_endpoint,
+        "_find_existing_smart_action_result",
+        fake_find_existing,
+    )
+    monkeypatch.setattr(agent_endpoint.diet_service, "log_meal", fake_log_meal)
+    monkeypatch.setattr(
+        agent_endpoint.agent_service.repository,
+        "save_message",
+        fake_save_message,
+    )
+
+    payload = build_payload(
+        action_kind="create_diet_log",
+        payload={
+            "log_date": "2026-03-06",
+            "meal_type": "lunch",
+            "items": [
+                {
+                    "food_name": "可乐",
+                    "calories": "200kcal",
+                }
+            ],
+        },
+    )
+
+    response = run(agent_endpoint.apply_smart_action(payload, build_request()))
+    assert response.applied is True
+    assert log_meal_calls

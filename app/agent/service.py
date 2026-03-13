@@ -563,11 +563,49 @@ class AgentService:
                         )
                         yield self._format_event("collab_timeline", final_timeline)
 
-                    inferred_meal_type = self._infer_meal_type_for_log(
-                        suggested_meal_type
-                    )
+                    inferred_meal_type = self._infer_meal_type_for_log(suggested_meal_type)
 
-                    if items_to_confirm:
+                    # Guardrail: avoid creating "empty nutrition" logs.
+                    # If we cannot estimate any kcal/P/F/C yet, ask the user to
+                    # provide quantity/details first, then re-generate the confirm card.
+                    can_show_confirm_card = bool(items_to_confirm)
+                    has_any_quantity = False
+                    totals: dict[str, float | None] | None = None
+                    has_any_nutrition = False
+                    missing_reason: str | None = None
+
+                    if can_show_confirm_card:
+                        for item in items_to_confirm:
+                            if not isinstance(item, dict):
+                                continue
+                            if item.get("weight_g") is not None:
+                                has_any_quantity = True
+                                break
+                            unit_text = str(item.get("unit") or "").strip()
+                            if unit_text:
+                                has_any_quantity = True
+                                break
+
+                        totals = self._calculate_nutrition_totals(items_to_confirm)
+                        has_any_nutrition = any(
+                            totals.get(field) is not None
+                            for field in ("calories", "protein", "fat", "carbs")
+                        )
+
+                        if not has_any_nutrition:
+                            can_show_confirm_card = False
+                            missing_reason = "nutrition"
+                        # For text-only "record this" intent, require some quantity signal
+                        # so we don't log unknown portions.
+                        elif (
+                            diet_log_query_triggered
+                            and not vision_items
+                            and not has_any_quantity
+                        ):
+                            can_show_confirm_card = False
+                            missing_reason = "quantity"
+
+                    if can_show_confirm_card:
                         confirm_action = self._build_meal_log_confirm_action(
                             session_id=actual_session_id,
                             suggested_log_date=date.today().isoformat(),
@@ -595,9 +633,14 @@ class AgentService:
                         )
 
                         include_kj = bool(
-                            re.search(r"(千焦|kj|焦耳)", context.current_message, re.IGNORECASE)
+                            re.search(
+                                r"(千焦|kj|焦耳)",
+                                context.current_message,
+                                re.IGNORECASE,
+                            )
                         )
-                        totals = self._calculate_nutrition_totals(items_to_confirm)
+                        if totals is None:
+                            totals = self._calculate_nutrition_totals(items_to_confirm)
                         totals_text = self._format_nutrition_totals_text(
                             totals,
                             include_kj=include_kj,
@@ -625,7 +668,15 @@ class AgentService:
 
                         intro = f"{answer_line}\n\n{follow_up}"
                     else:
-                        if nutrition_query_triggered:
+                        if items_to_confirm and missing_reason in {"nutrition", "quantity"}:
+                            intro = (
+                                "我可以帮你记录到饮食管理，但为了避免出现“记录后没有 kcal/PFC”的空记录，"
+                                "我需要你再补充一点信息。\n\n"
+                                "请补充：食物的**分量**（克/毫升/个/份/碗等），必要时再补充更具体名称（例如：鸡胸肉/鸡腿/带皮与否、做法）。\n"
+                                "示例：`鸡胸肉 200g`、`米饭 1 碗`、`鸡蛋 2 个`。\n\n"
+                                "你补充后我会立刻生成“确认记录本餐”卡片，让你一键写入。"
+                            )
+                        elif nutrition_query_triggered:
                             intro = (
                                 "我可以帮你估算热量/宏量并生成可记录卡片，但我还缺少可解析的食物明细。\n\n"
                                 "你补充一句「吃了什么 + 分量」（例如：鸡胸肉 100g / 米饭 1 碗 / 鸡蛋 2 个），"

@@ -1945,7 +1945,78 @@ async def apply_smart_action(
                     detail="items 必须为数组且至少包含 1 个食物",
                 )
 
+            # Allow string numbers with units ("120kcal", "20g"), but don't write logs
+            # with unknown nutrition (null kcal/P/F/C) because DietManagement will show
+            # misleading totals when values are missing.
+            number_pattern = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+            def _extract_first_number(value: Any) -> float | None:
+                if value is None:
+                    return None
+                if isinstance(value, (int, float)):
+                    try:
+                        return float(value)
+                    except (TypeError, ValueError):
+                        return None
+                if isinstance(value, str):
+                    text = value.strip()
+                    if not text:
+                        return None
+                    text = text.replace(",", "")
+                    match = number_pattern.search(text)
+                    if not match:
+                        return None
+                    try:
+                        return float(match.group(0))
+                    except (TypeError, ValueError):
+                        return None
+                return None
+
+            def _safe_positive_float_with_units(value: Any) -> float | None:
+                parsed = _extract_first_number(value)
+                if parsed is None:
+                    return None
+                return parsed if parsed > 0 else None
+
+            def _safe_calories_int(value: Any) -> int | None:
+                if value is None:
+                    return None
+
+                if isinstance(value, str):
+                    raw = value.strip()
+                    if not raw:
+                        return None
+                    text = raw.lower().replace(",", "")
+                    match = number_pattern.search(text)
+                    if not match:
+                        return None
+                    try:
+                        numeric = float(match.group(0))
+                    except (TypeError, ValueError):
+                        return None
+                    if numeric <= 0:
+                        return None
+
+                    # If user passed 千焦/kJ, convert to kcal.
+                    if ("kj" in text or "千焦" in text) and (
+                        "kcal" not in text and "千卡" not in text and "大卡" not in text
+                    ):
+                        return int(round(numeric / 4.184))
+                    return int(round(numeric))
+
+                parsed = _extract_first_number(value)
+                if parsed is None or parsed <= 0:
+                    return None
+                return int(round(parsed))
+
+            try:
+                from app.diet.macro_estimation import estimate_macros_from_calories
+            except Exception:
+                estimate_macros_from_calories = None  # type: ignore[assignment]
+            macro_goal = "maintenance"
+
             normalized_items: list[dict[str, Any]] = []
+            incomplete_items: list[str] = []
 
             for item in raw_items:
                 if not isinstance(item, dict):
@@ -1954,27 +2025,69 @@ async def apply_smart_action(
                 if not food_name:
                     continue
 
-                weight_g = _safe_positive_float(item.get("weight_g"))
+                weight_g = _safe_positive_float_with_units(item.get("weight_g"))
                 unit = _normalize_text(item.get("unit"), max_length=20) or None
 
-                calories_value: int | None = None
-                calories = item.get("calories")
-                if calories is not None:
-                    try:
-                        calories_value = int(calories)
-                    except (TypeError, ValueError):
-                        calories_value = None
+                calories_value = _safe_calories_int(item.get("calories"))
+                protein_value = _safe_positive_float_with_units(item.get("protein"))
+                fat_value = _safe_positive_float_with_units(item.get("fat"))
+                carbs_value = _safe_positive_float_with_units(item.get("carbs"))
+
+                # If user provided complete P/F/C but not calories, derive calories.
+                if (
+                    calories_value is None
+                    and protein_value is not None
+                    and fat_value is not None
+                    and carbs_value is not None
+                ):
+                    calories_calc = 4.0 * protein_value + 9.0 * fat_value + 4.0 * carbs_value
+                    calories_value = int(round(calories_calc)) if calories_calc > 0 else None
+
+                # If calories exist but macros are missing, deterministically fill the missing ones.
+                if (
+                    estimate_macros_from_calories
+                    and calories_value is not None
+                    and calories_value > 0
+                    and (protein_value is None or fat_value is None or carbs_value is None)
+                ):
+                    macros = estimate_macros_from_calories(calories_value, macro_goal)
+                    if protein_value is None:
+                        protein_value = macros.get("protein_g") if isinstance(macros, dict) else None
+                    if fat_value is None:
+                        fat_value = macros.get("fat_g") if isinstance(macros, dict) else None
+                    if carbs_value is None:
+                        carbs_value = macros.get("carbs_g") if isinstance(macros, dict) else None
+
+                # If we still can't provide any nutrition at all, reject the whole write (no fake success).
+                if calories_value is None and protein_value is None and fat_value is None and carbs_value is None:
+                    incomplete_items.append(food_name)
+                    continue
+
+                if calories_value is None or protein_value is None or fat_value is None or carbs_value is None:
+                    incomplete_items.append(food_name)
+                    continue
 
                 normalized_items.append(
                     {
                         "food_name": food_name,
                         "weight_g": weight_g,
                         "unit": unit,
-                        "calories": calories_value if calories_value and calories_value > 0 else None,
-                        "protein": _safe_positive_float(item.get("protein")),
-                        "fat": _safe_positive_float(item.get("fat")),
-                        "carbs": _safe_positive_float(item.get("carbs")),
+                        "calories": calories_value,
+                        "protein": protein_value,
+                        "fat": fat_value,
+                        "carbs": carbs_value,
                     }
+                )
+
+            if incomplete_items:
+                shown = "、".join(incomplete_items[:5])
+                suffix = "..." if len(incomplete_items) > 5 else ""
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"以下食物缺少热量/宏量营养信息，暂无法写入：{shown}{suffix}。"
+                        "请补充分量（如 200g / 1 碗 / 2 个），让助手先识别出 kcal/P/F/C 后再点“记录本餐”。"
+                    ),
                 )
 
             if not normalized_items:

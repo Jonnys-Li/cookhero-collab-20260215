@@ -76,15 +76,36 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
   const totals = useMemo(() => {
     return items.reduce(
       (acc, item) => {
-        acc.calories += Number(item.calories || 0);
-        acc.protein += Number(item.protein || 0);
-        acc.fat += Number(item.fat || 0);
-        acc.carbs += Number(item.carbs || 0);
+        if (item.calories !== null && item.calories !== undefined) {
+          acc.calories += Number(item.calories);
+          acc.hasCalories = true;
+        }
+        if (item.protein !== null && item.protein !== undefined) {
+          acc.protein += Number(item.protein);
+          acc.hasProtein = true;
+        }
+        if (item.fat !== null && item.fat !== undefined) {
+          acc.fat += Number(item.fat);
+          acc.hasFat = true;
+        }
+        if (item.carbs !== null && item.carbs !== undefined) {
+          acc.carbs += Number(item.carbs);
+          acc.hasCarbs = true;
+        }
         return acc;
       },
-      { calories: 0, protein: 0, fat: 0, carbs: 0 }
+      {
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        hasCalories: false,
+        hasProtein: false,
+        hasFat: false,
+        hasCarbs: false,
+      }
     );
-  }, [action.items]);
+  }, [items]);
 
   const dietBase = location.pathname.startsWith('/agent') ? '/agent/diet' : '/diet';
   const dietHref = useMemo(() => {
@@ -184,7 +205,7 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
                   <div className="truncate font-medium">{item.food_name || '-'}</div>
                   <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                     {item.weight_g ? `${item.weight_g} g` : item.unit ? item.unit : '分量未知'}
-                    {item.calories ? ` · ${item.calories} kcal` : ''}
+                    {item.calories !== null && item.calories !== undefined ? ` · ${item.calories} kcal` : ''}
                   </div>
                 </div>
                 <div className="shrink-0 text-[11px] text-gray-500 dark:text-gray-400">
@@ -199,7 +220,7 @@ export function MealLogConfirmCard({ action, trace, sessionId }: MealLogConfirmC
           )}
         </div>
         <div className="mt-2 rounded-lg border border-emerald-200/70 bg-emerald-50/60 px-2.5 py-2 text-xs text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200">
-          合计 {totals.calories ? totals.calories.toFixed(0) : '-'} kcal · P {totals.protein.toFixed(1)} · F {totals.fat.toFixed(1)} · C {totals.carbs.toFixed(1)}
+          合计 {totals.hasCalories ? totals.calories.toFixed(0) : '-'} kcal · P {totals.hasProtein ? totals.protein.toFixed(1) : '-'} · F {totals.hasFat ? totals.fat.toFixed(1) : '-'} · C {totals.hasCarbs ? totals.carbs.toFixed(1) : '-'}
         </div>
       </div>
 

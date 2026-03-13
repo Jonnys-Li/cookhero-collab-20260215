@@ -23,10 +23,11 @@ DIET_LOG_IMAGE_PROMPT_TEMPLATE = """你将收到用户的饮食图片{extra_text
 
 规则：
 1. 能区分多个食物时，必须拆分为多个 items。
-2. 数值可估算，无法判断就填 null。
-3. meal_type 无法判断则为 null。
-4. food_name 尽量具体，例如“红烧牛肉”“白米饭”。
-5. 只输出 JSON，不要追加说明。"""
+2. 如果 `weight_g` 或 `unit` 不为 null，则 `calories/protein/fat/carbs` 必须给出**数值**（不要填 null；可合理估算，但不要填 0）。
+3. 如果 `weight_g` 和 `unit` 都为 null，则 `calories/protein/fat/carbs` 允许为 null（表示需要用户补充分量后再估算）。
+4. meal_type 无法判断则为 null。
+5. food_name 尽量具体，例如“红烧牛肉”“白米饭”。
+6. 只输出 JSON，不要追加说明。"""
 
 DIET_LOG_TEXT_PROMPT_TEMPLATE = """请解析用户的饮食描述并输出严格 JSON。
 
@@ -51,5 +52,6 @@ DIET_LOG_TEXT_PROMPT_TEMPLATE = """请解析用户的饮食描述并输出严格
 规则：
 1. 明显有多个食物时，必须拆分为多个 items。
 2. meal_type 可从时间或食物类型推断，无法判断则为 null。
-3. 数值可估算，无法判断就填 null。
-4. 只输出 JSON，不要追加说明。"""
+3. 如果 `weight_g` 或 `unit` 不为 null，则 `calories/protein/fat/carbs` 必须给出**数值**（不要填 null；可合理估算，但不要填 0）。
+4. 如果 `weight_g` 和 `unit` 都为 null，则 `calories/protein/fat/carbs` 允许为 null（表示需要用户补充分量后再估算）。
+5. 只输出 JSON，不要追加说明。"""

@@ -107,6 +107,17 @@ function getDayIndex(date: Date): number {
   return day === 0 ? 6 : day - 1;
 }
 
+type MaybeNumber = number | null | undefined;
+
+function formatMaybeNumber(
+  value: MaybeNumber,
+  fractionDigits: number,
+  placeholder = '-'
+): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return placeholder;
+  return value.toFixed(fractionDigits);
+}
+
 /**
  * Meal Card Component
  */
@@ -135,13 +146,34 @@ function MealCard({
   const hasLog = mealLogs.length > 0;
   const actualTotals = mealLogs.reduce(
     (acc, log) => {
-      acc.calories += log.total_calories || 0;
-      acc.protein += log.total_protein || 0;
-      acc.fat += log.total_fat || 0;
-      acc.carbs += log.total_carbs || 0;
+      if (log.total_calories !== null && log.total_calories !== undefined) {
+        acc.calories += log.total_calories;
+        acc.hasCalories = true;
+      }
+      if (log.total_protein !== null && log.total_protein !== undefined) {
+        acc.protein += log.total_protein;
+        acc.hasProtein = true;
+      }
+      if (log.total_fat !== null && log.total_fat !== undefined) {
+        acc.fat += log.total_fat;
+        acc.hasFat = true;
+      }
+      if (log.total_carbs !== null && log.total_carbs !== undefined) {
+        acc.carbs += log.total_carbs;
+        acc.hasCarbs = true;
+      }
       return acc;
     },
-    { calories: 0, protein: 0, fat: 0, carbs: 0 }
+    {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      hasCalories: false,
+      hasProtein: false,
+      hasFat: false,
+      hasCarbs: false,
+    }
   );
   const isToday = formatDate(date) === formatDate(new Date());
   const isPast = date < new Date() && !isToday;
@@ -179,7 +211,7 @@ function MealCard({
               <div key={idx} className="mb-1 last:mb-0">
                 <div className="truncate">
                   {dish.name}
-                  {dish.calories && (
+                  {dish.calories !== null && dish.calories !== undefined && (
                     <span className="text-xs text-gray-500 ml-1">
                       ({dish.calories}kcal)
                     </span>
@@ -198,11 +230,11 @@ function MealCard({
           {/* Nutrition Summary */}
           <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
             <div>
-              计划 {meal.total_calories ? meal.total_calories.toFixed(0) : '-'} kcal · P {meal.total_protein?.toFixed(1) || '-'} · F {meal.total_fat?.toFixed(1) || '-'} · C {meal.total_carbs?.toFixed(1) || '-'}
+              计划 {meal.total_calories !== null && meal.total_calories !== undefined ? meal.total_calories.toFixed(0) : '-'} kcal · P {meal.total_protein?.toFixed(1) || '-'} · F {meal.total_fat?.toFixed(1) || '-'} · C {meal.total_carbs?.toFixed(1) || '-'}
             </div>
             {hasLog && (
               <div className="text-green-600 dark:text-green-400">
-                实际 {actualTotals.calories ? actualTotals.calories.toFixed(0) : '-'} kcal · P {actualTotals.protein.toFixed(1)} · F {actualTotals.fat.toFixed(1)} · C {actualTotals.carbs.toFixed(1)}
+                实际 {actualTotals.hasCalories ? actualTotals.calories.toFixed(0) : '-'} kcal · P {actualTotals.hasProtein ? actualTotals.protein.toFixed(1) : '-'} · F {actualTotals.hasFat ? actualTotals.fat.toFixed(1) : '-'} · C {actualTotals.hasCarbs ? actualTotals.carbs.toFixed(1) : '-'}
               </div>
             )}
           </div>
@@ -264,20 +296,41 @@ function LogCard({ logs, mealType, date, highlighted = false, onAddLog, onEditLo
   const isToday = formatDate(date) === formatDate(new Date());
   const totals = mealLogs.reduce(
     (acc, log) => {
-      acc.calories += log.total_calories || 0;
-      acc.protein += log.total_protein || 0;
-      acc.fat += log.total_fat || 0;
-      acc.carbs += log.total_carbs || 0;
+      if (log.total_calories !== null && log.total_calories !== undefined) {
+        acc.calories += log.total_calories;
+        acc.hasCalories = true;
+      }
+      if (log.total_protein !== null && log.total_protein !== undefined) {
+        acc.protein += log.total_protein;
+        acc.hasProtein = true;
+      }
+      if (log.total_fat !== null && log.total_fat !== undefined) {
+        acc.fat += log.total_fat;
+        acc.hasFat = true;
+      }
+      if (log.total_carbs !== null && log.total_carbs !== undefined) {
+        acc.carbs += log.total_carbs;
+        acc.hasCarbs = true;
+      }
       return acc;
     },
-    { calories: 0, protein: 0, fat: 0, carbs: 0 }
+    {
+      calories: 0,
+      protein: 0,
+      fat: 0,
+      carbs: 0,
+      hasCalories: false,
+      hasProtein: false,
+      hasFat: false,
+      hasCarbs: false,
+    }
   );
   const formatLogTotals = (log: DietLog) => {
-    const calories = log.total_calories ?? 0;
-    const protein = log.total_protein ?? 0;
-    const fat = log.total_fat ?? 0;
-    const carbs = log.total_carbs ?? 0;
-    return `实际 ${calories ? calories.toFixed(0) : '-'} kcal · P ${protein.toFixed(1)} · F ${fat.toFixed(1)} · C ${carbs.toFixed(1)}`;
+    const caloriesText = formatMaybeNumber(log.total_calories, 0);
+    const proteinText = formatMaybeNumber(log.total_protein, 1);
+    const fatText = formatMaybeNumber(log.total_fat, 1);
+    const carbsText = formatMaybeNumber(log.total_carbs, 1);
+    return `实际 ${caloriesText} kcal · P ${proteinText} · F ${fatText} · C ${carbsText}`;
   };
 
   return (
@@ -311,7 +364,7 @@ function LogCard({ logs, mealType, date, highlighted = false, onAddLog, onEditLo
                       log.items.map((item, idx) => (
                         <div key={idx} className="truncate">
                           {item.food_name}
-                          {item.calories && (
+                          {item.calories !== null && item.calories !== undefined && (
                             <span className="text-xs text-gray-500 ml-1">({item.calories}kcal)</span>
                           )}
                         </div>
@@ -348,7 +401,7 @@ function LogCard({ logs, mealType, date, highlighted = false, onAddLog, onEditLo
               ))}
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-400">
-              合计 {totals.calories ? totals.calories.toFixed(0) : '-'} kcal · P {totals.protein.toFixed(1)} · F {totals.fat.toFixed(1)} · C {totals.carbs.toFixed(1)}
+              合计 {totals.hasCalories ? totals.calories.toFixed(0) : '-'} kcal · P {totals.hasProtein ? totals.protein.toFixed(1) : '-'} · F {totals.hasFat ? totals.fat.toFixed(1) : '-'} · C {totals.hasCarbs ? totals.carbs.toFixed(1) : '-'}
             </div>
           </div>
         ) : (
@@ -1396,30 +1449,84 @@ export default function DietManagementPage() {
 
   const getDayPlanTotals = (dateStr: string) => {
     const dayMeals = plan?.meals?.filter(meal => meal.plan_date === dateStr) || [];
-    return dayMeals.reduce(
+    const totals = dayMeals.reduce(
       (acc, meal) => {
-        acc.calories += meal.total_calories || 0;
-        acc.protein += meal.total_protein || 0;
-        acc.fat += meal.total_fat || 0;
-        acc.carbs += meal.total_carbs || 0;
+        if (meal.total_calories !== null && meal.total_calories !== undefined) {
+          acc.calories += meal.total_calories;
+          acc.hasCalories = true;
+        }
+        if (meal.total_protein !== null && meal.total_protein !== undefined) {
+          acc.protein += meal.total_protein;
+          acc.hasProtein = true;
+        }
+        if (meal.total_fat !== null && meal.total_fat !== undefined) {
+          acc.fat += meal.total_fat;
+          acc.hasFat = true;
+        }
+        if (meal.total_carbs !== null && meal.total_carbs !== undefined) {
+          acc.carbs += meal.total_carbs;
+          acc.hasCarbs = true;
+        }
         return acc;
       },
-      { calories: 0, protein: 0, fat: 0, carbs: 0 }
+      {
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        hasCalories: false,
+        hasProtein: false,
+        hasFat: false,
+        hasCarbs: false,
+      }
     );
+    return {
+      calories: totals.hasCalories ? totals.calories : null,
+      protein: totals.hasProtein ? totals.protein : null,
+      fat: totals.hasFat ? totals.fat : null,
+      carbs: totals.hasCarbs ? totals.carbs : null,
+    };
   };
 
   const getDayActualTotals = (dateStr: string) => {
     const dayLogs = logs.get(dateStr) || [];
-    return dayLogs.reduce(
+    const totals = dayLogs.reduce(
       (acc, log) => {
-        acc.calories += log.total_calories || 0;
-        acc.protein += log.total_protein || 0;
-        acc.fat += log.total_fat || 0;
-        acc.carbs += log.total_carbs || 0;
+        if (log.total_calories !== null && log.total_calories !== undefined) {
+          acc.calories += log.total_calories;
+          acc.hasCalories = true;
+        }
+        if (log.total_protein !== null && log.total_protein !== undefined) {
+          acc.protein += log.total_protein;
+          acc.hasProtein = true;
+        }
+        if (log.total_fat !== null && log.total_fat !== undefined) {
+          acc.fat += log.total_fat;
+          acc.hasFat = true;
+        }
+        if (log.total_carbs !== null && log.total_carbs !== undefined) {
+          acc.carbs += log.total_carbs;
+          acc.hasCarbs = true;
+        }
         return acc;
       },
-      { calories: 0, protein: 0, fat: 0, carbs: 0 }
+      {
+        calories: 0,
+        protein: 0,
+        fat: 0,
+        carbs: 0,
+        hasCalories: false,
+        hasProtein: false,
+        hasFat: false,
+        hasCarbs: false,
+      }
     );
+    return {
+      calories: totals.hasCalories ? totals.calories : null,
+      protein: totals.hasProtein ? totals.protein : null,
+      fat: totals.hasFat ? totals.fat : null,
+      carbs: totals.hasCarbs ? totals.carbs : null,
+    };
   };
 
   const getActiveDayDate = () => addDays(currentWeekStart, activeDayIndex);
@@ -1591,47 +1698,50 @@ export default function DietManagementPage() {
             })()}
           </div>
 
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {(() => {
-              const date = getActiveDayDate();
-              const dateStr = formatDate(date);
-               const planTotals = getDayPlanTotals(dateStr);
-              const actualTotals = getDayActualTotals(dateStr);
-              const daySummary = dailySummaries[dateStr];
-              const actualLogs = logs.get(dateStr) || [];
-              const adherence = planTotals.calories
-                ? Math.min(100, (actualTotals.calories / planTotals.calories) * 100)
-                : 0;
+	          <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+	            {(() => {
+	              const date = getActiveDayDate();
+	              const dateStr = formatDate(date);
+	              const planTotals = getDayPlanTotals(dateStr);
+	              const actualTotals = getDayActualTotals(dateStr);
+	              const daySummary = dailySummaries[dateStr];
+	              const actualLogs = logs.get(dateStr) || [];
+	              const adherence =
+	                planTotals.calories !== null &&
+	                planTotals.calories > 0 &&
+	                actualTotals.calories !== null
+	                  ? Math.min(100, (actualTotals.calories / planTotals.calories) * 100)
+	                  : 0;
 
-              return (
-                <>
-                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-amber-50/60 dark:bg-amber-900/10 p-4">
-                    <div className="text-xs text-amber-700 dark:text-amber-200">{formatDateShort(date)} · 计划目标</div>
-                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                      {planTotals.calories ? `${planTotals.calories.toFixed(0)} kcal` : '未设置'}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      蛋白 {planTotals.protein ? planTotals.protein.toFixed(1) : '--'}g · 脂肪 {planTotals.fat ? planTotals.fat.toFixed(1) : '--'}g · 碳水 {planTotals.carbs ? planTotals.carbs.toFixed(1) : '--'}g
-                    </div>
-                    <div className="mt-3 text-xs text-gray-500">
-                      计划餐次 {plan?.meals?.filter(meal => meal.plan_date === dateStr).length || 0} 餐
-                    </div>
-                  </div>
+	              return (
+	                <>
+	                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-amber-50/60 dark:bg-amber-900/10 p-4">
+	                    <div className="text-xs text-amber-700 dark:text-amber-200">{formatDateShort(date)} · 计划目标</div>
+	                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+	                      {planTotals.calories !== null ? `${planTotals.calories.toFixed(0)} kcal` : '未设置'}
+	                    </div>
+	                    <div className="text-xs text-gray-500 mt-1">
+	                      蛋白 {planTotals.protein !== null ? planTotals.protein.toFixed(1) : '--'}g · 脂肪 {planTotals.fat !== null ? planTotals.fat.toFixed(1) : '--'}g · 碳水 {planTotals.carbs !== null ? planTotals.carbs.toFixed(1) : '--'}g
+	                    </div>
+	                    <div className="mt-3 text-xs text-gray-500">
+	                      计划餐次 {plan?.meals?.filter(meal => meal.plan_date === dateStr).length || 0} 餐
+	                    </div>
+	                  </div>
 
-                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
-                    <div className="text-xs text-gray-500">实际摄入</div>
-                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                      {actualTotals.calories ? `${actualTotals.calories.toFixed(0)} kcal` : '暂无记录'}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      蛋白 {actualTotals.protein.toFixed(1)}g · 脂肪 {actualTotals.fat.toFixed(1)}g · 碳水 {actualTotals.carbs.toFixed(1)}g
-                    </div>
-                    <div className="mt-3 text-xs text-gray-500">
-                      记录餐次 {actualLogs.length} · 完成度 {planTotals.calories ? adherence.toFixed(0) : 0}%
-                    </div>
-                    <div className="mt-3 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
-                      <div
-                        className="h-2 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400"
+	                  <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+	                    <div className="text-xs text-gray-500">实际摄入</div>
+	                    <div className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
+	                      {actualTotals.calories !== null ? `${actualTotals.calories.toFixed(0)} kcal` : '暂无记录'}
+	                    </div>
+	                    <div className="text-xs text-gray-500 mt-1">
+	                      蛋白 {actualTotals.protein !== null ? actualTotals.protein.toFixed(1) : '--'}g · 脂肪 {actualTotals.fat !== null ? actualTotals.fat.toFixed(1) : '--'}g · 碳水 {actualTotals.carbs !== null ? actualTotals.carbs.toFixed(1) : '--'}g
+	                    </div>
+	                    <div className="mt-3 text-xs text-gray-500">
+	                      记录餐次 {actualLogs.length} · 完成度 {planTotals.calories !== null && planTotals.calories > 0 && actualTotals.calories !== null ? adherence.toFixed(0) : 0}%
+	                    </div>
+	                    <div className="mt-3 h-2 rounded-full bg-gray-100 dark:bg-gray-800">
+	                      <div
+	                        className="h-2 rounded-full bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400"
                         style={{ width: `${Math.min(100, adherence)}%` }}
                       />
                     </div>
