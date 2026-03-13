@@ -7,9 +7,16 @@ import { capitalize } from '../../utils';
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const API_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+// Default fallback base:
+// - In production, call Render direct as a safety valve for Vercel rewrite drift.
+// - In local dev, we must NOT default to cross-origin Render because Vite proxies
+//   `/api/*` to the local backend (and mixing backends invalidates JWTs, causing
+//   "login expired" behavior).
+const DEFAULT_FALLBACK_BASE = import.meta.env.DEV
+  ? ''
+  : 'https://cookhero-collab-20260215.onrender.com/api/v1';
 const API_FALLBACK_BASE =
-  import.meta.env.VITE_API_FALLBACK_BASE ||
-  'https://cookhero-collab-20260215.onrender.com/api/v1';
+  import.meta.env.VITE_API_FALLBACK_BASE || DEFAULT_FALLBACK_BASE;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
 type RequestOptions = {
