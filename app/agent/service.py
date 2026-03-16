@@ -14,122 +14,45 @@ from datetime import date, datetime, timedelta
 from dataclasses import asdict
 from typing import Any, AsyncGenerator, Optional
 
-# 默认截断阈值（字符数）
-DEFAULT_TRUNCATE_THRESHOLD = 500
-TRUNCATE_SUFFIX = "...[truncated]"
-
-from app.agent.types import AgentChunk, AgentChunkType, AgentContext
 from app.agent.agents import BaseAgent
 from app.agent.context import AgentContextBuilder, AgentContextCompressor
 from app.agent.database.repository import AgentRepository, agent_repository
 from app.agent.registry import AgentHub
 from app.agent.prompts import VISION_ANALYSIS_PROMPT_TEMPLATE
+from app.agent.service_cards import (
+    build_meal_log_confirm_action,
+    build_meal_plan_planmode_action,
+    build_smart_recommendation_action,
+    should_emit_smart_recommendation_card,
+)
+from app.agent.service_collab import (
+    build_collab_fallback_content,
+    build_collab_runtime,
+    build_collab_timeline_payload,
+    build_collab_trace_step,
+    build_result_summary,
+    finalize_collab_stages,
+    record_collab_tool_output,
+    update_collab_stage,
+)
+from app.agent.service_intents import (
+    calculate_nutrition_totals,
+    extract_log_items_from_vision_analysis,
+    extract_simple_food_items_from_text,
+    format_nutrition_totals_text,
+    infer_meal_type_for_log,
+    is_diet_log_query,
+    is_diet_nutrition_query,
+    is_meal_plan_query,
+)
+from app.agent.service_sse import (
+    DEFAULT_TRUNCATE_THRESHOLD,
+    format_sse_event,
+    truncate_value,
+)
+from app.agent.types import AgentChunk, AgentChunkType, AgentContext
 
 logger = logging.getLogger(__name__)
-
-
-# 不截断的字段（用户输入和 LLM 输出）
-EXCLUDE_TRUNCATE_KEYS = {"content"}
-
-MEAL_PLAN_QUERY_PATTERNS = [
-    re.compile(
-        r"(周计划|周菜单|周食谱|一周|7天|七天|备餐|饮食计划|餐食计划|meal\s*plan|mealprep)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(饮食|餐食|备餐|菜单|食谱|训练).*(计划|规划|安排|制定|生成|推荐|方案)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(计划|规划|安排|制定|生成|推荐|方案).*(饮食|餐食|备餐|菜单|食谱|训练)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(怎么吃|吃什么|如何备餐).*(一周|7天|七天|计划|方案)",
-        re.IGNORECASE,
-    ),
-]
-
-DIET_LOG_QUERY_PATTERNS = [
-    re.compile(
-        r"(帮我|帮忙|麻烦)?(记录|记一下|记下|记住|写入|同步).*(饮食管理|饮食|这餐|本餐|早餐|午餐|晚餐|加餐)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(帮我|帮忙|麻烦|请)?(加到|加入|添加|算到|算进|计入|记到|记入|录入|同步|写入).*(饮食管理|饮食|今日|今天|这餐|本餐|早餐|午餐|晚餐|加餐)",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\b(log|track)\b.*\b(meal|food|lunch|dinner|breakfast)\b", re.IGNORECASE),
-    re.compile(r"(记录|记一下|写入).*(卡路里|热量|宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
-]
-
-DIET_NUTRITION_QUERY_PATTERNS = [
-    # Calories / energy questions (kcal/kJ/J).
-    re.compile(r"(卡路里|热量|能量|大卡|kcal|千卡|千焦|kj|焦耳)", re.IGNORECASE),
-    re.compile(r"(宏量|宏元素|蛋白|脂肪|碳水)", re.IGNORECASE),
-]
-
-MEAL_TYPE_VALUES = {"breakfast", "lunch", "dinner", "snack"}
-
-
-def _truncate_value(
-    value: Any,
-    threshold: int = DEFAULT_TRUNCATE_THRESHOLD,
-    exclude_keys: Optional[set[str]] = None,
-    _current_key: Optional[str] = None,
-) -> Any:
-    """
-    递归截断值中的字符串字段。
-
-    Args:
-        value: 任意值
-        threshold: 字符串截断阈值
-        exclude_keys: 不截断的字段名集合
-        _current_key: 当前处理的字段名（内部使用）
-
-    Returns:
-        截断后的值
-    """
-    if exclude_keys is None:
-        exclude_keys = EXCLUDE_TRUNCATE_KEYS
-
-    if value is None:
-        return None
-
-    if isinstance(value, str):
-        # 如果当前字段在排除列表中，不截断
-        if _current_key in exclude_keys:
-            return value
-        if len(value) > threshold:
-            return value[:threshold] + TRUNCATE_SUFFIX
-        return value
-
-    if isinstance(value, dict):
-        return {
-            k: _truncate_value(v, threshold, exclude_keys, _current_key=k)
-            for k, v in value.items()
-        }
-
-    if isinstance(value, list):
-        return [
-            _truncate_value(item, threshold, exclude_keys, _current_key)
-            for item in value
-        ]
-
-    # 其他类型（int, float, bool 等）直接返回
-    return value
-
-
-def _sanitize_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, dict):
-        return {k: _sanitize_value(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_value(item) for item in value]
-    return str(value)
 
 
 def _build_fallback_agent(name: str) -> BaseAgent:
@@ -226,12 +149,12 @@ class AgentService:
             # avoid multi-iteration LLM output (which can look like duplicated
             # questionnaires for plan requests).
             # ==========================================================================
-            if self._is_meal_plan_query(message):
+            if is_meal_plan_query(message):
                 now = time.time()
                 thinking_end_time = now
 
                 trace_steps: list[dict[str, Any]] = []
-                planmode_action = self._build_meal_plan_planmode_action(
+                planmode_action = build_meal_plan_planmode_action(
                     runtime=None,
                     session_id=actual_session_id,
                 )
@@ -341,15 +264,15 @@ class AgentService:
             response_content = ""
             trace_steps: list[dict[str, Any]] = []
             tool_events = []
-            collab_runtime = self._build_collab_runtime(
+            collab_runtime = build_collab_runtime(
                 context.collab_plan,
                 actual_session_id,
             )
-            planmode_query_triggered = self._is_meal_plan_query(context.current_message)
+            planmode_query_triggered = is_meal_plan_query(context.current_message)
             if collab_runtime:
-                initial_timeline = self._build_collab_timeline_payload(collab_runtime)
+                initial_timeline = build_collab_timeline_payload(collab_runtime)
                 trace_steps.append(
-                    self._build_collab_trace_step(
+                    build_collab_trace_step(
                         content=initial_timeline,
                         action="collab_timeline",
                     )
@@ -385,7 +308,7 @@ class AgentService:
                     )
                     yield self._format_event("vision", vision_result)
                     if collab_runtime:
-                        self._update_collab_stage(
+                        update_collab_stage(
                             collab_runtime,
                             stage_id="recognition",
                             status="completed",
@@ -395,11 +318,11 @@ class AgentService:
                                 else None
                             ),
                         )
-                        recognition_timeline = self._build_collab_timeline_payload(
+                        recognition_timeline = build_collab_timeline_payload(
                             collab_runtime
                         )
                         trace_steps.append(
-                            self._build_collab_trace_step(
+                            build_collab_trace_step(
                                 content=recognition_timeline,
                                 action="collab_timeline",
                             )
@@ -417,17 +340,17 @@ class AgentService:
                     thinking_end_time = now
 
                 if collab_runtime:
-                    self._finalize_collab_stages(collab_runtime)
-                    final_timeline = self._build_collab_timeline_payload(collab_runtime)
+                    finalize_collab_stages(collab_runtime)
+                    final_timeline = build_collab_timeline_payload(collab_runtime)
                     trace_steps.append(
-                        self._build_collab_trace_step(
+                        build_collab_trace_step(
                             content=final_timeline,
                             action="collab_timeline",
                         )
                     )
                     yield self._format_event("collab_timeline", final_timeline)
 
-                planmode_action = self._build_meal_plan_planmode_action(
+                planmode_action = build_meal_plan_planmode_action(
                     runtime=collab_runtime,
                     session_id=actual_session_id,
                 )
@@ -477,13 +400,13 @@ class AgentService:
                 # food images that the vision step parsed into items), emit a UI
                 # confirmation card and avoid claiming data was recorded without a
                 # deterministic write path.
-                diet_log_query_triggered = self._is_diet_log_query(
+                diet_log_query_triggered = is_diet_log_query(
                     context.current_message
                 )
-                nutrition_query_triggered = self._is_diet_nutrition_query(
+                nutrition_query_triggered = is_diet_nutrition_query(
                     context.current_message
                 )
-                vision_items = self._extract_log_items_from_vision_analysis(
+                vision_items = extract_log_items_from_vision_analysis(
                     context.vision_analysis
                 )
                 should_offer_log_confirm = (
@@ -541,7 +464,7 @@ class AgentService:
                         )
 
                 if should_offer_log_confirm and not items_to_confirm:
-                    items_to_confirm = self._extract_simple_food_items_from_text(
+                    items_to_confirm = extract_simple_food_items_from_text(
                         context.current_message
                     )
 
@@ -551,19 +474,19 @@ class AgentService:
                         thinking_end_time = now
 
                     if collab_runtime:
-                        self._finalize_collab_stages(collab_runtime)
-                        final_timeline = self._build_collab_timeline_payload(
+                        finalize_collab_stages(collab_runtime)
+                        final_timeline = build_collab_timeline_payload(
                             collab_runtime
                         )
                         trace_steps.append(
-                            self._build_collab_trace_step(
+                            build_collab_trace_step(
                                 content=final_timeline,
                                 action="collab_timeline",
                             )
                         )
                         yield self._format_event("collab_timeline", final_timeline)
 
-                    inferred_meal_type = self._infer_meal_type_for_log(suggested_meal_type)
+                    inferred_meal_type = infer_meal_type_for_log(suggested_meal_type)
 
                     # Guardrail: avoid creating "empty nutrition" logs.
                     # If we cannot estimate any kcal/P/F/C yet, ask the user to
@@ -586,7 +509,7 @@ class AgentService:
                                 has_any_quantity = True
                                 break
 
-                        totals = self._calculate_nutrition_totals(items_to_confirm)
+                        totals = calculate_nutrition_totals(items_to_confirm)
                         has_any_nutrition = any(
                             totals.get(field) is not None
                             for field in ("calories", "protein", "fat", "carbs")
@@ -606,7 +529,7 @@ class AgentService:
                             missing_reason = "quantity"
 
                     if can_show_confirm_card:
-                        confirm_action = self._build_meal_log_confirm_action(
+                        confirm_action = build_meal_log_confirm_action(
                             session_id=actual_session_id,
                             suggested_log_date=date.today().isoformat(),
                             suggested_meal_type=inferred_meal_type,
@@ -640,8 +563,8 @@ class AgentService:
                             )
                         )
                         if totals is None:
-                            totals = self._calculate_nutrition_totals(items_to_confirm)
-                        totals_text = self._format_nutrition_totals_text(
+                            totals = calculate_nutrition_totals(items_to_confirm)
+                        totals_text = format_nutrition_totals_text(
                             totals,
                             include_kj=include_kj,
                         )
@@ -869,16 +792,16 @@ class AgentService:
                             if forced_call:
                                 stage_id = str(forced_call.get("stage_id") or "")
                                 if stage_id:
-                                    self._update_collab_stage(
+                                    update_collab_stage(
                                         collab_runtime,
                                         stage_id=stage_id,
                                         status="running",
                                     )
-                                    timeline_payload = self._build_collab_timeline_payload(
+                                    timeline_payload = build_collab_timeline_payload(
                                         collab_runtime
                                     )
                                     trace_steps.append(
-                                        self._build_collab_trace_step(
+                                        build_collab_trace_step(
                                             content=timeline_payload,
                                             action="collab_timeline",
                                         )
@@ -938,7 +861,7 @@ class AgentService:
                                 stage_id = str(forced_call.get("stage_id") or "")
                                 if stage_id:
                                     stage_success = bool(result.success)
-                                    self._record_collab_tool_output(
+                                    record_collab_tool_output(
                                         collab_runtime,
                                         stage_id=stage_id,
                                         tool_name=result.name,
@@ -965,21 +888,21 @@ class AgentService:
                                         else "running"
                                     )
                                     summary = (
-                                        self._build_result_summary(result.result)
+                                        build_result_summary(result.result)
                                         if stage_success
                                         else (result.error or "执行失败")
                                     )
-                                    self._update_collab_stage(
+                                    update_collab_stage(
                                         collab_runtime,
                                         stage_id=stage_id,
                                         status=next_status,
                                         summary=summary,
                                     )
-                                    timeline_payload = self._build_collab_timeline_payload(
+                                    timeline_payload = build_collab_timeline_payload(
                                         collab_runtime
                                     )
                                     trace_steps.append(
-                                        self._build_collab_trace_step(
+                                        build_collab_trace_step(
                                             content=timeline_payload,
                                             action="collab_timeline",
                                         )
@@ -1026,12 +949,12 @@ class AgentService:
                         answer_end_time = time.time()
 
                         if collab_runtime:
-                            self._finalize_collab_stages(collab_runtime)
-                            final_timeline = self._build_collab_timeline_payload(
+                            finalize_collab_stages(collab_runtime)
+                            final_timeline = build_collab_timeline_payload(
                                 collab_runtime
                             )
                             trace_steps.append(
-                                self._build_collab_trace_step(
+                                build_collab_trace_step(
                                     content=final_timeline,
                                     action="collab_timeline",
                                 )
@@ -1040,14 +963,14 @@ class AgentService:
 
                         ui_action_payload: Optional[dict[str, Any]] = None
                         if planmode_query_triggered:
-                            ui_action_payload = self._build_meal_plan_planmode_action(
+                            ui_action_payload = build_meal_plan_planmode_action(
                                 runtime=collab_runtime,
                                 session_id=actual_session_id,
                             )
-                        elif collab_runtime and self._should_emit_smart_recommendation_card(
+                        elif collab_runtime and should_emit_smart_recommendation_card(
                             collab_runtime
                         ):
-                            ui_action_payload = self._build_smart_recommendation_action(
+                            ui_action_payload = build_smart_recommendation_action(
                                 collab_runtime
                             )
 
@@ -1080,7 +1003,7 @@ class AgentService:
                             )
 
                         if not response_content and collab_runtime:
-                            fallback_content = self._build_collab_fallback_content(
+                            fallback_content = build_collab_fallback_content(
                                 collab_runtime,
                                 include_smart_card=bool(
                                     isinstance(ui_action_payload, dict)
@@ -1236,698 +1159,12 @@ class AgentService:
             logger.exception(f"AgentService.chat failed: {e}")
             yield self._format_event("error", {"error": str(e)})
 
-    def _build_collab_runtime(
-        self,
-        collab_plan: Optional[dict[str, Any]],
-        session_id: str,
-    ) -> Optional[dict[str, Any]]:
-        if not isinstance(collab_plan, dict):
-            return None
-        if not collab_plan.get("enabled"):
-            return None
 
-        raw_stages = collab_plan.get("stages") or []
-        if not isinstance(raw_stages, list):
-            raw_stages = []
-        stages: list[dict[str, Any]] = []
-        for stage in raw_stages:
-            if not isinstance(stage, dict):
-                continue
-            stage_id = str(stage.get("id") or "").strip()
-            if not stage_id:
-                continue
-            stages.append(
-                {
-                    "id": stage_id,
-                    "label": str(stage.get("label") or stage_id),
-                    "status": str(stage.get("status") or "pending"),
-                    "reason": str(stage.get("reason") or ""),
-                    "summary": str(stage.get("summary") or ""),
-                }
-            )
+    # Helper methods moved to dedicated modules to keep AgentService focused.
+    # - app.agent.service_collab
+    # - app.agent.service_intents
+    # - app.agent.service_cards
 
-        force_tool_calls = collab_plan.get("force_tool_calls") or []
-        if not isinstance(force_tool_calls, list):
-            force_tool_calls = []
-        forced_call_map: dict[str, dict[str, Any]] = {}
-        stage_expected: dict[str, int] = {}
-        for index, raw_call in enumerate(force_tool_calls):
-            if not isinstance(raw_call, dict):
-                continue
-            name = str(raw_call.get("name") or "").strip()
-            if not name:
-                continue
-            stage_id = str(raw_call.get("stage_id") or "").strip()
-            forced_id = f"forced-{name}-{index}"
-            forced_call_map[forced_id] = raw_call
-            if stage_id:
-                stage_expected[stage_id] = stage_expected.get(stage_id, 0) + 1
-
-        return {
-            "session_id": session_id,
-            "timeline_id": f"collab-{uuid.uuid4().hex}",
-            "stages": stages,
-            "forced_call_map": forced_call_map,
-            "stage_expected": stage_expected,
-            "stage_completed": {},
-            "stage_outputs": {},
-            "weekly_summary": None,
-            "weekly_deviation": None,
-            "emotion_triggered": bool(collab_plan.get("emotion_triggered")),
-            "weekly_progress_triggered": bool(
-                collab_plan.get("weekly_progress_triggered")
-            ),
-            "planning_triggered": bool(collab_plan.get("planning_triggered")),
-        }
-
-    def _build_collab_timeline_payload(self, runtime: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "action_id": runtime.get("timeline_id"),
-            "action_type": "collab_timeline",
-            "source": "collaboration_pipeline",
-            "stages": runtime.get("stages", []),
-        }
-
-    def _build_collab_trace_step(
-        self,
-        *,
-        content: dict[str, Any],
-        action: str,
-    ) -> dict[str, Any]:
-        return {
-            "error": None,
-            "action": action,
-            "content": content,
-            "iteration": 0,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "source": "agent",
-            "subagent_name": None,
-        }
-
-    def _update_collab_stage(
-        self,
-        runtime: dict[str, Any],
-        *,
-        stage_id: str,
-        status: str,
-        summary: Optional[str] = None,
-        reason: Optional[str] = None,
-    ) -> None:
-        for stage in runtime.get("stages", []):
-            if stage.get("id") != stage_id:
-                continue
-            stage["status"] = status
-            if summary is not None:
-                stage["summary"] = summary
-            if reason is not None:
-                stage["reason"] = reason
-            return
-
-    def _record_collab_tool_output(
-        self,
-        runtime: dict[str, Any],
-        *,
-        stage_id: str,
-        tool_name: str,
-        arguments: Any,
-        result: Any,
-        success: bool,
-    ) -> None:
-        stage_outputs = runtime.setdefault("stage_outputs", {})
-        existing = stage_outputs.setdefault(stage_id, [])
-        existing.append(
-            {
-                "tool_name": tool_name,
-                "arguments": arguments if isinstance(arguments, dict) else {},
-                "result": result,
-                "success": success,
-            }
-        )
-
-        if tool_name != "diet_analysis":
-            return
-        if not isinstance(arguments, dict):
-            return
-        action = str(arguments.get("action") or "").strip()
-        payload = self._normalize_result_payload(result)
-        if not isinstance(payload, dict):
-            return
-        if action == "weekly_summary":
-            runtime["weekly_summary"] = payload.get("summary", payload)
-        elif action == "deviation":
-            runtime["weekly_deviation"] = payload.get("analysis", payload)
-
-    def _normalize_result_payload(self, result: Any) -> Any:
-        if isinstance(result, dict):
-            return result
-        if isinstance(result, str):
-            try:
-                return json.loads(result)
-            except json.JSONDecodeError:
-                return result
-        return result
-
-    def _build_result_summary(self, result: Any) -> str:
-        payload = self._normalize_result_payload(result)
-        if isinstance(payload, dict):
-            for key in ("message", "result", "summary"):
-                value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value.strip()[:120]
-            if "analysis" in payload and isinstance(payload["analysis"], dict):
-                analysis = payload["analysis"]
-                total_dev = analysis.get("total_deviation")
-                exec_rate = analysis.get("execution_rate")
-                return (
-                    f"偏差 {total_dev} kcal，执行率 {exec_rate}%"
-                    if total_dev is not None and exec_rate is not None
-                    else "已生成周偏差分析"
-                )
-            return "已返回结构化结果"
-        text = str(payload or "").strip()
-        if not text:
-            return "执行完成"
-        return text[:120]
-
-    def _finalize_collab_stages(self, runtime: dict[str, Any]) -> None:
-        for stage in runtime.get("stages", []):
-            status = stage.get("status")
-            if status in {"completed", "failed", "skipped"}:
-                continue
-            if status == "running":
-                stage["status"] = "completed"
-                if not stage.get("summary"):
-                    stage["summary"] = "执行完成"
-            else:
-                stage["status"] = "skipped"
-                if not stage.get("reason"):
-                    stage["reason"] = "本轮未触发该阶段"
-
-    def _build_collab_fallback_content(
-        self,
-        runtime: dict[str, Any],
-        *,
-        include_smart_card: bool = True,
-    ) -> str:
-        lines = ["我已经按你勾选的 Agent 跑完一轮协作，整理如下："]
-        for stage in runtime.get("stages", []):
-            label = stage.get("label") or stage.get("id")
-            status = stage.get("status")
-            if status == "completed":
-                summary = stage.get("summary") or "已完成"
-                lines.append(f"- {label}：✅ {summary}")
-            elif status == "failed":
-                summary = stage.get("summary") or stage.get("reason") or "执行失败"
-                lines.append(f"- {label}：⚠️ {summary}")
-            elif status == "skipped":
-                reason = stage.get("reason") or "未触发"
-                lines.append(f"- {label}：⏭️ {reason}")
-        if include_smart_card:
-            lines.append("\n你可以直接在下方推荐卡里选择“立即应用”来落地到饮食管理。")
-        else:
-            lines.append(
-                "\n如果你希望我给出下一餐纠偏建议，可以直接说“帮我纠偏下一餐”。"
-            )
-        return "\n".join(lines)
-
-    def _is_meal_plan_query(self, message: str) -> bool:
-        if not message:
-            return False
-        return any(pattern.search(message) for pattern in MEAL_PLAN_QUERY_PATTERNS)
-
-    def _is_diet_log_query(self, message: str) -> bool:
-        if not message:
-            return False
-        return any(pattern.search(message) for pattern in DIET_LOG_QUERY_PATTERNS)
-
-    def _has_concrete_food_quantity(self, message: str) -> bool:
-        """Detect "digits + unit" quantities that are likely tied to food amount.
-
-        We intentionally keep this conservative to avoid spamming confirm cards on
-        generic knowledge questions (e.g. "鸡胸肉热量多少") or goal/budget numbers.
-        """
-        if not message:
-            return False
-        text = str(message)
-        return bool(
-            re.search(
-                r"\d+(?:\.\d+)?\s*(?:g|克|公克|kg|千克|公斤|mg|毫克|ml|mL|毫升|l|L|升|斤|两|份|个|颗|只|块|片|包|碗|杯|勺|条|根)",
-                text,
-                re.IGNORECASE,
-            )
-        )
-
-    def _is_diet_nutrition_query(self, message: str) -> bool:
-        """Heuristic to detect simple "food nutrition" questions.
-
-        This is used to optionally show a "log this" confirm card even when the
-        user only asked for calories/macros (e.g. "20g 鸡胸肉多少卡路里？").
-        """
-        if not message:
-            return False
-        text = str(message)
-        # Exclude budget/goal management questions to avoid spamming confirm cards.
-        if re.search(r"(预算|目标|上限|剩余|调整|cap)", text, re.IGNORECASE):
-            return False
-        # Require a concrete quantity (digits + unit) so we don't trigger on generic
-        # "鸡肉热量多少" (we can answer first and ask for quantity), and avoid
-        # triggering on plan/budget numbers.
-        if not self._has_concrete_food_quantity(text):
-            return False
-        return any(pattern.search(text) for pattern in DIET_NUTRITION_QUERY_PATTERNS)
-
-    def _extract_simple_food_items_from_text(self, message: str) -> list[dict[str, Any]]:
-        """Best-effort local parser as a fallback when AI parse fails.
-
-        Supports patterns like:
-        - "鸡胸肉 20g"
-        - "20g 鸡胸肉"
-        """
-        if not message:
-            return []
-        text = str(message)
-        patterns = [
-            re.compile(
-                r"(?P<name>[\u4e00-\u9fffA-Za-z]{1,20})\s*(?P<weight>\d+(?:\.\d+)?)\s*(?:g|克)\b",
-                re.IGNORECASE,
-            ),
-            re.compile(
-                r"(?P<weight>\d+(?:\.\d+)?)\s*(?:g|克)\s*(?P<name>[\u4e00-\u9fffA-Za-z]{1,20})",
-                re.IGNORECASE,
-            ),
-        ]
-        items: list[dict[str, Any]] = []
-        seen: set[tuple[str, float | None]] = set()
-        for pattern in patterns:
-            for match in pattern.finditer(text):
-                name = str(match.group("name") or "").strip()
-                weight_raw = match.group("weight")
-                weight_g: float | None = None
-                if weight_raw:
-                    try:
-                        weight_g = float(weight_raw)
-                    except (TypeError, ValueError):
-                        weight_g = None
-                if not name:
-                    continue
-                key = (name, weight_g)
-                if key in seen:
-                    continue
-                seen.add(key)
-                items.append(
-                    {
-                        "food_name": name,
-                        "weight_g": weight_g,
-                        "unit": "g" if weight_g else None,
-                        "calories": None,
-                        "protein": None,
-                        "fat": None,
-                        "carbs": None,
-                    }
-                )
-        return items
-
-    def _calculate_nutrition_totals(
-        self, items: list[dict[str, Any]]
-    ) -> dict[str, float | None]:
-        """Sum calories/macros from structured items.
-
-        Guardrail: do NOT treat missing values as 0 for display; we return None
-        when no reliable values are present for a given field.
-        """
-        if not items:
-            return {"calories": None, "protein": None, "fat": None, "carbs": None}
-
-        def _sum_field(field: str) -> float | None:
-            total = 0.0
-            seen_any = False
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                raw = item.get(field)
-                if raw is None:
-                    continue
-                try:
-                    value = float(raw)
-                except (TypeError, ValueError):
-                    continue
-                if value <= 0:
-                    continue
-                total += value
-                seen_any = True
-            return total if seen_any else None
-
-        calories = _sum_field("calories")
-        # Calories are typically displayed as integers.
-        calories = float(round(calories)) if calories is not None else None
-
-        return {
-            "calories": calories,
-            "protein": _sum_field("protein"),
-            "fat": _sum_field("fat"),
-            "carbs": _sum_field("carbs"),
-        }
-
-    def _format_nutrition_totals_text(
-        self,
-        totals: dict[str, float | None],
-        *,
-        include_kj: bool = False,
-    ) -> str:
-        """Format totals as a compact line.
-
-        Example: "约 120 kcal（约 502 kJ） · P 20.0 · F 3.0 · C 1.0"
-        """
-        calories = totals.get("calories")
-        protein = totals.get("protein")
-        fat = totals.get("fat")
-        carbs = totals.get("carbs")
-
-        has_any = any(v is not None for v in (calories, protein, fat, carbs))
-        if not has_any:
-            return "热量与宏量营养暂无法可靠估算"
-
-        calories_text = "--" if calories is None else f"{calories:.0f}"
-        protein_text = "--" if protein is None else f"{protein:.1f}"
-        fat_text = "--" if fat is None else f"{fat:.1f}"
-        carbs_text = "--" if carbs is None else f"{carbs:.1f}"
-
-        kj_part = ""
-        if include_kj and calories is not None:
-            kj_value = calories * 4.184
-            kj_part = f"（约 {kj_value:.0f} kJ）"
-
-        return (
-            f"约 {calories_text} kcal{kj_part} · "
-            f"P {protein_text} · F {fat_text} · C {carbs_text}"
-        )
-
-    def _infer_meal_type_for_log(self, meal_type: Optional[str]) -> str:
-        normalized = str(meal_type or "").strip().lower()
-        if normalized in MEAL_TYPE_VALUES:
-            return normalized
-
-        # Simple local-time heuristic as fallback.
-        now = datetime.now()
-        if now.hour < 10:
-            return "breakfast"
-        if now.hour < 15:
-            return "lunch"
-        if now.hour < 21:
-            return "dinner"
-        return "snack"
-
-    def _extract_log_items_from_vision_analysis(
-        self, vision_analysis: Optional[dict]
-    ) -> list[dict[str, Any]]:
-        if not isinstance(vision_analysis, dict):
-            return []
-        raw_items = vision_analysis.get("items")
-        if not isinstance(raw_items, list):
-            return []
-
-        def _safe_float(value: Any) -> float | None:
-            if value is None:
-                return None
-            try:
-                parsed = float(value)
-            except (TypeError, ValueError):
-                return None
-            return parsed if parsed > 0 else None
-
-        def _safe_int(value: Any) -> int | None:
-            if value is None:
-                return None
-            try:
-                parsed = int(value)
-            except (TypeError, ValueError):
-                return None
-            return parsed if parsed > 0 else None
-
-        items: list[dict[str, Any]] = []
-        for item in raw_items:
-            if not isinstance(item, dict):
-                continue
-            food_name = str(item.get("food_name") or "").strip()
-            if not food_name:
-                continue
-            items.append(
-                {
-                    "food_name": food_name,
-                    "weight_g": _safe_float(item.get("weight_g")),
-                    "unit": str(item.get("unit") or "").strip() or None,
-                    "calories": _safe_int(item.get("calories")),
-                    "protein": _safe_float(item.get("protein")),
-                    "fat": _safe_float(item.get("fat")),
-                    "carbs": _safe_float(item.get("carbs")),
-                }
-            )
-        return items
-
-    def _build_meal_log_confirm_action(
-        self,
-        *,
-        session_id: str,
-        suggested_log_date: str,
-        suggested_meal_type: str,
-        items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        return {
-            "action_id": f"meal-log-confirm-{uuid.uuid4().hex}",
-            "action_type": "meal_log_confirm_card",
-            "title": "确认记录本餐",
-            "description": "点击确认后才会写入饮食管理，避免误记录。",
-            "suggested_log_date": suggested_log_date,
-            "suggested_meal_type": suggested_meal_type,
-            "items": items,
-            "source": "agent_diet_log_pipeline",
-            "session_id": session_id,
-        }
-
-    def _infer_planmode_default_intensity(
-        self,
-        runtime: Optional[dict[str, Any]],
-    ) -> str:
-        if not isinstance(runtime, dict):
-            return "balanced"
-        weekly_deviation = runtime.get("weekly_deviation")
-        if not isinstance(weekly_deviation, dict):
-            return "balanced"
-        try:
-            total_deviation = int(weekly_deviation.get("total_deviation"))
-        except (TypeError, ValueError):
-            return "balanced"
-        if total_deviation >= 1200:
-            return "conservative"
-        if total_deviation <= 300:
-            return "aggressive"
-        return "balanced"
-
-    def _build_meal_plan_planmode_action(
-        self,
-        *,
-        runtime: Optional[dict[str, Any]],
-        session_id: str,
-    ) -> dict[str, Any]:
-        default_intensity = self._infer_planmode_default_intensity(runtime)
-        return {
-            "action_id": f"meal-plan-planmode-{uuid.uuid4().hex}",
-            "action_type": "meal_plan_planmode_card",
-            "title": "先做 4 步个性化配置，再生成你的周计划",
-            "description": "按步骤选择饮食与训练偏好，生成可预览、可确认写入的一周方案。",
-            "timeout_seconds": 10,
-            "timeout_mode": "timeout_suggest_only",
-            "default_timeout_suggestion": "超时后仅保留建议，不会自动写入饮食数据。",
-            "steps": [
-                {
-                    "id": "goal_food",
-                    "title": "饮食目标与食物类型",
-                    "hint": "选择你的主要目标和偏好的食物类型。",
-                },
-                {
-                    "id": "restriction",
-                    "title": "限制与过敏",
-                    "hint": "填写需要避开的食物或过敏原。",
-                },
-                {
-                    "id": "relax",
-                    "title": "放松场景方式",
-                    "hint": "选择你更容易执行的放松方式。",
-                },
-                {
-                    "id": "weekly_intensity",
-                    "title": "周进度强度与训练偏好",
-                    "hint": "选择下周计划强度和训练偏好。",
-                },
-            ],
-            "goal_options": [
-                {"value": "fat_loss", "label": "减脂"},
-                {"value": "muscle_gain", "label": "增肌"},
-                {"value": "maintenance", "label": "维持体重"},
-                {"value": "recovery", "label": "恢复与减压"},
-            ],
-            "food_type_options": [
-                {"value": "chinese_home", "label": "家常中餐"},
-                {"value": "high_protein", "label": "高蛋白"},
-                {"value": "low_carb", "label": "低碳水"},
-                {"value": "light_meal", "label": "轻食"},
-                {"value": "comfort_food", "label": "安抚型食物"},
-            ],
-            "restriction_options": [
-                {"value": "no_spicy", "label": "少辣"},
-                {"value": "low_fat", "label": "低脂"},
-                {"value": "vegetarian", "label": "素食优先"},
-                {"value": "no_lactose", "label": "低乳糖"},
-                {"value": "low_sodium", "label": "低钠"},
-            ],
-            "relax_mode_options": [
-                {"value": "breathing", "label": "呼吸放松"},
-                {"value": "walk", "label": "散步舒展"},
-                {"value": "journaling", "label": "情绪记录"},
-                {"value": "music", "label": "音乐放松"},
-            ],
-            "weekly_intensity_options": [
-                {"value": "conservative", "label": "保守"},
-                {"value": "balanced", "label": "平衡"},
-                {"value": "aggressive", "label": "积极"},
-            ],
-            "training_focus_options": [
-                {"value": "low_impact", "label": "低冲击"},
-                {"value": "strength", "label": "力量提升"},
-                {"value": "cardio", "label": "有氧耐力"},
-                {"value": "mobility", "label": "灵活拉伸"},
-            ],
-            "defaults": {
-                "goal": "fat_loss",
-                "weekly_intensity": default_intensity,
-                "training_focus": "low_impact",
-                "cook_time_minutes": 30,
-                "training_minutes_per_day": 25,
-                "training_days_per_week": 3,
-            },
-            "source": "planmode_pipeline",
-            "session_id": session_id,
-        }
-
-    def _infer_next_meal_plan(self) -> tuple[date, str]:
-        now = time.localtime()
-        today = date.today()
-        hour = now.tm_hour
-        if hour < 10:
-            return today, "lunch"
-        if hour < 15:
-            return today, "dinner"
-        if hour < 21:
-            return today, "snack"
-        return today + timedelta(days=1), "breakfast"
-
-    def _should_emit_smart_recommendation_card(self, runtime: dict[str, Any]) -> bool:
-        """
-        Smart recommendation card is an *optional* UI enhancement.
-
-        We only auto-emit it when the user's intent is likely about:
-        - planning/correction (纠偏/下一餐/怎么吃)
-        - emotion support
-        - weekly progress review
-
-        For pure factual/calculation queries (e.g., calories lookup), do not emit
-        the card to avoid "answering the wrong question".
-        """
-        if not isinstance(runtime, dict):
-            return False
-        return bool(
-            runtime.get("planning_triggered")
-            or runtime.get("emotion_triggered")
-            or runtime.get("weekly_progress_triggered")
-        )
-
-    def _build_smart_recommendation_action(
-        self,
-        runtime: dict[str, Any],
-    ) -> dict[str, Any]:
-        plan_date, meal_type = self._infer_next_meal_plan()
-        weekly_summary = runtime.get("weekly_summary") if isinstance(runtime, dict) else None
-        weekly_deviation = runtime.get("weekly_deviation") if isinstance(runtime, dict) else None
-        execution_rate = None
-        total_deviation = None
-        if isinstance(weekly_deviation, dict):
-            execution_rate = weekly_deviation.get("execution_rate")
-            total_deviation = weekly_deviation.get("total_deviation")
-            try:
-                execution_rate = (
-                    float(execution_rate) if execution_rate is not None else None
-                )
-            except (TypeError, ValueError):
-                execution_rate = None
-            try:
-                total_deviation = (
-                    int(total_deviation) if total_deviation is not None else None
-                )
-            except (TypeError, ValueError):
-                total_deviation = None
-
-        weekly_text = "你可以说“看本周进度”获取执行摘要。"
-        if execution_rate is not None and total_deviation is not None:
-            weekly_text = (
-                f"本周执行率 {execution_rate:.1f}% ，总偏差 {total_deviation} kcal。"
-            )
-        elif isinstance(weekly_summary, dict):
-            avg_daily = weekly_summary.get("avg_daily_calories")
-            if avg_daily is not None:
-                weekly_text = f"本周日均摄入约 {avg_daily:.0f} kcal。"
-
-        return {
-            "action_id": f"smart-recommendation-{uuid.uuid4().hex}",
-            "action_type": "smart_recommendation_card",
-            "title": "我整理了一个可直接执行的智能推荐卡",
-            "description": "包含下一餐纠偏、放松场景建议和周进度入口。",
-            "timeout_seconds": 10,
-            "timeout_mode": "timeout_suggest_only",
-            "default_timeout_suggestion": "若你暂时不点击，我会保留建议，不会自动写入饮食数据。",
-            "next_meal_options": [
-                {
-                    "option_id": "balanced",
-                    "title": "轻负担均衡餐",
-                    "description": "优先蛋白 + 蔬菜，减少高油高糖负担。",
-                    "meal_type": meal_type,
-                    "plan_date": plan_date.isoformat(),
-                    "dish_name": "鸡蛋豆腐蔬菜碗",
-                    "calories": 420,
-                },
-                {
-                    "option_id": "protein",
-                    "title": "高蛋白稳态餐",
-                    "description": "帮助稳定饱腹感，避免再次冲动进食。",
-                    "meal_type": meal_type,
-                    "plan_date": plan_date.isoformat(),
-                    "dish_name": "鸡胸肉沙拉配酸奶",
-                    "calories": 460,
-                },
-                {
-                    "option_id": "comfort",
-                    "title": "温和安抚餐",
-                    "description": "低负担 + 情绪安抚，避免惩罚性节食。",
-                    "meal_type": meal_type,
-                    "plan_date": plan_date.isoformat(),
-                    "dish_name": "燕麦酸奶水果杯",
-                    "calories": 380,
-                },
-            ],
-            "relax_suggestions": [
-                "做 3 轮方块呼吸（吸4秒-停4秒-呼4秒-停4秒）。",
-                "走到窗边或户外 5 分钟，放松肩颈和下颌。",
-                "给自己一句中性提醒：一次波动不等于失败。",
-            ],
-            "weekly_progress": {
-                "trigger_hint": "看本周进度",
-                "summary_text": weekly_text,
-                "execution_rate": execution_rate,
-                "total_deviation": total_deviation,
-            },
-            "budget_options": [50, 100, 150],
-            "source": "collaboration_pipeline",
-            "session_id": runtime.get("session_id"),
-        }
 
     def _get_agent_or_fallback(self, agent_name: str) -> BaseAgent:
         try:
@@ -2050,7 +1287,7 @@ class AgentService:
         """
         messages = await self.repository.get_messages(session_id, limit)
         # 对每条消息的内容进行截断
-        return [_truncate_value(msg.to_dict(), truncate_threshold) for msg in messages]
+        return [truncate_value(msg.to_dict(), truncate_threshold) for msg in messages]
 
     def _format_event(
         self,
@@ -2069,11 +1306,7 @@ class AgentService:
         Returns:
             SSE 格式字符串
         """
-        # 截断数据中的字符串字段
-        truncated_data = _truncate_value(data, truncate_threshold)
-        safe_data = _sanitize_value(truncated_data)
-        payload = {"type": event_type, **safe_data}
-        return f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
+        return format_sse_event(event_type, data, truncate_threshold)
 
 
 # 单例
