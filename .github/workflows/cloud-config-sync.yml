@@ -74,7 +74,7 @@ jobs:
           RENDER_SERVICE_NAME: ${{ secrets.RENDER_SERVICE_NAME }}
           MCP_DIET_SERVICE_KEY: ${{ secrets.MCP_DIET_SERVICE_KEY }}
           BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
-        run: ./scripts/sync-render-env.sh --trigger-deploy --wait-seconds 360 --poll-interval-seconds 10
+        run: ./scripts/sync-render-env.sh --trigger-deploy --wait-seconds 720 --poll-interval-seconds 10
 
   skipped-cloud-sync:
     runs-on: ubuntu-latest

@@ -5,7 +5,7 @@ set -euo pipefail
 RENDER_API_BASE="${RENDER_API_BASE:-https://api.render.com/v1}"
 RENDER_API_KEY="${RENDER_API_KEY:-}"
 RENDER_SERVICE_ID="${RENDER_SERVICE_ID:-}"
-RENDER_SERVICE_NAME="${RENDER_SERVICE_NAME:-cookhero-backend}"
+RENDER_SERVICE_NAME="${RENDER_SERVICE_NAME:-}"
 BACKEND_URL="${BACKEND_URL:-https://cookhero-collab-20260215.onrender.com}"
 MCP_DIET_SERVICE_KEY="${MCP_DIET_SERVICE_KEY:-}"
 
@@ -13,6 +13,8 @@ TRIGGER_DEPLOY=false
 VERIFY_ENDPOINT=true
 WAIT_SECONDS="${WAIT_SECONDS:-240}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-8}"
+VERIFY_CONNECT_TIMEOUT_SECONDS="${VERIFY_CONNECT_TIMEOUT_SECONDS:-10}"
+VERIFY_MAX_TIME_SECONDS="${VERIFY_MAX_TIME_SECONDS:-20}"
 
 SCRIPT_NAME="$(basename "$0")"
 
@@ -22,7 +24,7 @@ Usage: ${SCRIPT_NAME} [options]
 
 Options:
   --service-id <id>               Render service id (optional)
-  --service-name <name>           Render service name (default: ${RENDER_SERVICE_NAME})
+  --service-name <name>           Render service name (optional)
   --backend-url <url>             Backend base url (default: ${BACKEND_URL})
   --wait-seconds <n>              Wait seconds for verify polling (default: ${WAIT_SECONDS})
   --poll-interval-seconds <n>     Polling interval seconds (default: ${POLL_INTERVAL_SECONDS})
@@ -100,7 +102,7 @@ resolve_service_id_by_name() {
   if [[ "${RENDER_STATUS_CODE}" != "200" ]]; then
     log_error "Failed to list Render services by name, status=${RENDER_STATUS_CODE}"
     echo "${RENDER_RESPONSE_BODY}" >&2
-    exit 1
+    return 1
   fi
 
   RENDER_SERVICE_ID="$(
@@ -118,8 +120,10 @@ resolve_service_id_by_name() {
 
   if [[ -z "${RENDER_SERVICE_ID}" ]]; then
     log_error "Cannot find Render service id for name: ${RENDER_SERVICE_NAME}"
-    exit 1
+    return 1
   fi
+
+  return 0
 }
 
 upsert_mcp_service_key() {
@@ -163,6 +167,7 @@ verify_mcp_endpoint() {
   local verify_body
   local tool_count
   local payload
+  local error_message
 
   endpoint="${BACKEND_URL%/}/api/v1/mcp/diet-adjust"
   payload='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
@@ -180,6 +185,8 @@ verify_mcp_endpoint() {
     tmp_body="$(mktemp)"
     verify_code="$(
       curl -sS \
+        --connect-timeout "${VERIFY_CONNECT_TIMEOUT_SECONDS}" \
+        --max-time "${VERIFY_MAX_TIME_SECONDS}" \
         -o "${tmp_body}" \
         -w "%{http_code}" \
         -X POST \
@@ -187,7 +194,11 @@ verify_mcp_endpoint() {
         -H "Content-Type: application/json" \
         -H "X-MCP-Service-Key: ${MCP_DIET_SERVICE_KEY}" \
         --data "${payload}"
+        || true
     )"
+    if [[ -z "${verify_code}" ]]; then
+      verify_code="000"
+    fi
     verify_body="$(cat "${tmp_body}")"
     rm -f "${tmp_body}"
 
@@ -199,7 +210,12 @@ verify_mcp_endpoint() {
       fi
       log_info "MCP endpoint reachable but tools empty on attempt ${attempt}, retrying..."
     else
-      log_info "MCP endpoint not ready on attempt ${attempt}, status=${verify_code}, retrying..."
+      error_message="$(echo "${verify_body}" | jq -r '.error.message // empty' 2>/dev/null || true)"
+      if [[ -n "${error_message}" ]]; then
+        log_info "MCP endpoint not ready on attempt ${attempt}, status=${verify_code}, message=${error_message}, retrying..."
+      else
+        log_info "MCP endpoint not ready on attempt ${attempt}, status=${verify_code}, retrying..."
+      fi
     fi
 
     sleep "${POLL_INTERVAL_SECONDS}"
@@ -266,9 +282,29 @@ if [[ -z "${RENDER_SERVICE_ID}" && -z "${RENDER_SERVICE_NAME}" ]]; then
   exit 1
 fi
 
-if [[ -z "${RENDER_SERVICE_ID}" ]]; then
+original_service_id="${RENDER_SERVICE_ID}"
+
+# Prefer resolving by service name (ids can drift when services are recreated).
+# If resolving by name fails, fall back to the explicitly provided id.
+if [[ -n "${RENDER_SERVICE_NAME}" ]]; then
   log_info "Resolving Render service id by name: ${RENDER_SERVICE_NAME}"
-  resolve_service_id_by_name
+  if resolve_service_id_by_name; then
+    if [[ -n "${original_service_id}" && "${original_service_id}" != "${RENDER_SERVICE_ID}" ]]; then
+      log_info "Provided RENDER_SERVICE_ID differs from resolved id; using resolved id=${RENDER_SERVICE_ID}."
+    fi
+  else
+    if [[ -n "${original_service_id}" ]]; then
+      RENDER_SERVICE_ID="${original_service_id}"
+      log_error "Failed to resolve service id by name; falling back to provided RENDER_SERVICE_ID=${RENDER_SERVICE_ID}."
+    else
+      exit 1
+    fi
+  fi
+fi
+
+if [[ -z "${RENDER_SERVICE_ID}" ]]; then
+  log_error "Render service id is empty after resolution. Provide RENDER_SERVICE_ID or a valid RENDER_SERVICE_NAME."
+  exit 1
 fi
 
 log_info "Syncing MCP_DIET_SERVICE_KEY to Render service: ${RENDER_SERVICE_ID}"
