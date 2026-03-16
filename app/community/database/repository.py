@@ -297,6 +297,11 @@ class CommunityRepository:
             except Exception:
                 # Uniqueness constraint might be violated under concurrent requests.
                 # Treat as "already liked".
+                #
+                # Important: a failed flush leaves the session in a pending-rollback
+                # state. We must rollback here because the exception is swallowed and
+                # our session context manager will otherwise attempt to commit.
+                await session.rollback()
                 return False
             return True
 
@@ -348,4 +353,3 @@ class CommunityRepository:
             )
             result = await session.execute(stmt)
             return {str(pid) for pid in result.scalars().all()}
-
