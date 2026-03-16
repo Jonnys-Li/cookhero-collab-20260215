@@ -33,17 +33,17 @@ jobs:
       - name: Run tests with coverage
         run: |
           # Coverage gate: increase gradually (weekly) while keeping it reachable.
-          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=60
+          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=62
 
       - name: Enforce key package coverage thresholds
         run: |
           # Prevent "edge-only coverage": keep these packages healthy and raise over time.
           python scripts/check_coverage_thresholds.py --xml coverage.xml \
-            --min app/services/auth_service.py=70 \
-            --min app/diet=52 \
-            --min app/agent=48 \
-            --min app/rag=75 \
-            --min app/security=45
+            --min app/services/auth_service.py=72 \
+            --min app/diet=55 \
+            --min app/agent=55 \
+            --min app/rag=80 \
+            --min app/security=60
 
       - name: Upload coverage.xml
         if: always()
