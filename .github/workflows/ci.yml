@@ -33,15 +33,15 @@ jobs:
       - name: Run tests with coverage
         run: |
           # Baseline gate: keep this reachable, then increase gradually (weekly).
-          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=40
+          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=45
 
       - name: Enforce key package coverage thresholds
         run: |
           # Prevent "edge-only coverage": keep these packages healthy and raise over time.
           python scripts/check_coverage_thresholds.py --xml coverage.xml \
             --min app/services/auth_service.py=70 \
-            --min app/diet=45 \
-            --min app/agent=40 \
+            --min app/diet=50 \
+            --min app/agent=45 \
             --min app/security=40
 
       - name: Upload coverage.xml
