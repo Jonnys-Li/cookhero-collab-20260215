@@ -33,7 +33,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           # Baseline gate: keep this reachable, then increase gradually (weekly).
-          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=25
+          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=30
 
       - name: Enforce key package coverage thresholds
         run: |
