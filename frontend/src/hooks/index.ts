@@ -11,3 +11,9 @@ export { useTheme, ThemeProvider } from '../contexts';
 
 // Conversation hook
 export { useConversation } from './useConversation';
+
+// Agent hook
+export { useAgent } from './useAgent';
+
+// Unified app-shell selector
+export { useChat } from './useChat';
