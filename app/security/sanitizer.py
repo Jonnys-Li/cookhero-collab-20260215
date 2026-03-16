@@ -65,18 +65,27 @@ class SensitiveDataFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         """Filter and sanitize log record."""
-        # Sanitize the message
-        if isinstance(record.msg, str):
-            record.msg = self._sanitize_string(record.msg)
-
-        # Sanitize args if present
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = self._sanitize_dict(record.args)
-            elif isinstance(record.args, tuple):
-                record.args = tuple(
-                    self._sanitize_value(arg) for arg in record.args
-                )
+        # IMPORTANT:
+        # Avoid mutating format placeholders (e.g. "token: %s") in `record.msg`.
+        # We sanitize the fully formatted message and then clear args so that
+        # logging won't attempt formatting again later.
+        try:
+            if isinstance(record.msg, str):
+                if record.args:
+                    rendered = record.getMessage()
+                    record.msg = self._sanitize_string(rendered)
+                    record.args = ()
+                else:
+                    record.msg = self._sanitize_string(record.msg)
+            elif record.args:
+                # Non-string messages: fall back to sanitizing args only.
+                if isinstance(record.args, dict):
+                    record.args = self._sanitize_dict(record.args)
+                elif isinstance(record.args, tuple):
+                    record.args = tuple(self._sanitize_value(arg) for arg in record.args)
+        except Exception:
+            # Filters must never break logging.
+            return True
 
         return True
 
