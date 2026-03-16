@@ -90,7 +90,7 @@ async def get_conversation_evaluations(
 async def get_evaluation_trends(
     request: Request,
     days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
-    granularity: str = Query("day", regex="^(day|hour)$", description="Grouping granularity"),
+    granularity: str = Query("day", pattern="^(day|hour)$", description="Grouping granularity"),
 ):
     """
     Get evaluation metric trends over time.

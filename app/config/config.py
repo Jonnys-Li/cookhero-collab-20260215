@@ -11,7 +11,7 @@ Design:
 
 import os
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.config.database_config import DatabaseConfig
 from app.config.llm_config import LLMConfig
@@ -136,8 +136,7 @@ class Settings(BaseModel):
     # Image Storage configuration loaded from config.yml (imgbb)
     image_storage: ImageStorageConfig = load_image_storage_config()
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 # Single global settings instance

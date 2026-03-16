@@ -66,7 +66,7 @@ async def get_llm_stats_summary(
 async def get_llm_stats_time_series(
     request: Request,
     days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
-    granularity: str = Query("day", regex="^(day|hour)$", description="Grouping granularity"),
+    granularity: str = Query("day", pattern="^(day|hour)$", description="Grouping granularity"),
     module_name: Optional[str] = Query(None, description="Filter by module name"),
     model_name: Optional[str] = Query(None, description="Filter by model name"),
 ):
@@ -316,7 +316,7 @@ async def get_distribution_by_tool(
 async def get_tool_time_series(
     request: Request,
     days: int = Query(7, ge=1, le=90, description="Number of days to look back"),
-    granularity: str = Query("day", regex="^(day|hour)$", description="Grouping granularity"),
+    granularity: str = Query("day", pattern="^(day|hour)$", description="Grouping granularity"),
     model_name: Optional[str] = Query(None, description="Filter by model name"),
     module_name: Optional[str] = Query(None, description="Filter by module name"),
 ):
