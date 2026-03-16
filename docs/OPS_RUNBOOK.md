@@ -154,3 +154,6 @@ BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
 3. 将以下 checks 设为必需（名称以实际 Actions 展示为准）:
 - `CI / Backend (pytest + coverage)`
 - `CI / Frontend (lint + vitest)`
+
+本地如何跑测试、覆盖率门禁如何查看/调整，可参考：
+- `docs/TESTING_AND_QUALITY.md`
