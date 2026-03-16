@@ -35,6 +35,15 @@ jobs:
           # Baseline gate: keep this reachable, then increase gradually (weekly).
           python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=25
 
+      - name: Enforce key package coverage thresholds
+        run: |
+          # Prevent "edge-only coverage": keep these packages healthy and raise over time.
+          python scripts/check_coverage_thresholds.py --xml coverage.xml \
+            --min app/services/auth_service.py=70 \
+            --min app/diet=35 \
+            --min app/agent=30 \
+            --min app/security=35
+
       - name: Upload coverage.xml
         if: always()
         uses: actions/upload-artifact@v4

@@ -270,7 +270,13 @@ async def lifespan(app: FastAPI):
     logger.info("Agent module initialized.")
 
     # Non-critical tasks run in background so server can bind port quickly on cloud.
-    background_startup_task = asyncio.create_task(_run_non_blocking_startup_tasks())
+    # Tests may disable these tasks to keep the suite deterministic.
+    if _is_truthy(os.getenv("DISABLE_BACKGROUND_STARTUP_TASKS", "false")):
+        logger.info(
+            "Background startup tasks are disabled (DISABLE_BACKGROUND_STARTUP_TASKS=true)."
+        )
+    else:
+        background_startup_task = asyncio.create_task(_run_non_blocking_startup_tasks())
 
     # Keep startup lightweight for cloud deploys.
     # Heavy RAG initialization is deferred until first retrieval request by default.
@@ -326,77 +332,6 @@ EXEMPT_PATHS = {
 
 
 @app.middleware("http")
-async def security_headers_middleware(request: Request, call_next):
-    """Add security headers to all responses."""
-    response = await call_next(request)
-
-    # Security headers
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-
-    # Add rate limit headers if available
-    if hasattr(request.state, "rate_limit_remaining"):
-        response.headers["X-RateLimit-Remaining"] = str(
-            request.state.rate_limit_remaining
-        )
-        response.headers["X-RateLimit-Limit"] = str(request.state.rate_limit_limit)
-
-    return response
-
-
-@app.middleware("http")
-async def rate_limit_middleware(request: Request, call_next):
-    """Rate limiting middleware using Redis."""
-    # Always allow CORS preflight through. Browsers send OPTIONS without auth
-    # headers, and blocking it breaks cross-origin fallback requests.
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    # Check rate limit
-    rate_limit_response = await rate_limiter.check_rate_limit(request)
-    if rate_limit_response:
-        # Log rate limit exceeded
-        audit_logger.rate_limit_exceeded(
-            request=request,
-            user_id=getattr(request.state, "user_id", None),
-            endpoint=str(request.url.path),
-        )
-        return rate_limit_response
-
-    return await call_next(request)
-
-
-@app.middleware("http")
-async def readiness_gate(request: Request, call_next):
-    """Gate non-exempt routes when database is not ready."""
-    # Allow CORS preflight even during startup gates.
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    if getattr(app.state, "db_ready", True):
-        return await call_next(request)
-
-    path = request.url.path
-    if (
-        path in EXEMPT_PATHS
-        or path == "/"
-        or path.startswith("/docs")
-        or path.startswith("/redoc")
-        or path.startswith("/openapi")
-        or path.startswith("/static")
-    ):
-        return await call_next(request)
-
-    return JSONResponse(
-        status_code=503,
-        content={"detail": "服务初始化中，请稍后重试"},
-    )
-
-
-@app.middleware("http")
 async def auth_gateway(request: Request, call_next):
     """Simple gateway: require JWT for all routes except login/register/docs/root."""
     # Allow CORS preflight through without requiring auth.
@@ -431,6 +366,77 @@ async def auth_gateway(request: Request, call_next):
     request.state.user_id = identity.get("user_id")
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    """Rate limiting middleware using Redis."""
+    # Always allow CORS preflight through. Browsers send OPTIONS without auth
+    # headers, and blocking it breaks cross-origin fallback requests.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # Check rate limit
+    rate_limit_response = await rate_limiter.check_rate_limit(request)
+    if rate_limit_response:
+        # Log rate limit exceeded
+        audit_logger.rate_limit_exceeded(
+            request=request,
+            user_id=getattr(request.state, "user_id", None),
+            endpoint=str(request.url.path),
+        )
+        return rate_limit_response
+
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def readiness_gate(request: Request, call_next):
+    """Gate non-exempt routes when database is not ready."""
+    # Allow CORS preflight even during startup gates.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    if getattr(request.app.state, "db_ready", True):
+        return await call_next(request)
+
+    path = request.url.path
+    if (
+        path in EXEMPT_PATHS
+        or path == "/"
+        or path.startswith("/docs")
+        or path.startswith("/redoc")
+        or path.startswith("/openapi")
+        or path.startswith("/static")
+    ):
+        return await call_next(request)
+
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "服务初始化中，请稍后重试"},
+    )
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+
+    # Add rate limit headers if available
+    if hasattr(request.state, "rate_limit_remaining"):
+        response.headers["X-RateLimit-Remaining"] = str(
+            request.state.rate_limit_remaining
+        )
+        response.headers["X-RateLimit-Limit"] = str(request.state.rate_limit_limit)
+
+    return response
 
 
 # Include the API routers
