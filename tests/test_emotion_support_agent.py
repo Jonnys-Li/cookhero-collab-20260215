@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -79,10 +78,6 @@ class FakeDietRepository:
         ]
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
 def test_subagent_registry_builtin_contains_emotion_support():
     subagent_registry.clear()
     register_builtin_subagents()
@@ -91,7 +86,7 @@ def test_subagent_registry_builtin_contains_emotion_support():
     assert "emotion_support" in names
 
 
-def test_emotion_subagent_crisis_short_circuit(monkeypatch):
+def test_emotion_subagent_crisis_short_circuit(monkeypatch, run):
     async def should_not_run_with_tools(*args, **kwargs):
         raise AssertionError("Crisis path should not enter run_with_tools")
 
@@ -150,7 +145,7 @@ def test_emotion_subagent_whitelist_mcp_filtering(monkeypatch):
     assert "mcp_internal_sql" not in tools
 
 
-def test_adjust_today_budget_cap():
+def test_adjust_today_budget_cap(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -166,7 +161,7 @@ def test_adjust_today_budget_cap():
     assert budget["remaining_adjustment_cap"] == 0
 
 
-def test_adjust_today_budget_positive_only():
+def test_adjust_today_budget_positive_only(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -176,7 +171,7 @@ def test_adjust_today_budget_positive_only():
         run(service.adjust_today_budget("u1", -20))
 
 
-def test_get_today_budget_effective_goal():
+def test_get_today_budget_effective_goal(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -192,7 +187,7 @@ def test_get_today_budget_effective_goal():
     assert budget["goal_seeded"] is False
 
 
-def test_get_today_budget_auto_seed_from_recent_avg():
+def test_get_today_budget_auto_seed_from_recent_avg(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -210,7 +205,7 @@ def test_get_today_budget_auto_seed_from_recent_avg():
     assert repo.preferences["u1"].stats["goals"]["calorie_goal"] == 1800
 
 
-def test_get_today_budget_auto_seed_default_when_no_history():
+def test_get_today_budget_auto_seed_default_when_no_history(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -221,7 +216,7 @@ def test_get_today_budget_auto_seed_default_when_no_history():
     assert budget["goal_seeded"] is True
 
 
-def test_update_preferences_marks_explicit_goal_source():
+def test_update_preferences_marks_explicit_goal_source(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -235,7 +230,7 @@ def test_update_preferences_marks_explicit_goal_source():
     assert budget["goal_seeded"] is False
 
 
-def test_update_preferences_goal_persisted_in_stats():
+def test_update_preferences_goal_persisted_in_stats(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
 
@@ -284,7 +279,7 @@ def test_model_to_dict_exposes_goal_compat_fields():
     assert data["carbs_goal"] == 250.0
 
 
-def test_agent_chat_no_mcp_available_graceful_degrade(monkeypatch):
+def test_agent_chat_no_mcp_available_graceful_degrade(monkeypatch, run):
     captured = {}
 
     async def fake_run_with_tools(
@@ -325,7 +320,7 @@ def test_agent_chat_no_mcp_available_graceful_degrade(monkeypatch):
     assert captured["tools"] == ["datetime", "diet_analysis", "web_search"]
 
 
-def test_emotion_subagent_trigger_emits_budget_ui_action(monkeypatch):
+def test_emotion_subagent_trigger_emits_budget_ui_action(monkeypatch, run):
     captured = {"tools": []}
     events = []
 
@@ -397,7 +392,7 @@ def test_emotion_subagent_trigger_emits_budget_ui_action(monkeypatch):
     assert content["timeout_seconds"] == 10
 
 
-def test_emotion_subagent_non_trigger_does_not_emit_ui_action(monkeypatch):
+def test_emotion_subagent_non_trigger_does_not_emit_ui_action(monkeypatch, run):
     events = []
 
     async def fake_run_with_tools(
@@ -437,7 +432,7 @@ def test_emotion_subagent_non_trigger_does_not_emit_ui_action(monkeypatch):
     assert all(event.action != "ui_action" for event in events)
 
 
-def test_emotion_subagent_negative_emotion_without_overeat_emits_ui_action(monkeypatch):
+def test_emotion_subagent_negative_emotion_without_overeat_emits_ui_action(monkeypatch, run):
     events = []
 
     async def fake_run_with_tools(
@@ -505,7 +500,7 @@ def test_manual_trigger_mode_prompt_hint():
     assert "subagent_emotion_support" in DEFAULT_AGENT_SYSTEM_PROMPT
 
 
-def test_adjustment_history_prunes_to_14_days():
+def test_adjustment_history_prunes_to_14_days(run):
     repo = FakeDietRepository()
     service = DietService(repository=repo)
     user_id = "u1"

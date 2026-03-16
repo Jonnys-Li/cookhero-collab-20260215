@@ -1,18 +1,9 @@
-import asyncio
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import agent as agent_endpoint
-
-
-def run(coro):
-    return asyncio.run(coro)
-
-
-def build_request(user_id: str = "u1"):
-    return SimpleNamespace(state=SimpleNamespace(user_id=user_id))
 
 
 def build_payload(**overrides):
@@ -27,7 +18,7 @@ def build_payload(**overrides):
     return agent_endpoint.ApplySmartActionRequest(**data)
 
 
-def test_apply_smart_action_budget_success(monkeypatch):
+def test_apply_smart_action_budget_success(monkeypatch, run, build_request):
     saved_messages = []
 
     async def fake_get_session(session_id: str):
@@ -80,7 +71,7 @@ def test_apply_smart_action_budget_success(monkeypatch):
     assert saved_messages and saved_messages[0][1] == "assistant"
 
 
-def test_apply_smart_action_timeout_mode_no_write(monkeypatch):
+def test_apply_smart_action_timeout_mode_no_write(monkeypatch, run, build_request):
     async def fake_get_session(session_id: str):
         return {"id": session_id, "user_id": "u1"}
 
@@ -121,7 +112,7 @@ def test_apply_smart_action_timeout_mode_no_write(monkeypatch):
     assert response.used_provider == "none"
 
 
-def test_apply_smart_action_next_meal_plan(monkeypatch):
+def test_apply_smart_action_next_meal_plan(monkeypatch, run, build_request):
     class FakeMeal:
         def __init__(self, data: dict):
             self._data = data
@@ -188,7 +179,7 @@ def test_apply_smart_action_next_meal_plan(monkeypatch):
     assert response.result["meal_type"] == "dinner"
 
 
-def test_apply_smart_action_submit_plan_profile(monkeypatch):
+def test_apply_smart_action_submit_plan_profile(monkeypatch, run, build_request):
     saved_messages = []
 
     async def fake_get_session(session_id: str):
@@ -277,7 +268,7 @@ def test_apply_smart_action_submit_plan_profile(monkeypatch):
     assert saved_messages and saved_messages[0][1] == "assistant"
 
 
-def test_apply_smart_action_apply_week_plan(monkeypatch):
+def test_apply_smart_action_apply_week_plan(monkeypatch, run, build_request):
     saved_messages = []
 
     async def fake_get_session(session_id: str):
@@ -341,7 +332,7 @@ def test_apply_smart_action_apply_week_plan(monkeypatch):
     assert saved_messages and saved_messages[0][1] == "assistant"
 
 
-def test_apply_smart_action_create_diet_log_success_and_idempotent(monkeypatch):
+def test_apply_smart_action_create_diet_log_success_and_idempotent(monkeypatch, run, build_request):
     saved_messages = []
     log_meal_calls = []
 
@@ -447,7 +438,7 @@ def test_apply_smart_action_create_diet_log_success_and_idempotent(monkeypatch):
     assert len(saved_messages) == 1
 
 
-def test_apply_smart_action_create_diet_log_rejects_missing_nutrition(monkeypatch):
+def test_apply_smart_action_create_diet_log_rejects_missing_nutrition(monkeypatch, run, build_request):
     log_meal_calls = []
 
     async def fake_get_session(session_id: str):
@@ -499,7 +490,7 @@ def test_apply_smart_action_create_diet_log_rejects_missing_nutrition(monkeypatc
     assert not log_meal_calls
 
 
-def test_apply_smart_action_create_diet_log_parses_unit_strings(monkeypatch):
+def test_apply_smart_action_create_diet_log_parses_unit_strings(monkeypatch, run, build_request):
     log_meal_calls = []
 
     async def fake_get_session(session_id: str):
@@ -560,7 +551,7 @@ def test_apply_smart_action_create_diet_log_parses_unit_strings(monkeypatch):
     assert log_meal_calls
 
 
-def test_apply_smart_action_create_diet_log_fills_macros_from_calories(monkeypatch):
+def test_apply_smart_action_create_diet_log_fills_macros_from_calories(monkeypatch, run, build_request):
     log_meal_calls = []
 
     async def fake_get_session(session_id: str):

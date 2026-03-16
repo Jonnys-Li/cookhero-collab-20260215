@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from copy import deepcopy
 from datetime import date
@@ -7,11 +6,7 @@ from app.diet.nutrition_completion_service import NutritionCompletionService
 from app.diet.service import DietService
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
-def test_complete_dishes_only_fills_missing_fields(monkeypatch):
+def test_complete_dishes_only_fills_missing_fields(monkeypatch, run):
     service = NutritionCompletionService()
 
     async def fake_resolve(*, dish_name: str, user_id: str):
@@ -131,7 +126,7 @@ class FakeDietRepoForNutrition:
         return self.meals_by_id.get(str(meal_id))
 
 
-def test_add_meal_graceful_when_completion_fails(monkeypatch):
+def test_add_meal_graceful_when_completion_fails(monkeypatch, run):
     repo = FakeDietRepoForNutrition()
     service = DietService(repository=repo)
 
@@ -160,7 +155,7 @@ def test_add_meal_graceful_when_completion_fails(monkeypatch):
     assert result["total_calories"] == 520
 
 
-def test_get_plan_by_week_backfills_missing_nutrition(monkeypatch):
+def test_get_plan_by_week_backfills_missing_nutrition(monkeypatch, run):
     repo = FakeDietRepoForNutrition()
     meal = FakeMeal(
         meal_id=str(uuid.uuid4()),
@@ -202,7 +197,7 @@ def test_get_plan_by_week_backfills_missing_nutrition(monkeypatch):
     assert returned_meal["total_protein"] == 18.0
 
 
-def test_get_plan_by_week_backfills_missing_macros_with_auto(monkeypatch):
+def test_get_plan_by_week_backfills_missing_macros_with_auto(monkeypatch, run):
     repo = FakeDietRepoForNutrition()
     meal = FakeMeal(
         meal_id=str(uuid.uuid4()),

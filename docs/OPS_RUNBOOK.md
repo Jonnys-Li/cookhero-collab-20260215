@@ -10,6 +10,7 @@
 - 后端部署策略: Render Free（当前阶段仅监控，不升级付费）
 - 自动监控: GitHub Actions `Production Smoke Test`（每 30 分钟）
 - 自动修复: GitHub Actions `Cloud Config Sync`（push main / 手动触发）
+- （可选）错误追踪: Sentry（后端 `SENTRY_DSN`，前端 `VITE_SENTRY_DSN`）
 
 ## 2. 标准发布流程（常规）
 
@@ -28,6 +29,8 @@
 - Output Directory: `dist`
 - Environment Variables（Production + Preview）:
   - `VITE_API_BASE=/api/v1`
+  - （可选）`VITE_SENTRY_DSN=<sentry_dsn>`
+  - （可选）`VITE_SENTRY_TRACES_SAMPLE_RATE=0`
 
 说明:
 - 生产流量应由前端同域请求 `/api/v1/*`，再由 `frontend/vercel.json` 转发到 Render。
@@ -139,3 +142,15 @@ BACKEND_URL=https://cookhero-collab-20260215.onrender.com \
 - 本阶段不修改后端公开 API 路径与返回协议。
 - 本阶段不引入额外付费监控服务。
 - 本阶段不执行 Render 资源升级，仅通过监控与排查规则控制风险。
+
+## 10. PR 合并门禁（新增）
+
+为实现“失败不可合并”的质量门禁，需要在 GitHub 仓库设置中开启分支保护规则（这一步无法通过代码仓库自动完成）。
+
+推荐设置:
+
+1. GitHub -> Settings -> Branches -> Branch protection rules（对 `main` 生效）
+2. 勾选 `Require status checks to pass before merging`
+3. 将以下 checks 设为必需（名称以实际 Actions 展示为准）:
+- `CI / Backend (pytest + coverage)`
+- `CI / Frontend (lint + vitest)`

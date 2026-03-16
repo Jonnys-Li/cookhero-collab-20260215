@@ -1,12 +1,7 @@
-import asyncio
 import importlib.util
 import sys
 import types
 from pathlib import Path
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 def load_mcp_setup_module(monkeypatch):
@@ -104,7 +99,7 @@ class FakeProvider:
         self.unregistered.append(name)
 
 
-def test_register_builtin_diet_mcp_success(monkeypatch):
+def test_register_builtin_diet_mcp_success(monkeypatch, run):
     module, settings, hub = load_mcp_setup_module(monkeypatch)
     provider = FakeProvider()
     hub._provider = provider
@@ -127,7 +122,7 @@ def test_register_builtin_diet_mcp_success(monkeypatch):
     assert provider.unregistered == []
 
 
-def test_register_builtin_diet_mcp_disabled(monkeypatch):
+def test_register_builtin_diet_mcp_disabled(monkeypatch, run):
     module, settings, hub = load_mcp_setup_module(monkeypatch)
     provider = FakeProvider()
     hub._provider = provider
@@ -139,7 +134,7 @@ def test_register_builtin_diet_mcp_disabled(monkeypatch):
     assert provider.loaded_names == []
 
 
-def test_register_builtin_diet_mcp_load_failure_unregisters(monkeypatch):
+def test_register_builtin_diet_mcp_load_failure_unregisters(monkeypatch, run):
     module, settings, hub = load_mcp_setup_module(monkeypatch)
     provider = FakeProvider(raise_on_load=True)
     hub._provider = provider

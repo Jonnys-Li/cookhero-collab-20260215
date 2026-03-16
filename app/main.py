@@ -1,4 +1,5 @@
 # app/main.py
+from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import os
@@ -38,6 +39,71 @@ logger = logging.getLogger(__name__)
 
 # Setup secure logging with sensitive data filtering
 setup_secure_logging()
+
+
+def _clamp_0_1(value: float) -> float:
+    if value < 0:
+        return 0.0
+    if value > 1:
+        return 1.0
+    return value
+
+
+def _read_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return default
+
+
+def _init_sentry() -> None:
+    """
+    Optional Sentry error tracking.
+
+    Enabled only when SENTRY_DSN is configured. This keeps local dev / CI
+    deterministic and avoids accidentally sending data without explicit opt-in.
+    """
+    dsn = os.getenv("SENTRY_DSN", "").strip()
+    if not dsn:
+        return
+
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+    except Exception as exc:  # pragma: no cover - optional dependency / env gated
+        logger.warning("Sentry is enabled but sentry-sdk failed to import: %s", exc)
+        return
+
+    traces_sample_rate = _clamp_0_1(
+        _read_float_env("SENTRY_TRACES_SAMPLE_RATE", 0.0)
+    )
+    profiles_sample_rate = _clamp_0_1(
+        _read_float_env("SENTRY_PROFILES_SAMPLE_RATE", 0.0)
+    )
+    environment = (
+        os.getenv("SENTRY_ENVIRONMENT")
+        or os.getenv("ENVIRONMENT")
+        or ("production" if os.getenv("RENDER") else "development")
+    )
+
+    sentry_sdk.init(
+        dsn=dsn,
+        environment=environment,
+        release=os.getenv("SENTRY_RELEASE"),
+        integrations=[FastApiIntegration()],
+        send_default_pii=False,
+        # Avoid sending request bodies to Sentry by default.
+        max_request_body_size="never",
+        traces_sample_rate=traces_sample_rate,
+        profiles_sample_rate=profiles_sample_rate,
+    )
+    logger.info("Sentry initialized. env=%s traces=%.3f", environment, traces_sample_rate)
+
+
+_init_sentry()
 
 _TRUTHY_VALUES = {"1", "true", "yes", "y", "on"}
 

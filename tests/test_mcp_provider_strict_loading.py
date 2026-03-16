@@ -1,14 +1,9 @@
-import asyncio
 import importlib.util
 import sys
 import types
 from pathlib import Path
 
 import pytest
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 def load_mcp_provider_module(monkeypatch):
@@ -109,7 +104,7 @@ def load_mcp_provider_module(monkeypatch):
     return module, FakeMCPClient
 
 
-def test_load_server_tools_strict_success(monkeypatch):
+def test_load_server_tools_strict_success(monkeypatch, run):
     module, fake_client = load_mcp_provider_module(monkeypatch)
     provider = module.MCPToolProvider()
 
@@ -130,7 +125,7 @@ def test_load_server_tools_strict_success(monkeypatch):
     assert loaded[0].name == "mcp_demo_hello"
 
 
-def test_load_server_tools_strict_zero_tools_raises(monkeypatch):
+def test_load_server_tools_strict_zero_tools_raises(monkeypatch, run):
     module, fake_client = load_mcp_provider_module(monkeypatch)
     provider = module.MCPToolProvider()
 
@@ -146,7 +141,7 @@ def test_load_server_tools_strict_zero_tools_raises(monkeypatch):
     assert exc.value.error_code == "zero_tools"
 
 
-def test_load_server_tools_non_strict_zero_tools_returns_empty(monkeypatch):
+def test_load_server_tools_non_strict_zero_tools_returns_empty(monkeypatch, run):
     module, fake_client = load_mcp_provider_module(monkeypatch)
     provider = module.MCPToolProvider()
 
@@ -160,7 +155,7 @@ def test_load_server_tools_non_strict_zero_tools_returns_empty(monkeypatch):
     assert loaded == []
 
 
-def test_load_server_tools_strict_initialize_error(monkeypatch):
+def test_load_server_tools_strict_initialize_error(monkeypatch, run):
     module, fake_client = load_mcp_provider_module(monkeypatch)
     provider = module.MCPToolProvider()
 
@@ -176,7 +171,7 @@ def test_load_server_tools_strict_initialize_error(monkeypatch):
     assert exc.value.error_code == "initialize_failed"
 
 
-def test_list_servers_with_tools_supports_server_name_with_underscores(monkeypatch):
+def test_list_servers_with_tools_supports_server_name_with_underscores(monkeypatch, run):
     module, fake_client = load_mcp_provider_module(monkeypatch)
     provider = module.MCPToolProvider()
 

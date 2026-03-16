@@ -1,14 +1,9 @@
-import asyncio
 import importlib.util
 import sys
 import types
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 def load_mcp_base_module(monkeypatch):
@@ -69,7 +64,7 @@ def load_mcp_base_module(monkeypatch):
     return module, FakeMCPClient
 
 
-def test_mcp_tool_keeps_user_id_when_schema_declares_it(monkeypatch):
+def test_mcp_tool_keeps_user_id_when_schema_declares_it(monkeypatch, run):
     module, fake_client = load_mcp_base_module(monkeypatch)
     mcp_tool = module.MCPTool(
         name="mcp_demo_adjust",
@@ -94,7 +89,7 @@ def test_mcp_tool_keeps_user_id_when_schema_declares_it(monkeypatch):
     assert fake_client.last_call["arguments"]["emotion_level"] == "medium"
 
 
-def test_mcp_tool_strips_user_id_when_schema_missing_it(monkeypatch):
+def test_mcp_tool_strips_user_id_when_schema_missing_it(monkeypatch, run):
     module, fake_client = load_mcp_base_module(monkeypatch)
     mcp_tool = module.MCPTool(
         name="mcp_demo_weather",

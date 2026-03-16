@@ -1,13 +1,8 @@
-import asyncio
 import json
 
 from starlette.requests import Request
 
 from app.api.v1.endpoints import mcp as mcp_endpoint
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 def make_request(payload: dict, *, service_key: str = "test-key") -> Request:
@@ -40,7 +35,7 @@ def parse_mcp_text_payload(response_body: dict) -> dict:
     return json.loads(text)
 
 
-def test_initialize_success(monkeypatch):
+def test_initialize_success(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     payload = {
@@ -59,7 +54,7 @@ def test_initialize_success(monkeypatch):
     assert response.headers.get("Mcp-Session-Id")
 
 
-def test_tools_list_returns_expected_tools(monkeypatch):
+def test_tools_list_returns_expected_tools(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     payload = {
@@ -77,7 +72,7 @@ def test_tools_list_returns_expected_tools(monkeypatch):
     assert names == {"get_today_budget", "auto_adjust_today_budget"}
 
 
-def test_tools_call_get_today_budget(monkeypatch):
+def test_tools_call_get_today_budget(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     async def fake_get_today_budget(user_id: str, target_date=None):
@@ -115,7 +110,7 @@ def test_tools_call_get_today_budget(monkeypatch):
     assert text_payload["budget"]["effective_goal"] == 1850
 
 
-def test_tools_call_auto_adjust_uses_emotion_mapping(monkeypatch):
+def test_tools_call_auto_adjust_uses_emotion_mapping(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     async def fake_adjust_today_budget(
@@ -167,7 +162,7 @@ def test_tools_call_auto_adjust_uses_emotion_mapping(monkeypatch):
     assert text_payload["effective_goal"] == 1900
 
 
-def test_invalid_service_key_returns_unauthorized(monkeypatch):
+def test_invalid_service_key_returns_unauthorized(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "expected-key")
 
     payload = {
@@ -187,7 +182,7 @@ def test_invalid_service_key_returns_unauthorized(monkeypatch):
     assert "无效" in body["error"]["message"]
 
 
-def test_missing_service_key_config_returns_503(monkeypatch):
+def test_missing_service_key_config_returns_503(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "")
 
     payload = {
@@ -203,7 +198,7 @@ def test_missing_service_key_config_returns_503(monkeypatch):
     assert "未配置" in body["error"]["message"]
 
 
-def test_invalid_date_and_unknown_method_return_jsonrpc_error(monkeypatch):
+def test_invalid_date_and_unknown_method_return_jsonrpc_error(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     bad_date_payload = {
@@ -237,7 +232,7 @@ def test_invalid_date_and_unknown_method_return_jsonrpc_error(monkeypatch):
     assert unknown_method_body["error"]["code"] == -32601
 
 
-def test_unknown_tool_returns_jsonrpc_error(monkeypatch):
+def test_unknown_tool_returns_jsonrpc_error(monkeypatch, run):
     monkeypatch.setattr(mcp_endpoint.settings, "MCP_DIET_SERVICE_KEY", "test-key")
 
     payload = {

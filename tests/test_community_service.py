@@ -1,14 +1,9 @@
-import asyncio
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import pytest
 
 from app.community.service import CommunityService
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 @dataclass
@@ -192,7 +187,7 @@ class FakeRepo:
         return True
 
 
-def test_create_post_anonymous_generates_display_name():
+def test_create_post_anonymous_generates_display_name(run):
     repo = FakeRepo()
     service = CommunityService(repository=repo)  # type: ignore[arg-type]
 
@@ -212,7 +207,7 @@ def test_create_post_anonymous_generates_display_name():
     assert post["author_display_name"] != "alice"
 
 
-def test_toggle_like_idempotent():
+def test_toggle_like_idempotent(run):
     repo = FakeRepo()
     service = CommunityService(repository=repo)  # type: ignore[arg-type]
 
@@ -237,7 +232,7 @@ def test_toggle_like_idempotent():
     assert second["like_count"] == 0
 
 
-def test_delete_comment_requires_owner():
+def test_delete_comment_requires_owner(run):
     repo = FakeRepo()
     service = CommunityService(repository=repo)  # type: ignore[arg-type]
 
@@ -268,7 +263,7 @@ def test_delete_comment_requires_owner():
     assert ok is False
 
 
-def test_suggest_tags_filters_to_allowed_set(monkeypatch):
+def test_suggest_tags_filters_to_allowed_set(monkeypatch, run):
     repo = FakeRepo()
     service = CommunityService(repository=repo)  # type: ignore[arg-type]
 
@@ -284,7 +279,7 @@ def test_suggest_tags_filters_to_allowed_set(monkeypatch):
     assert "不合法" not in tags
 
 
-def test_suggest_reply_rejects_shame_words(monkeypatch):
+def test_suggest_reply_rejects_shame_words(monkeypatch, run):
     repo = FakeRepo()
     # Seed a post for reply context
     repo.posts["post-1"] = FakePost(
@@ -312,7 +307,7 @@ def test_suggest_reply_rejects_shame_words(monkeypatch):
         run(service.suggest_reply_for_post(user_id="u1", post_id="post-1"))
 
 
-def test_suggest_empathy_card_returns_text(monkeypatch):
+def test_suggest_empathy_card_returns_text(monkeypatch, run):
     repo = FakeRepo()
     repo.posts["post-1"] = FakePost(
         id="post-1",
@@ -340,7 +335,7 @@ def test_suggest_empathy_card_returns_text(monkeypatch):
     assert len(card) > 10
 
 
-def test_suggest_empathy_card_rejects_shame_words(monkeypatch):
+def test_suggest_empathy_card_rejects_shame_words(monkeypatch, run):
     repo = FakeRepo()
     repo.posts["post-1"] = FakePost(
         id="post-1",
@@ -367,7 +362,7 @@ def test_suggest_empathy_card_rejects_shame_words(monkeypatch):
         run(service.suggest_empathy_card_for_post(user_id="u1", post_id="post-1"))
 
 
-def test_polish_post_content_returns_text(monkeypatch):
+def test_polish_post_content_returns_text(monkeypatch, run):
     repo = FakeRepo()
     service = CommunityService(repository=repo)  # type: ignore[arg-type]
 

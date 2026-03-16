@@ -60,7 +60,7 @@ export async function* streamConversation(
               try {
                 const data = JSON.parse(line.slice(6));
                 yield data as SSEEvent;
-              } catch (e) {
+              } catch {
                 console.warn('Failed to parse final SSE event:', line);
               }
             }
@@ -80,7 +80,7 @@ export async function* streamConversation(
           try {
             const data = JSON.parse(line.slice(6));
             yield data as SSEEvent;
-          } catch (e) {
+          } catch {
             console.warn('Failed to parse SSE event:', line);
           }
         }

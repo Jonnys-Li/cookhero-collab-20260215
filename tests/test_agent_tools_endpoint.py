@@ -1,21 +1,10 @@
-import asyncio
-from types import SimpleNamespace
-
 from fastapi import HTTPException
 import pytest
 
 from app.api.v1.endpoints import agent as agent_endpoint
 
 
-def run(coro):
-    return asyncio.run(coro)
-
-
-def build_request(user_id: str = "u1"):
-    return SimpleNamespace(state=SimpleNamespace(user_id=user_id))
-
-
-def test_list_available_tools_includes_builtin_diet_mcp(monkeypatch):
+def test_list_available_tools_includes_builtin_diet_mcp(monkeypatch, run, build_request):
     async_servers = [
         {
             "name": "builtin",
@@ -51,7 +40,7 @@ def test_list_available_tools_includes_builtin_diet_mcp(monkeypatch):
     assert "subagents" not in names
 
 
-def test_list_available_tools_requires_authentication():
+def test_list_available_tools_requires_authentication(run, build_request):
     with pytest.raises(HTTPException) as exc_info:
         run(agent_endpoint.list_available_tools(build_request(user_id="")))
     assert exc_info.value.status_code == 401

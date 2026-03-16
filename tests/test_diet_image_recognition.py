@@ -1,4 +1,3 @@
-import asyncio
 import base64
 from typing import Optional
 
@@ -8,10 +7,6 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 from app.api.v1.endpoints import diet as diet_api
-
-
-def run(coro):
-    return asyncio.run(coro)
 
 
 def make_request(user_id: Optional[str] = None) -> Request:
@@ -25,7 +20,7 @@ def build_image_payload(raw: bytes = b"fake-image") -> str:
     return base64.b64encode(raw).decode("utf-8")
 
 
-def test_recognize_image_success(monkeypatch):
+def test_recognize_image_success(monkeypatch, run):
     async def fake_recognize(
         user_id: str, images: list, context_text: Optional[str] = None
     ):
@@ -63,7 +58,7 @@ def test_recognize_image_success(monkeypatch):
     assert response.dishes[1].name == "白米饭"
 
 
-def test_recognize_image_returns_empty_dishes(monkeypatch):
+def test_recognize_image_returns_empty_dishes(monkeypatch, run):
     async def fake_recognize(
         user_id: str, images: list, context_text: Optional[str] = None
     ):
@@ -85,7 +80,7 @@ def test_recognize_image_returns_empty_dishes(monkeypatch):
     assert response.source == "ai_image"
 
 
-def test_recognize_image_vision_not_enabled(monkeypatch):
+def test_recognize_image_vision_not_enabled(monkeypatch, run):
     error_message = "当前未开启拍照识别，请先配置 VISION_API_KEY 或可用的 LLM_API_KEY"
 
     async def fake_recognize(
@@ -106,7 +101,7 @@ def test_recognize_image_vision_not_enabled(monkeypatch):
     assert exc.value.detail == error_message
 
 
-def test_recognize_image_requires_auth():
+def test_recognize_image_requires_auth(run):
     payload = diet_api.RecognizeMealFromImageRequest(
         images=[diet_api.ImageData(data=build_image_payload(), mime_type="image/jpeg")]
     )
@@ -117,14 +112,14 @@ def test_recognize_image_requires_auth():
     assert exc.value.status_code == 401
 
 
-def test_recognize_image_validation_invalid_mime():
+def test_recognize_image_validation_invalid_mime(run):
     with pytest.raises(ValidationError):
         diet_api.RecognizeMealFromImageRequest(
             images=[diet_api.ImageData(data=build_image_payload(), mime_type="image/bmp")]
         )
 
 
-def test_recognize_image_validation_oversize(monkeypatch):
+def test_recognize_image_validation_oversize(monkeypatch, run):
     monkeypatch.setattr(diet_api, "MAX_IMAGE_SIZE_MB", 0.00001)
 
     with pytest.raises(ValidationError):

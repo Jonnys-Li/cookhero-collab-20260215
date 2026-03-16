@@ -1,18 +1,9 @@
-import asyncio
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import agent as agent_endpoint
-
-
-def run(coro):
-    return asyncio.run(coro)
-
-
-def build_request(user_id: str = "u1"):
-    return SimpleNamespace(state=SimpleNamespace(user_id=user_id))
 
 
 def build_payload(**overrides):
@@ -27,7 +18,7 @@ def build_payload(**overrides):
     return agent_endpoint.ApplyEmotionBudgetAdjustRequest(**data)
 
 
-def test_apply_emotion_budget_adjust_success(monkeypatch):
+def test_apply_emotion_budget_adjust_success(monkeypatch, run, build_request):
     saved_messages = []
 
     async def fake_get_session(session_id: str):
@@ -109,7 +100,7 @@ def test_apply_emotion_budget_adjust_success(monkeypatch):
     )
 
 
-def test_apply_emotion_budget_adjust_idempotent(monkeypatch):
+def test_apply_emotion_budget_adjust_idempotent(monkeypatch, run, build_request):
     async def fake_get_session(session_id: str):
         return {"id": session_id, "user_id": "u1"}
 
@@ -156,7 +147,7 @@ def test_apply_emotion_budget_adjust_idempotent(monkeypatch):
     assert response.used_provider == "local"
 
 
-def test_apply_emotion_budget_adjust_cooldown_skips_followup_card(monkeypatch):
+def test_apply_emotion_budget_adjust_cooldown_skips_followup_card(monkeypatch, run, build_request):
     saved_messages = []
 
     async def fake_get_session(session_id: str):
@@ -242,7 +233,7 @@ def test_apply_emotion_budget_adjust_cooldown_skips_followup_card(monkeypatch):
     assert saved_messages[0]["trace"][0]["action"] == "emotion_budget_adjust_result"
 
 
-def test_apply_emotion_budget_adjust_unknown_action_id(monkeypatch):
+def test_apply_emotion_budget_adjust_unknown_action_id(monkeypatch, run, build_request):
     async def fake_get_session(session_id: str):
         return {"id": session_id, "user_id": "u1"}
 
