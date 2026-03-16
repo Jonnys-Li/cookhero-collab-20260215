@@ -1,0 +1,26 @@
+name: Performance (k6)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run k6 (non-LLM endpoints)
+        uses: grafana/k6-action@v0.3.1
+        env:
+          BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
+          SMOKE_USERNAME: ${{ secrets.SMOKE_USERNAME }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+          K6_VUS: "5"
+          K6_DURATION: "30s"
+        with:
+          filename: tests/performance/non_llm_smoke.js
