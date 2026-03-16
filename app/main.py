@@ -31,10 +31,9 @@ from app.security.middleware.rate_limiter import rate_limiter
 from app.security.sanitizer import setup_secure_logging
 from app.security.audit import audit_logger
 import logging
+from app.utils.logger import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Setup secure logging with sensitive data filtering
