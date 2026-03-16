@@ -1,5 +1,5 @@
 from app.agent.context import AgentContextBuilder
-from app.agent.service import AgentService
+from app.agent.service_cards import should_emit_smart_recommendation_card
 
 
 def test_planning_trigger_patterns():
@@ -29,10 +29,8 @@ def test_collab_plan_disabled_for_pure_factual_query_even_with_subagents_selecte
 
 
 def test_should_emit_smart_recommendation_card_gate():
-    service = AgentService()
-
     assert (
-        service._should_emit_smart_recommendation_card(
+        should_emit_smart_recommendation_card(
             {
                 "planning_triggered": False,
                 "emotion_triggered": False,
@@ -42,7 +40,7 @@ def test_should_emit_smart_recommendation_card_gate():
         is False
     )
     assert (
-        service._should_emit_smart_recommendation_card(
+        should_emit_smart_recommendation_card(
             {
                 "planning_triggered": True,
                 "emotion_triggered": False,
@@ -52,7 +50,7 @@ def test_should_emit_smart_recommendation_card_gate():
         is True
     )
     assert (
-        service._should_emit_smart_recommendation_card(
+        should_emit_smart_recommendation_card(
             {
                 "planning_triggered": False,
                 "emotion_triggered": True,
@@ -62,7 +60,7 @@ def test_should_emit_smart_recommendation_card_gate():
         is True
     )
     assert (
-        service._should_emit_smart_recommendation_card(
+        should_emit_smart_recommendation_card(
             {
                 "planning_triggered": False,
                 "emotion_triggered": False,
@@ -71,4 +69,3 @@ def test_should_emit_smart_recommendation_card_gate():
         )
         is True
     )
-
