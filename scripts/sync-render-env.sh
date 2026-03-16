@@ -193,8 +193,7 @@ verify_mcp_endpoint() {
         "${endpoint}" \
         -H "Content-Type: application/json" \
         -H "X-MCP-Service-Key: ${MCP_DIET_SERVICE_KEY}" \
-        --data "${payload}"
-        || true
+        --data "${payload}" || true
     )"
     if [[ -z "${verify_code}" ]]; then
       verify_code="000"
