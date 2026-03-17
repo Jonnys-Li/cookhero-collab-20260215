@@ -16,6 +16,8 @@ BACKEND_URL="${1:-https://cookhero-collab-20260215.onrender.com}"
 FRONTEND_URL="${2:-https://frontend-one-gray-39.vercel.app}"
 API_BASE="${BACKEND_URL}/api/v1"
 TOKEN=""
+CONNECT_TIMEOUT_SECONDS="${CONNECT_TIMEOUT_SECONDS:-8}"
+REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-30}"
 
 echo "========================================="
 echo "CookHero 连接测试"
@@ -32,7 +34,14 @@ test_endpoint() {
 
     echo -n "测试 ${name}... "
 
-    local status_code=$(curl -s -o /dev/null -w "%{http_code}" "${API_BASE}${endpoint}")
+    local status_code=$(
+        curl -sS \
+          --http1.1 \
+          --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+          --max-time "${REQUEST_TIMEOUT_SECONDS}" \
+          -o /dev/null -w "%{http_code}" \
+          "${API_BASE}${endpoint}" || true
+    )
 
     if [ "$status_code" = "$expected_code" ]; then
         echo -e "${GREEN}✓ PASS${NC} (HTTP ${status_code})"
@@ -52,7 +61,14 @@ test_full_url() {
     echo -n "测试 ${name}... "
 
     local status_code
-    status_code=$(curl -s -o /dev/null -w "%{http_code}" "${full_url}")
+    status_code=$(
+        curl -sS \
+          --http1.1 \
+          --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+          --max-time "${REQUEST_TIMEOUT_SECONDS}" \
+          -o /dev/null -w "%{http_code}" \
+          "${full_url}" || true
+    )
 
     if [ "$status_code" = "$expected_code" ]; then
         echo -e "${GREEN}✓ PASS${NC} (HTTP ${status_code})"
@@ -85,6 +101,9 @@ echo ""
 echo "--- 登录功能测试 ---"
 echo -n "测试用户注册/登录... "
 response=$(curl -s -X POST "${API_BASE}/auth/register" \
+    --http1.1 \
+    --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${REQUEST_TIMEOUT_SECONDS}" \
     -H "Content-Type: application/json" \
     -d '{"username":"test_user_'$(date +%s)'","password":"testpass123"}')
 
@@ -101,6 +120,9 @@ if [ -n "$TOKEN" ]; then
     echo "--- 认证请求测试 ---"
     echo -n "测试获取用户信息... "
     user_response=$(curl -s -X GET "${API_BASE}/user/profile" \
+        --http1.1 \
+        --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+        --max-time "${REQUEST_TIMEOUT_SECONDS}" \
         -H "Authorization: Bearer ${TOKEN}")
 
     if echo "$user_response" | grep -q "username"; then
@@ -115,6 +137,9 @@ fi
 echo "--- CORS 配置测试 ---"
 echo -n "检查 CORS 响应头... "
 cors_headers=$(curl -s -I -X OPTIONS "${API_BASE}/auth/login" \
+    --http1.1 \
+    --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
+    --max-time "${REQUEST_TIMEOUT_SECONDS}" \
     -H "Origin: ${FRONTEND_URL}" \
     -H "Access-Control-Request-Method: POST" \
     2>&1 | grep -i "access-control-allow-origin" || true)
