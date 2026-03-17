@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Heart, Loader2, RefreshCcw, Send, Sparkles } from 'lucide-react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../contexts';
@@ -9,6 +9,13 @@ import {
   toggleCommunityReaction,
 } from '../../services/api/community';
 import type { CommunityComment, CommunityPost } from '../../types/community';
+
+const SUPPORT_CHIPS: string[] = [
+  '我懂你现在很难，先抱抱你。',
+  '你已经在努力了，先把下一顿做简单一点，可以吗？',
+  '如果愿意，说说今天最难的一刻是什么？我在。',
+  '先别自责。我们一起把节奏找回来，先做一个很小的动作。',
+];
 
 function formatTime(ts?: string | null): string {
   if (!ts) return '';
@@ -87,6 +94,7 @@ export default function CommunityPostDetailPage() {
   const [commentAnon, setCommentAnon] = useState(true);
   const [isCommenting, setIsCommenting] = useState(false);
   const [isGeneratingReply, setIsGeneratingReply] = useState(false);
+  const commentInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const postId = id || '';
   const canSendComment = useMemo(() => commentText.trim().length > 0 && !isCommenting, [commentText, isCommenting]);
@@ -325,7 +333,24 @@ export default function CommunityPostDetailPage() {
                     </button>
                   </div>
 
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {SUPPORT_CHIPS.map((text) => (
+                      <button
+                        key={text}
+                        type="button"
+                        onClick={() => {
+                          setCommentText(text);
+                          commentInputRef.current?.focus();
+                        }}
+                        className="text-xs px-3 py-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        {text}
+                      </button>
+                    ))}
+                  </div>
+
                   <textarea
+                    ref={commentInputRef}
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value)}
                     rows={3}
@@ -351,4 +376,3 @@ export default function CommunityPostDetailPage() {
     </div>
   );
 }
-

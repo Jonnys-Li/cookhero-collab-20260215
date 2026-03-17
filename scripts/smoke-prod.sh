@@ -264,6 +264,23 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
     "200" \
     -H "Authorization: Bearer ${TOKEN}"
 
+  # 5.5) Community: need_support feed (lightweight shape check, no side effects)
+  assert_status_with_retry \
+    "Community need_support feed check" \
+    "GET" \
+    "${FRONTEND_URL}/api/v1/community/feed?sort=need_support&limit=1&offset=0" \
+    "200" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  if status_matches_expected "${LAST_STATUS}" "200"; then
+    if ! jq -e '.posts | type == "array"' "${TMP_BODY}" >/dev/null 2>&1; then
+      handle_assert_failure "Community feed response missing posts array"
+    fi
+    if ! jq -e '.total | type == "number"' "${TMP_BODY}" >/dev/null 2>&1; then
+      handle_assert_failure "Community feed response missing total number"
+    fi
+  fi
+
   # 6) Agent tools
   assert_status_with_retry \
     "Agent tools check" \

@@ -136,6 +136,7 @@ export default function CommunityFeedPage() {
 
   const [posts, setPosts] = useState<CommunityPost[]>([]);
   const [total, setTotal] = useState(0);
+  const [selectedSort, setSelectedSort] = useState<'latest' | 'need_support'>('latest');
   const [selectedTag, setSelectedTag] = useState('');
   const [selectedMood, setSelectedMood] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -185,6 +186,7 @@ export default function CommunityFeedPage() {
       const res = await getCommunityFeed(token, {
         limit: 20,
         offset: append ? posts.length : 0,
+        sort: selectedSort,
         tag: selectedTag || undefined,
         mood: selectedMood || undefined,
       });
@@ -197,7 +199,7 @@ export default function CommunityFeedPage() {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [token, posts.length, selectedTag, selectedMood]);
+  }, [token, posts.length, selectedSort, selectedTag, selectedMood]);
 
   useEffect(() => {
     setPosts([]);
@@ -205,7 +207,7 @@ export default function CommunityFeedPage() {
     if (!token) return;
     fetchFeed({ append: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, selectedTag, selectedMood]);
+  }, [token, selectedSort, selectedTag, selectedMood]);
 
   useEffect(() => {
     if (!token) {
@@ -408,6 +410,33 @@ export default function CommunityFeedPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3 mb-4">
+          <div className="inline-flex rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSelectedSort('latest')}
+              aria-pressed={selectedSort === 'latest'}
+              className={`px-3 py-2 text-sm transition-colors ${
+                selectedSort === 'latest'
+                  ? 'bg-orange-500 text-white'
+                  : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'
+              }`}
+            >
+              最新
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedSort('need_support')}
+              aria-pressed={selectedSort === 'need_support'}
+              className={`px-3 py-2 text-sm transition-colors ${
+                selectedSort === 'need_support'
+                  ? 'bg-orange-500 text-white'
+                  : 'text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'
+              }`}
+            >
+              需要支持
+            </button>
+          </div>
+
           <select
             value={selectedTag}
             onChange={(e) => setSelectedTag(e.target.value)}
