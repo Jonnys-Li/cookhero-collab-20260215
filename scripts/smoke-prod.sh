@@ -92,6 +92,7 @@ perform_request() {
   if ((${#extra_args[@]} > 0)); then
     LAST_STATUS="$(
       curl -sS \
+        --http1.1 \
         --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
         --max-time "${REQUEST_TIMEOUT_SECONDS}" \
         -X "${method}" \
@@ -104,6 +105,7 @@ perform_request() {
   else
     LAST_STATUS="$(
       curl -sS \
+        --http1.1 \
         --connect-timeout "${CONNECT_TIMEOUT_SECONDS}" \
         --max-time "${REQUEST_TIMEOUT_SECONDS}" \
         -X "${method}" \
