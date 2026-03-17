@@ -156,9 +156,13 @@ class VisionProvider:
         human_msg = self.build_multimodal_message(text, images)
         messages.append(human_msg)
 
+        # Avoid log injection from user-provided `text` by logging a repr preview.
+        text_preview = (text or "")[:50]
         logger.info(
-            f"Vision analysis: text='{text[:50]}...', images={len(images)}, "
-            f"model={self.config.model_names[0]}"
+            "Vision analysis: text_preview=%r images=%d model=%s",
+            text_preview,
+            len(images),
+            self.config.model_names[0],
         )
 
         try:
@@ -174,10 +178,10 @@ class VisionProvider:
                     },  # Best effort; ignored if unsupported
                 )
             result = str(response.content)
-            logger.debug(f"Vision response: {result[:200]}...")
+            logger.debug("Vision response preview=%r", result[:200])
             return result
         except Exception as e:
-            logger.error(f"Vision analysis failed: {e}", exc_info=True)
+            logger.error("Vision analysis failed: %s", e, exc_info=True)
             raise
 
     def validate_image(

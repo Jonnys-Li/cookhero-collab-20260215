@@ -14,6 +14,10 @@ REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-20}"
 SMOKE_STRICT="${SMOKE_STRICT:-false}"
 MCP_SERVICE_KEY="${MCP_SERVICE_KEY:-}"
 MCP_TOOLS_MIN="${MCP_TOOLS_MIN:-1}"
+SMOKE_DIET_PHOTO="${SMOKE_DIET_PHOTO:-false}"
+SMOKE_PHOTO_IMAGE_B64="${SMOKE_PHOTO_IMAGE_B64:-}"
+SMOKE_PHOTO_MIME_TYPE="${SMOKE_PHOTO_MIME_TYPE:-image/png}"
+SMOKE_PHOTO_CONTEXT_TEXT="${SMOKE_PHOTO_CONTEXT_TEXT:-}"
 
 TMP_DIR="$(mktemp -d)"
 TMP_HEADERS="${TMP_DIR}/headers.txt"
@@ -283,6 +287,121 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
     "${FRONTEND_URL}/api/v1/diet/enums" \
     "200" \
     -H "Authorization: Bearer ${TOKEN}"
+
+  # 8.5) Wave 3 (optional): photo-first diet logging flow (parse -> write -> refresh)
+  if is_truthy "${SMOKE_DIET_PHOTO}"; then
+    # Build a deterministic marker so we can verify the write via GET /diet/logs.
+    PHOTO_MARKER="smoke_photo_marker_${RANDOM}_$(date +%s)"
+
+    # If no real food image is provided, fall back to a minimal valid PNG.
+    # This is enough to validate connectivity + fallback path, but may not yield items.
+    if [[ -z "${SMOKE_PHOTO_IMAGE_B64}" ]]; then
+      SMOKE_PHOTO_IMAGE_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6X9nqkAAAAASUVORK5CYII="
+    fi
+
+    TODAY="$(date +%F)"
+
+    # Prefer the dedicated parse-only endpoint (no side effects). If it's not deployed yet,
+    # fall back to the existing recognize-image endpoint.
+    PARSE_PAYLOAD="$(
+      jq -nc \
+        --arg b64 "${SMOKE_PHOTO_IMAGE_B64}" \
+        --arg mt "${SMOKE_PHOTO_MIME_TYPE}" \
+        --arg txt "${SMOKE_PHOTO_CONTEXT_TEXT}" \
+        '{
+          images:[{data:$b64,mime_type:$mt}],
+          text: (if ($txt|length)>0 then $txt else null end),
+          context_text: (if ($txt|length)>0 then $txt else null end)
+        }'
+    )"
+
+    perform_request \
+      "POST" \
+      "${FRONTEND_URL}/api/v1/diet/logs/parse" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "${PARSE_PAYLOAD}"
+
+    ITEMS_JSON="[]"
+    MEAL_TYPE="snack"
+
+    if status_matches_expected "${LAST_STATUS}" "200"; then
+      if ! jq -e '.items | type == "array"' "${TMP_BODY}" >/dev/null 2>&1; then
+        handle_assert_failure "Diet photo parse response missing items array"
+      else
+        ITEMS_JSON="$(jq -c '[.items[]? | {food_name:.food_name, weight_g:(.weight_g // null), unit:(.unit // null), calories:(.calories // null), protein:(.protein // null), fat:(.fat // null), carbs:(.carbs // null)}]' "${TMP_BODY}" 2>/dev/null || echo "[]")"
+        MEAL_TYPE="$(jq -r '.meal_type // "snack"' "${TMP_BODY}" 2>/dev/null || echo "snack")"
+        log_pass "Diet photo parse endpoint reachable"
+      fi
+    elif status_matches_expected "${LAST_STATUS}" "404,405"; then
+      # Fallback: recognize-image endpoint already exists on main.
+      perform_request \
+        "POST" \
+        "${FRONTEND_URL}/api/v1/diet/meals/recognize-image" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        --data "${PARSE_PAYLOAD}"
+
+      if status_matches_expected "${LAST_STATUS}" "200"; then
+        if ! jq -e '.dishes | type == "array"' "${TMP_BODY}" >/dev/null 2>&1; then
+          handle_assert_failure "Diet recognize-image response missing dishes array"
+        else
+          ITEMS_JSON="$(jq -c '[.dishes[]? | {food_name:(.name // ""), weight_g:(.weight_g // null), unit:(.unit // null), calories:(.calories // null), protein:(.protein // null), fat:(.fat // null), carbs:(.carbs // null)} | select(.food_name|length>0)]' "${TMP_BODY}" 2>/dev/null || echo "[]")"
+          MEAL_TYPE="snack"
+          log_pass "Diet recognize-image endpoint reachable (parse endpoint not deployed)"
+        fi
+      else
+        # Recognition may fail/unavailable; the UI flow should still allow manual fallback.
+        log_warn "Diet photo recognize-image returned ${LAST_STATUS}; proceed with manual fallback write."
+        ITEMS_JSON="[]"
+        MEAL_TYPE="snack"
+      fi
+    elif status_matches_expected "${LAST_STATUS}" "503"; then
+      log_warn "Diet photo parse endpoint returned 503; proceed with manual fallback write."
+    else
+      handle_assert_failure "Diet photo parse endpoint returned unexpected status: ${LAST_STATUS}"
+    fi
+
+    # If no items were recognized, validate the fallback by writing a minimal manual item.
+    if [[ "$(echo "${ITEMS_JSON}" | jq -r 'length' 2>/dev/null || echo "0")" == "0" ]]; then
+      ITEMS_JSON="$(jq -nc --arg name "manual_${PHOTO_MARKER}" '[{food_name:$name, calories:0}]')"
+      MEAL_TYPE="snack"
+      log_warn "Diet photo recognition yielded 0 items; exercising manual fallback write."
+    fi
+
+    CREATE_LOG_PAYLOAD="$(
+      jq -nc \
+        --arg date "${TODAY}" \
+        --arg meal "${MEAL_TYPE}" \
+        --arg marker "${PHOTO_MARKER}" \
+        --argjson items "${ITEMS_JSON}" \
+        '{log_date:$date, meal_type:$meal, items:$items, notes:$marker}'
+    )"
+
+    assert_status_with_retry \
+      "Diet photo write log check" \
+      "POST" \
+      "${FRONTEND_URL}/api/v1/diet/logs" \
+      "201" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      --data "${CREATE_LOG_PAYLOAD}"
+
+    assert_status_with_retry \
+      "Diet photo write visible in logs" \
+      "GET" \
+      "${FRONTEND_URL}/api/v1/diet/logs?log_date=${TODAY}" \
+      "200" \
+      -H "Authorization: Bearer ${TOKEN}"
+
+    if status_matches_expected "${LAST_STATUS}" "200"; then
+      if ! jq -e --arg marker "${PHOTO_MARKER}" 'any(.logs[]?; (.notes // "") == $marker)' "${TMP_BODY}" >/dev/null 2>&1; then
+        handle_assert_failure "Diet logs missing the photo write marker (notes)"
+      else
+        log_pass "Diet photo write marker found in logs"
+      fi
+    fi
+  fi
 else
   log_warn "Authenticated endpoint checks skipped."
 fi

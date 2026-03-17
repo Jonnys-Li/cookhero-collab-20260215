@@ -43,6 +43,7 @@ import {
 import { trackEvent } from '../../services/api/events';
 import { WeeklyDeviationCorrectionCard } from '../../components/diet/WeeklyDeviationCorrectionCard';
 import { WeeklyShareToCommunityCard } from '../../components/diet/WeeklyShareToCommunityCard';
+import { PhotoLogModal } from '../../components/diet/PhotoLogModal';
 import type {
   Dish,
   DietPlan,
@@ -1199,6 +1200,7 @@ export default function DietManagementPage() {
   const [quickLogMealType, setQuickLogMealType] = useState<string | undefined>(undefined);
   const [editLogModalOpen, setEditLogModalOpen] = useState(false);
   const [editLogData, setEditLogData] = useState<DietLog | null>(null);
+  const [photoLogModalOpen, setPhotoLogModalOpen] = useState(false);
 
   // Deep-link support: /agent/diet#diet-week-progress
   // For weekly progress actions in Agent cards, we jump here and default to "log" view.
@@ -1574,6 +1576,7 @@ export default function DietManagementPage() {
   };
 
   const getActiveDayDate = () => addDays(currentWeekStart, activeDayIndex);
+  const activeDayDate = getActiveDayDate();
 
   return (
     <div className="flex-1 overflow-auto p-4 md:p-6">
@@ -1668,7 +1671,18 @@ export default function DietManagementPage() {
               <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">日度执行视图</h2>
               <p className="text-xs text-gray-500 mt-1">选择日期查看计划与实际营养差异</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {token && (
+                <button
+                  type="button"
+                  onClick={() => setPhotoLogModalOpen(true)}
+                  className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-100/60 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-500/10 dark:text-amber-200"
+                  title="拍照记录（先识别再编辑确认）"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  拍照记录
+                </button>
+              )}
               {DAY_LABELS.map((label, idx) => {
                 const active = idx === activeDayIndex;
                 return (
@@ -1856,6 +1870,16 @@ export default function DietManagementPage() {
             })()}
           </div>
         </div>
+
+        {token && (
+          <PhotoLogModal
+            isOpen={photoLogModalOpen}
+            onClose={() => setPhotoLogModalOpen(false)}
+            token={token}
+            defaultDate={activeDayDate}
+            onSaved={() => fetchData()}
+          />
+        )}
 
         <div id="diet-week-progress" className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">本周明细</div>

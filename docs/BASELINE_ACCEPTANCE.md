@@ -266,6 +266,12 @@ GitHub Actions (recommended secrets):
 - `MCP_DIET_SERVICE_KEY` (used as `MCP_SERVICE_KEY` in smoke job)
 - `RENDER_API_KEY` + `RENDER_SERVICE_ID` or `RENDER_SERVICE_NAME` (for cloud-config-sync)
 
+## Wave Acceptance Add-ons
+
+- Wave 3 (photo-first diet logging): see `docs/WAVE3_PHOTO_FIRST_DIET_LOG_ACCEPTANCE.md`.
+  - Optional smoke: set `SMOKE_DIET_PHOTO=true` when running `scripts/smoke-prod.sh` (recommend `REQUEST_TIMEOUT_SECONDS=90`).
+  - Optional inputs: `SMOKE_PHOTO_IMAGE_B64`, `SMOKE_PHOTO_MIME_TYPE`, `SMOKE_PHOTO_CONTEXT_TEXT`.
+
 ## High Risk Items (Must Track)
 
 - HIGH RISK: SSE queue growth on client disconnect.
