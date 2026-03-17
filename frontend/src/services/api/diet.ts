@@ -22,6 +22,7 @@ import type {
   UpdateLogRequest,
   UpdatePreferenceRequest,
 } from '../../types/diet';
+import type { ImageData } from '../../types/api';
 
 const DIET_BASE = '/diet';
 
@@ -146,6 +147,55 @@ export async function createLogFromText(
   data: LogFromTextRequest
 ): Promise<DietLog> {
   return apiPost<DietLog>(`${DIET_BASE}/logs/from-text`, data, token);
+}
+
+// ==================== Parse-only APIs ====================
+
+export type ParseDietLogRequest = {
+  /**
+   * Images for photo-first parsing. Optional to support text-only parsing.
+   */
+  images?: ImageData[];
+  text?: string;
+};
+
+export type ParseDietLogResponse = {
+  message?: string;
+  items: Array<{
+    food_name: string;
+    weight_g?: number;
+    unit?: string;
+    calories?: number;
+    protein?: number;
+    fat?: number;
+    carbs?: number;
+    confidence_score?: number;
+    source?: string;
+  }>;
+  meal_type?: string;
+  used_vision?: boolean;
+};
+
+/**
+ * Parse diet log from images/text WITHOUT saving.
+ *
+ * Contract (backend-owned):
+ * - POST /api/v1/diet/logs/parse (auth required)
+ * - body: { images: ImageData[]; text?: string }
+ * - response: { items: [...], meal_type?: string, message?: string }
+ */
+export async function parseDietLog(
+  token: string,
+  data: ParseDietLogRequest
+): Promise<ParseDietLogResponse> {
+  return apiPost<ParseDietLogResponse, ParseDietLogRequest>(
+    `${DIET_BASE}/logs/parse`,
+    data,
+    token,
+    {
+      timeoutMs: 60000,
+    }
+  );
 }
 
 /**

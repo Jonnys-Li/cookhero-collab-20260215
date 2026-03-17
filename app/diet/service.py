@@ -579,6 +579,24 @@ class DietService:
             "used_vision": bool(parsed.get("used_vision")),
         }
 
+    async def parse_diet_input_without_side_effects(
+        self,
+        user_id: str,
+        text: str = "",
+        images: Optional[list] = None,
+    ) -> dict:
+        """
+        Backward/UX-friendly alias for parse-only flows.
+
+        The Diet "photo-first" flow calls this method from a dedicated parse-only
+        endpoint. It must never write any diet logs/meals.
+        """
+        return await self.parse_diet_input(
+            user_id=user_id,
+            text=text,
+            images=images,
+        )
+
     async def recognize_meal_from_images(
         self,
         user_id: str,

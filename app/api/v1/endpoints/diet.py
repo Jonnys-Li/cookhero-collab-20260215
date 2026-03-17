@@ -127,6 +127,39 @@ class LogFromTextRequest(BaseModel):
     meal_type: Optional[str] = Field(None, description="餐次类型（可自动推断）")
 
 
+class ParseDietInputRequest(BaseModel):
+    """
+    Parse-only request contract (no DB writes).
+
+    Frontend should call this endpoint first in the "photo-first" logging flow,
+    then allow the user to edit items, and finally call POST /diet/logs to persist.
+    """
+
+    text: Optional[str] = Field(None, max_length=1000, description="可选饮食文字描述")
+    images: Optional[List[ImageData]] = Field(default=None, max_length=4)
+    log_date: Optional[date] = Field(None, description="可选记录日期（默认今天）")
+    meal_type: Optional[str] = Field(None, description="可选餐次类型（可自动推断）")
+
+
+class ParsedDietItemSchema(BaseModel):
+    food_name: str
+    weight_g: Optional[float] = None
+    unit: Optional[str] = None
+    calories: Optional[int] = None
+    protein: Optional[float] = None
+    fat: Optional[float] = None
+    carbs: Optional[float] = None
+    confidence_score: Optional[float] = None
+    source: Optional[str] = None
+
+
+class ParseDietInputResponse(BaseModel):
+    meal_type: Optional[str] = None
+    items: List[ParsedDietItemSchema] = Field(default_factory=list)
+    used_vision: bool = False
+    message: Optional[str] = None
+
+
 class RecognizeMealFromImageRequest(BaseModel):
     """Request for recognizing meal dishes from images."""
 
@@ -456,6 +489,118 @@ async def create_log_from_text(
     )
 
     return log
+
+
+@router.post("/diet/logs/parse", response_model=ParseDietInputResponse)
+async def parse_diet_log_input(
+    payload: ParseDietInputRequest,
+    request: Request,
+) -> ParseDietInputResponse:
+    """
+    Parse-only endpoint for diet logging (no DB writes).
+
+    API Contract (recommended for frontend):
+    - Request:
+      {
+        "text"?: string,
+        "images"?: [{ "data": base64, "mime_type": "image/jpeg|png|gif|webp" }],
+        "log_date"?: "YYYY-MM-DD",
+        "meal_type"?: "breakfast|lunch|dinner|snack"
+      }
+    - Response:
+      {
+        "meal_type"?: string,
+        "items": [{
+          "food_name": string,
+          "weight_g"?: number,
+          "unit"?: string,
+          "calories"?: number,
+          "protein"?: number,
+          "fat"?: number,
+          "carbs"?: number,
+          "confidence_score"?: number,
+          "source"?: string
+        }],
+        "used_vision": boolean,
+        "message"?: string
+      }
+
+    Notes:
+    - Always returns 200 even if Vision/LLM is not configured; `items` may be empty
+      and `message` will guide the user to manual editing.
+    """
+    user_id = get_user_id(request)
+
+    images = None
+    if payload.images:
+        images = [img.model_dump() for img in payload.images]
+
+    text = (payload.text or "").strip()
+    if not text and not images:
+        return ParseDietInputResponse(
+            meal_type=payload.meal_type,
+            items=[],
+            used_vision=False,
+            message="请提供文字描述或至少 1 张图片以便解析。",
+        )
+
+    try:
+        parsed = await diet_service.parse_diet_input_without_side_effects(
+            user_id=user_id,
+            text=text,
+            images=images,
+        )
+    except Exception:
+        # Hard fallback: never 500 for parse-only.
+        return ParseDietInputResponse(
+            meal_type=payload.meal_type,
+            items=[],
+            used_vision=False,
+            message="当前 AI 解析不可用，你可以手动编辑本餐记录。",
+        )
+
+    used_vision = bool(parsed.get("used_vision")) if isinstance(parsed, dict) else False
+    parsed_items = parsed.get("items") if isinstance(parsed, dict) else []
+    if not isinstance(parsed_items, list):
+        parsed_items = []
+
+    # Fill source field so frontend can display provenance consistently.
+    source = (
+        DataSource.AI_IMAGE.value if used_vision else DataSource.AI_TEXT.value
+    )
+
+    out_items: list[ParsedDietItemSchema] = []
+    for raw in parsed_items:
+        if not isinstance(raw, dict):
+            continue
+        food_name = str(raw.get("food_name") or "").strip()
+        if not food_name:
+            continue
+        out_items.append(
+            ParsedDietItemSchema(
+                food_name=food_name,
+                weight_g=raw.get("weight_g"),
+                unit=raw.get("unit"),
+                calories=raw.get("calories"),
+                protein=raw.get("protein"),
+                fat=raw.get("fat"),
+                carbs=raw.get("carbs"),
+                confidence_score=raw.get("confidence_score"),
+                source=str(raw.get("source") or source),
+            )
+        )
+
+    meal_type = payload.meal_type or (parsed.get("meal_type") if isinstance(parsed, dict) else None)
+    message = None
+    if not out_items:
+        message = "未识别到清晰食物，你可以手动编辑本餐记录。"
+
+    return ParseDietInputResponse(
+        meal_type=meal_type,
+        items=out_items,
+        used_vision=used_vision,
+        message=message,
+    )
 
 
 @router.get("/diet/logs/{log_id}")
