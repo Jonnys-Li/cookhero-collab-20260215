@@ -3,6 +3,7 @@ import { ImagePlus, Loader2, Sparkles, X } from 'lucide-react';
 import { createCommunityPost, polishCommunityPost } from '../../services/api/community';
 import { getWeeklySummary } from '../../services/api/diet';
 import { getCapabilities } from '../../services/api/meta';
+import { trackEvent } from '../../services/api/events';
 import type { WeeklySummary } from '../../types/diet';
 import type { CommunityMood, CreateCommunityPostRequest } from '../../types/community';
 
@@ -238,6 +239,13 @@ export function CreatePostModal({
         nutrition_snapshot: includeWeeklySummary ? weeklySnapshot : undefined,
       };
       await createCommunityPost(token, payload);
+      trackEvent(token, 'community_post_created', {
+        is_anonymous: isAnonymous,
+        mood: mood || null,
+        tag_count: tags.length,
+        has_images: images.length > 0,
+        has_weekly_summary: includeWeeklySummary,
+      });
       onClose();
       onCreated();
     } catch (err) {

@@ -39,5 +39,5 @@ export const DATE_CATEGORY_LABELS = {
 } as const;
 
 // App Info
-export const APP_NAME = 'HealthHero';
+export const APP_NAME = 'CookHero';
 export const APP_EMOJI = '🍳';

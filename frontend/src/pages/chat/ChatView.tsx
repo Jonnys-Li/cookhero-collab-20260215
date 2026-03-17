@@ -42,7 +42,7 @@ function AgentChatPane({
           onToolsOpenChange={setIsToolSelectorOpen}
         />
         <div className="text-center text-xs text-gray-400 mt-2">
-          HealthHero Agent can make mistakes. Consider checking important information.
+          CookHero Agent can make mistakes. Consider checking important information.
         </div>
       </div>
     </>
@@ -123,12 +123,12 @@ export default function ChatView() {
               onCancel={chat.stopGeneration}
               disabled={chat.isLoading}
               isStreaming={chat.isStreaming}
-              placeholder="Ask HealthHero anything about health..."
+              placeholder="Ask CookHero anything about health..."
               externalValue={suggestionText}
               onExternalValueConsumed={handleSuggestionConsumed}
             />
             <div className="text-center text-xs text-gray-400 mt-2">
-              HealthHero can make mistakes. Consider checking important information.
+              CookHero can make mistakes. Consider checking important information.
             </div>
           </div>
         </>

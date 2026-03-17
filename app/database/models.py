@@ -399,3 +399,48 @@ class LLMUsageLogModel(Base):
             "duration_ms": self.duration_ms,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+# ==================== Product Event Model ====================
+
+class ProductEventModel(Base):
+    """
+    ORM model for lightweight product analytics events.
+
+    Notes:
+    - Keep this schema small and append-only.
+    - `props` should be sanitized before persistence to avoid storing secrets.
+    """
+
+    __tablename__ = "product_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String(255), nullable=True, index=True
+    )
+    event_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False, index=True
+    )
+    client_ts: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    session_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    path: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    props: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("ix_product_events_user_created", "user_id", "created_at"),
+        Index("ix_product_events_name_created", "event_name", "created_at"),
+        Index("ix_product_events_created_at_desc", created_at.desc()),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "user_id": self.user_id,
+            "event_name": self.event_name,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "client_ts": self.client_ts.isoformat() if self.client_ts else None,
+            "session_id": self.session_id,
+            "path": self.path,
+            "props": self.props or None,
+        }
