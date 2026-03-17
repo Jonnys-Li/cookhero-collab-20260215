@@ -149,7 +149,21 @@ async def get_feed(
     offset: int = Query(0, ge=0, le=10000),
     tag: Optional[str] = Query(None, max_length=30),
     mood: Optional[str] = Query(None, max_length=32),
+    sort: Optional[str] = Query(
+        "latest",
+        max_length=20,
+        description="排序: latest|need_support|hot (默认 latest)",
+    ),
 ) -> dict[str, Any]:
+    """
+    Get community feed.
+
+    Query:
+    - sort:
+      - latest: created_at desc (default, backward compatible)
+      - need_support: comment_count asc, then "help-seeking tags" boosted, then created_at desc
+      - hot: like_count desc, comment_count desc, created_at desc
+    """
     user_id = _get_user_id(request)
     return await community_service.get_feed(
         user_id=user_id,
@@ -157,6 +171,7 @@ async def get_feed(
         offset=offset,
         tag=tag,
         mood=mood,
+        sort=sort,
     )
 
 
@@ -165,8 +180,19 @@ async def get_feed(
 
 @router.post("/community/posts", status_code=201)
 async def create_post(payload: CreatePostRequest, request: Request) -> dict[str, Any]:
+    """
+    Create a community post.
+
+    Security:
+    - Runs `check_message_security` on `content` before writing.
+    - Uses sanitized content for persistence.
+    - If blocked, returns 400 and does not persist.
+    """
     user_id = _get_user_id(request)
     username = _get_username(request)
+
+    # P0 safety baseline: run content security check before any write.
+    secured_content = await check_message_security(payload.content, request)
 
     image_urls: Optional[list[str]] = None
     if payload.images:
@@ -195,7 +221,7 @@ async def create_post(payload: CreatePostRequest, request: Request) -> dict[str,
             username=username,
             is_anonymous=payload.is_anonymous,
             mood=payload.mood,
-            content=payload.content,
+            content=secured_content,
             tags=payload.tags,
             image_urls=image_urls,
             nutrition_snapshot=payload.nutrition_snapshot,
@@ -247,15 +273,26 @@ async def add_comment(
     payload: CreateCommentRequest,
     request: Request,
 ) -> dict[str, Any]:
+    """
+    Create a comment for a post.
+
+    Security:
+    - Runs `check_message_security` on `content` before writing.
+    - Uses sanitized content for persistence.
+    - If blocked, returns 400 and does not persist.
+    """
     user_id = _get_user_id(request)
     username = _get_username(request)
+
+    # P0 safety baseline: run content security check before any write.
+    secured_content = await check_message_security(payload.content, request)
 
     try:
         comment = await community_service.add_comment(
             user_id=user_id,
             username=username,
             post_id=post_id,
-            content=payload.content,
+            content=secured_content,
             is_anonymous=payload.is_anonymous,
         )
     except ValueError as exc:

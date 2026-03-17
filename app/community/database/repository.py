@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, cast, delete, func, select, String
+from sqlalchemy import and_, case, cast, delete, func, or_, select, String
 
 from app.community.constants import DEFAULT_POST_TYPE, REACTION_LIKE
 from app.community.database.models import (
@@ -80,7 +80,20 @@ class CommunityRepository:
         offset: int,
         tag: Optional[str] = None,
         mood: Optional[str] = None,
+        sort: Optional[str] = None,
     ) -> list[CommunityPostModel]:
+        sort_value = (sort or "latest").strip().lower()
+        allowed_sorts = {"latest", "need_support", "hot"}
+        if sort_value not in allowed_sorts:
+            sort_value = "latest"
+
+        need_support_tags = {
+            "焦虑",
+            "想放弃",
+            "暴食后自责",
+            "求建议",
+        }
+
         async with get_session_context() as session:
             stmt = select(CommunityPostModel).where(
                 CommunityPostModel.post_type == DEFAULT_POST_TYPE
@@ -95,6 +108,51 @@ class CommunityRepository:
                 like_pat = f'%"{tag}"%'
                 stmt = stmt.where(cast(CommunityPostModel.tags, String).like(like_pat))
 
+            if sort_value == "hot":
+                stmt = (
+                    stmt.order_by(
+                        CommunityPostModel.like_count.desc(),
+                        CommunityPostModel.comment_count.desc(),
+                        CommunityPostModel.created_at.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+                result = await session.execute(stmt)
+                return list(result.scalars().all())
+
+            if sort_value == "need_support":
+                # Cross-dialect and explainable sorting (no JSON operators required):
+                # 1) comment_count asc (prioritize zero replies)
+                # 2) help-seeking tags boosted
+                # 3) created_at desc
+                tags_text = cast(CommunityPostModel.tags, String)
+                need_support_boost = case(
+                    (
+                        or_(
+                            *[
+                                tags_text.like(f'%"{tag_name}"%')
+                                for tag_name in sorted(need_support_tags)
+                            ]
+                        ),
+                        0,
+                    ),
+                    else_=1,
+                )
+
+                stmt = (
+                    stmt.order_by(
+                        CommunityPostModel.comment_count.asc(),
+                        need_support_boost.asc(),
+                        CommunityPostModel.created_at.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+                result = await session.execute(stmt)
+                return list(result.scalars().all())
+
+            # latest (default)
             stmt = (
                 stmt.order_by(CommunityPostModel.created_at.desc())
                 .limit(limit)

@@ -25,6 +25,7 @@ export async function getCommunityFeed(
     offset?: number;
     tag?: string;
     mood?: string;
+    sort?: 'latest' | 'need_support' | 'hot';
   }
 ): Promise<CommunityFeedResponse> {
   const query = new URLSearchParams();
@@ -32,6 +33,7 @@ export async function getCommunityFeed(
   query.set('offset', String(params?.offset ?? 0));
   if (params?.tag) query.set('tag', params.tag);
   if (params?.mood) query.set('mood', params.mood);
+  if (params?.sort) query.set('sort', params.sort);
   return apiGet<CommunityFeedResponse>(`${COMMUNITY_BASE}/feed?${query.toString()}`, token);
 }
 
