@@ -14,7 +14,9 @@ def _build_anon_request():
 def patch_community_sqlite(monkeypatch, sqlite_session_context):
     import app.community.database.repository as community_repo_module
 
-    monkeypatch.setattr(community_repo_module, "get_session_context", sqlite_session_context)
+    monkeypatch.setattr(
+        community_repo_module, "get_session_context", sqlite_session_context
+    )
     return community_repo_module
 
 
@@ -31,7 +33,9 @@ def test_create_post_runs_security_check_and_uses_sanitized_content(
         assert message == "raw-content"
         return "sanitized-content"
 
-    monkeypatch.setattr(community_endpoint, "check_message_security", _fake_check_message_security)
+    monkeypatch.setattr(
+        community_endpoint, "check_message_security", _fake_check_message_security
+    )
 
     request = build_request(user_id="u_comm_1")
     created = run(
@@ -64,7 +68,9 @@ def test_create_post_blocked_by_security_check_does_not_persist(
     async def _fake_check_message_security(message: str, request):
         raise HTTPException(status_code=400, detail="blocked")
 
-    monkeypatch.setattr(community_endpoint, "check_message_security", _fake_check_message_security)
+    monkeypatch.setattr(
+        community_endpoint, "check_message_security", _fake_check_message_security
+    )
 
     repo = CommunityRepository()
     before = run(repo.count_posts())
@@ -79,11 +85,11 @@ def test_create_post_blocked_by_security_check_does_not_persist(
                 ),
                 request,
             )
-    )
+        )
     assert exc.value.status_code == 400
 
-    total = run(repo.count_posts())
-    assert total == before
+    after = run(repo.count_posts())
+    assert after == before
 
 
 def test_add_comment_runs_security_check_and_uses_sanitized_content(
@@ -113,13 +119,18 @@ def test_add_comment_runs_security_check_and_uses_sanitized_content(
         assert message == "raw-comment"
         return "sanitized-comment"
 
-    monkeypatch.setattr(community_endpoint, "check_message_security", _fake_check_message_security)
+    monkeypatch.setattr(
+        community_endpoint, "check_message_security", _fake_check_message_security
+    )
 
     request = build_request(user_id="u_comm_3")
     created = run(
         community_endpoint.add_comment(
             str(post.id),
-            community_endpoint.CreateCommentRequest(content="raw-comment", is_anonymous=True),
+            community_endpoint.CreateCommentRequest(
+                content="raw-comment",
+                is_anonymous=True,
+            ),
             request,
         )
     )
@@ -156,7 +167,9 @@ def test_add_comment_blocked_by_security_check_does_not_persist(
     async def _fake_check_message_security(message: str, request):
         raise HTTPException(status_code=400, detail="blocked")
 
-    monkeypatch.setattr(community_endpoint, "check_message_security", _fake_check_message_security)
+    monkeypatch.setattr(
+        community_endpoint, "check_message_security", _fake_check_message_security
+    )
 
     request = build_request(user_id="u_comm_4")
     with pytest.raises(HTTPException) as exc:
@@ -236,3 +249,4 @@ def test_feed_sort_need_support_prioritizes_zero_comment_posts(
     posts = feed.get("posts") or []
     assert len(posts) >= 2
     assert posts[0]["id"] == str(p0.id)
+

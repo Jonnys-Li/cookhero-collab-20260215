@@ -10,10 +10,9 @@ Implements CRUD for:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Optional, Sequence
 
-from sqlalchemy import and_, cast, delete, func, select, String
+from sqlalchemy import and_, case, cast, delete, func, or_, select, String
 
 from app.community.constants import DEFAULT_POST_TYPE, REACTION_LIKE
 from app.community.database.models import (
@@ -123,53 +122,35 @@ class CommunityRepository:
                 return list(result.scalars().all())
 
             if sort_value == "need_support":
-                # Cross-dialect and explainable sorting:
+                # Cross-dialect and explainable sorting (no JSON operators required):
                 # 1) comment_count asc (prioritize zero replies)
                 # 2) help-seeking tags boosted
                 # 3) created_at desc
-                #
-                # We do a bounded over-fetch and then a Python sort to keep
-                # behavior consistent across SQLite/Postgres without JSON
-                # operator differences.
-                fetch_size = min(500, max(int(limit) * 5 + int(offset), int(limit) + int(offset)))
+                tags_text = cast(CommunityPostModel.tags, String)
+                need_support_boost = case(
+                    (
+                        or_(
+                            *[
+                                tags_text.like(f'%"{tag_name}"%')
+                                for tag_name in sorted(need_support_tags)
+                            ]
+                        ),
+                        0,
+                    ),
+                    else_=1,
+                )
+
                 stmt = (
                     stmt.order_by(
                         CommunityPostModel.comment_count.asc(),
+                        need_support_boost.asc(),
                         CommunityPostModel.created_at.desc(),
                     )
-                    .limit(fetch_size)
-                    .offset(0)
+                    .limit(limit)
+                    .offset(offset)
                 )
                 result = await session.execute(stmt)
-                posts = list(result.scalars().all())
-
-                def _has_need_support_tag(post: CommunityPostModel) -> bool:
-                    tags = post.tags or []
-                    if not isinstance(tags, list):
-                        return False
-                    for raw in tags:
-                        tag_text = str(raw or "").strip()
-                        if tag_text in need_support_tags:
-                            return True
-                    return False
-
-                def _created_key(post: CommunityPostModel) -> float:
-                    created_at = post.created_at or datetime.min
-                    try:
-                        return created_at.timestamp()
-                    except Exception:
-                        return 0.0
-
-                posts.sort(
-                    key=lambda p: (
-                        int(p.comment_count or 0),
-                        0 if _has_need_support_tag(p) else 1,
-                        -_created_key(p),
-                    )
-                )
-                start = max(0, int(offset))
-                end = start + int(limit)
-                return posts[start:end]
+                return list(result.scalars().all())
 
             # latest (default)
             stmt = (
