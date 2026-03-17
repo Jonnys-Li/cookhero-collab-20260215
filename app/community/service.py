@@ -181,12 +181,14 @@ class CommunityService:
         offset: int,
         tag: Optional[str] = None,
         mood: Optional[str] = None,
+        sort: Optional[str] = None,
     ) -> dict[str, Any]:
         posts = await self.repository.list_posts(
             limit=limit,
             offset=offset,
             tag=str(tag).strip() if tag else None,
             mood=str(mood).strip() if mood else None,
+            sort=str(sort).strip() if sort else None,
         )
         total = await self.repository.count_posts(
             tag=str(tag).strip() if tag else None,

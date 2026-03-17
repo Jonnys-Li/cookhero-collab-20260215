@@ -10,6 +10,7 @@ Implements CRUD for:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional, Sequence
 
 from sqlalchemy import and_, cast, delete, func, select, String
@@ -80,7 +81,20 @@ class CommunityRepository:
         offset: int,
         tag: Optional[str] = None,
         mood: Optional[str] = None,
+        sort: Optional[str] = None,
     ) -> list[CommunityPostModel]:
+        sort_value = (sort or "latest").strip().lower()
+        allowed_sorts = {"latest", "need_support", "hot"}
+        if sort_value not in allowed_sorts:
+            sort_value = "latest"
+
+        need_support_tags = {
+            "焦虑",
+            "想放弃",
+            "暴食后自责",
+            "求建议",
+        }
+
         async with get_session_context() as session:
             stmt = select(CommunityPostModel).where(
                 CommunityPostModel.post_type == DEFAULT_POST_TYPE
@@ -95,6 +109,69 @@ class CommunityRepository:
                 like_pat = f'%"{tag}"%'
                 stmt = stmt.where(cast(CommunityPostModel.tags, String).like(like_pat))
 
+            if sort_value == "hot":
+                stmt = (
+                    stmt.order_by(
+                        CommunityPostModel.like_count.desc(),
+                        CommunityPostModel.comment_count.desc(),
+                        CommunityPostModel.created_at.desc(),
+                    )
+                    .limit(limit)
+                    .offset(offset)
+                )
+                result = await session.execute(stmt)
+                return list(result.scalars().all())
+
+            if sort_value == "need_support":
+                # Cross-dialect and explainable sorting:
+                # 1) comment_count asc (prioritize zero replies)
+                # 2) help-seeking tags boosted
+                # 3) created_at desc
+                #
+                # We do a bounded over-fetch and then a Python sort to keep
+                # behavior consistent across SQLite/Postgres without JSON
+                # operator differences.
+                fetch_size = min(500, max(int(limit) * 5 + int(offset), int(limit) + int(offset)))
+                stmt = (
+                    stmt.order_by(
+                        CommunityPostModel.comment_count.asc(),
+                        CommunityPostModel.created_at.desc(),
+                    )
+                    .limit(fetch_size)
+                    .offset(0)
+                )
+                result = await session.execute(stmt)
+                posts = list(result.scalars().all())
+
+                def _has_need_support_tag(post: CommunityPostModel) -> bool:
+                    tags = post.tags or []
+                    if not isinstance(tags, list):
+                        return False
+                    for raw in tags:
+                        tag_text = str(raw or "").strip()
+                        if tag_text in need_support_tags:
+                            return True
+                    return False
+
+                def _created_key(post: CommunityPostModel) -> float:
+                    created_at = post.created_at or datetime.min
+                    try:
+                        return created_at.timestamp()
+                    except Exception:
+                        return 0.0
+
+                posts.sort(
+                    key=lambda p: (
+                        int(p.comment_count or 0),
+                        0 if _has_need_support_tag(p) else 1,
+                        -_created_key(p),
+                    )
+                )
+                start = max(0, int(offset))
+                end = start + int(limit)
+                return posts[start:end]
+
+            # latest (default)
             stmt = (
                 stmt.order_by(CommunityPostModel.created_at.desc())
                 .limit(limit)
