@@ -33,8 +33,6 @@ export async function trackEvent(
       { timeoutMs: 8000 }
     );
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.warn('[events] report failed:', err);
   }
 }
-

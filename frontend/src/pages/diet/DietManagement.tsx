@@ -41,6 +41,8 @@ import {
   getDietBudget,
 } from '../../services/api/diet';
 import { trackEvent } from '../../services/api/events';
+import { WeeklyDeviationCorrectionCard } from '../../components/diet/WeeklyDeviationCorrectionCard';
+import { WeeklyShareToCommunityCard } from '../../components/diet/WeeklyShareToCommunityCard';
 import type {
   Dish,
   DietPlan,
@@ -1639,6 +1641,25 @@ export default function DietManagementPage() {
           summary={weeklySummary || undefined}
           isLoading={isLoading}
         />
+
+        {/* Deviation -> Correction (default entry) */}
+        {token && (
+          <WeeklyDeviationCorrectionCard
+            token={token}
+            weekStartDate={formatDate(currentWeekStart)}
+            planMeals={plan?.meals}
+            weeklySummary={weeklySummary}
+            onApplied={fetchData}
+          />
+        )}
+
+        {/* Share Weekly Summary (share = review) */}
+        {token && (
+          <WeeklyShareToCommunityCard
+            token={token}
+            weeklySummary={weeklySummary}
+          />
+        )}
 
         {/* Daily Focus */}
         <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm transition-all duration-200 hover:shadow-md">

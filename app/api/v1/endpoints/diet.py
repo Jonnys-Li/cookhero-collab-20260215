@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import uuid
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.diet.service import diet_service
 from app.diet.database.models import MealType, DayOfWeek, DataSource
+from app.diet.nutrition_snapshot import build_weekly_nutrition_snapshot
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -187,6 +189,21 @@ class UpdatePreferenceRequest(BaseModel):
     carbs_goal: Optional[float] = Field(None, description="每日碳水目标(克)")
 
 
+class ApplyNextMealCorrectionRequest(BaseModel):
+    """Request for one-click next meal correction write."""
+
+    plan_date: date = Field(..., description="计划日期 (YYYY-MM-DD)")
+    meal_type: str = Field(..., description="餐次类型: breakfast/lunch/dinner/snack")
+    dish_name: str = Field(..., min_length=1, max_length=80, description="菜品名称")
+    calories: Optional[int] = Field(None, ge=0, description="卡路里")
+    protein: Optional[float] = Field(None, ge=0, description="蛋白质(克)")
+    fat: Optional[float] = Field(None, ge=0, description="脂肪(克)")
+    carbs: Optional[float] = Field(None, ge=0, description="碳水(克)")
+    nutrition_source: Optional[str] = Field(None, max_length=20)
+    nutrition_confidence: Optional[float] = Field(None, ge=0, le=1)
+    notes: Optional[str] = Field(None, max_length=200)
+
+
 # ==================== Helper Functions ====================
 
 
@@ -196,6 +213,23 @@ def get_user_id(request: Request) -> str:
     if not user_id:
         raise HTTPException(status_code=401, detail="需要登录")
     return str(user_id)
+
+
+def _infer_default_next_meal(target_date: date) -> tuple[date, str]:
+    """
+    Best-effort inference for the next meal slot.
+
+    Diet page can pass explicit `target_date` / `meal_type`, but this keeps a
+    deterministic fallback for "one-click" flows.
+    """
+    hour = datetime.now().hour
+    if hour < 10:
+        return target_date, "breakfast"
+    if hour < 15:
+        return target_date, "lunch"
+    if hour < 20:
+        return target_date, "dinner"
+    return target_date, "snack"
 
 
 # ==================== Plan Endpoints ====================
@@ -571,6 +605,179 @@ async def get_deviation_analysis(
     user_id = get_user_id(request)
     analysis = await diet_service.get_deviation_analysis(user_id, week_start_date)
     return analysis
+
+
+# ==================== Summary / Correction Endpoints ====================
+
+
+@router.get("/diet/summary/weekly")
+async def get_weekly_summary_bundle(
+    request: Request,
+    week_start_date: Optional[date] = Query(None, description="周开始日期（默认本周）"),
+    target_date: Optional[date] = Query(None, description="用于纠偏建议的目标日期（默认今天）"),
+    meal_type: Optional[str] = Query(None, description="用于纠偏建议的餐次（可选）"),
+) -> Dict[str, Any]:
+    """
+    Bundle endpoint for Diet page to reduce client-side stitching.
+
+    Returns:
+    - weekly_summary: /diet/analysis/weekly
+    - deviation: /diet/analysis/deviation
+    - next_meal_correction: a deterministic suggestion payload for one-click write
+    - nutrition_snapshot: payload suitable for Community post creation
+    """
+    user_id = get_user_id(request)
+    weekly_summary = await diet_service.get_weekly_summary(user_id, week_start_date)
+    deviation = await diet_service.get_deviation_analysis(user_id, week_start_date)
+
+    target = target_date or date.today()
+    inferred_date, inferred_meal_type = _infer_default_next_meal(target)
+    meal_type_value = str(meal_type or inferred_meal_type).strip().lower()
+    if meal_type_value not in {"breakfast", "lunch", "dinner", "snack"}:
+        meal_type_value = inferred_meal_type
+
+    total_dev_raw = deviation.get("total_deviation") if isinstance(deviation, dict) else None
+    try:
+        total_dev = int(total_dev_raw) if total_dev_raw is not None else 0
+    except (TypeError, ValueError):
+        total_dev = 0
+
+    # Deterministic template suggestion: lighter if over-plan, otherwise high-protein stable meal.
+    if total_dev > 0:
+        suggestion = {
+            "dish_name": "燕麦酸奶水果杯",
+            "calories": 380,
+            "protein": 16.0,
+            "fat": 10.0,
+            "carbs": 52.0,
+            "nutrition_source": "template",
+            "nutrition_confidence": 0.5,
+        }
+        reason = "本周摄入略高于计划，下一餐建议选择更轻量且有满足感的组合。"
+    else:
+        suggestion = {
+            "dish_name": "鸡胸肉沙拉配酸奶",
+            "calories": 460,
+            "protein": 34.0,
+            "fat": 16.0,
+            "carbs": 32.0,
+            "nutrition_source": "template",
+            "nutrition_confidence": 0.5,
+        }
+        reason = "下一餐建议选择高蛋白稳定餐，帮助维持节奏与饱腹感。"
+
+    next_meal_correction = {
+        "action_id": str(uuid.uuid4()),
+        "action_kind": "apply_next_meal_correction",
+        "apply_path": "/api/v1/diet/actions/apply-next-meal-correction",
+        "reason": reason,
+        "payload": {
+            "plan_date": inferred_date.isoformat(),
+            "meal_type": meal_type_value,
+            **suggestion,
+            "notes": "来自本周复盘的一键纠偏建议",
+        },
+    }
+
+    return {
+        "weekly_summary": weekly_summary,
+        "deviation": deviation,
+        "next_meal_correction": next_meal_correction,
+        "nutrition_snapshot": build_weekly_nutrition_snapshot(
+            weekly_summary=weekly_summary,
+            deviation=deviation,
+        ),
+    }
+
+
+@router.post("/diet/actions/apply-next-meal-correction", status_code=201)
+async def apply_next_meal_correction(
+    payload: ApplyNextMealCorrectionRequest,
+    request: Request,
+) -> Dict[str, Any]:
+    """
+    One-click write path for next meal correction.
+
+    This endpoint is deterministic and intentionally does not call LLM/RAG.
+    """
+    user_id = get_user_id(request)
+    meal_type_value = str(payload.meal_type or "").strip().lower()
+    if meal_type_value not in {"breakfast", "lunch", "dinner", "snack"}:
+        raise HTTPException(
+            status_code=400, detail="meal_type 仅支持 breakfast/lunch/dinner/snack"
+        )
+
+    calories_value: Optional[int] = None
+    if payload.calories is not None:
+        try:
+            calories_value = int(payload.calories)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="calories 必须为整数") from exc
+
+    protein_value = payload.protein
+    fat_value = payload.fat
+    carbs_value = payload.carbs
+    nutrition_source = payload.nutrition_source
+    nutrition_confidence = payload.nutrition_confidence
+
+    if (
+        calories_value
+        and calories_value > 0
+        and (protein_value is None or fat_value is None or carbs_value is None)
+    ):
+        try:
+            from app.diet.macro_estimation import (
+                estimate_macros_from_calories,
+                AUTO_NUTRITION_CONFIDENCE,
+                AUTO_NUTRITION_SOURCE,
+            )
+
+            macros = estimate_macros_from_calories(calories_value, "maintenance")
+            if protein_value is None:
+                protein_value = macros.get("protein_g")
+            if fat_value is None:
+                fat_value = macros.get("fat_g")
+            if carbs_value is None:
+                carbs_value = macros.get("carbs_g")
+            if not nutrition_source:
+                nutrition_source = str(macros.get("source") or AUTO_NUTRITION_SOURCE)
+            if nutrition_confidence is None:
+                nutrition_confidence = float(
+                    macros.get("confidence") or AUTO_NUTRITION_CONFIDENCE
+                )
+        except Exception:
+            # Keep original values if macro estimation is unavailable.
+            pass
+
+    dishes = [
+        {
+            "name": payload.dish_name,
+            "calories": calories_value,
+            "protein": protein_value,
+            "fat": fat_value,
+            "carbs": carbs_value,
+            "nutrition_source": nutrition_source or None,
+            "nutrition_confidence": nutrition_confidence,
+        }
+    ]
+
+    totals = diet_service._calculate_meal_totals(dishes)
+    created = await diet_service.repository.add_meal_to_plan(
+        user_id=str(user_id),
+        plan_date=payload.plan_date,
+        meal_type=meal_type_value,
+        dishes=dishes,
+        total_calories=totals["total_calories"],
+        total_protein=totals["total_protein"],
+        total_fat=totals["total_fat"],
+        total_carbs=totals["total_carbs"],
+        notes=payload.notes or "来自本周复盘的一键纠偏建议",
+    )
+    return {
+        "plan_date": payload.plan_date.isoformat(),
+        "meal_type": meal_type_value,
+        "meal": created.to_dict(),
+    }
 
 
 # ==================== Preference Endpoints ====================
