@@ -308,7 +308,11 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
         --arg b64 "${SMOKE_PHOTO_IMAGE_B64}" \
         --arg mt "${SMOKE_PHOTO_MIME_TYPE}" \
         --arg txt "${SMOKE_PHOTO_CONTEXT_TEXT}" \
-        '{images:[{data:$b64,mime_type:$mt}], text: (if ($txt|length)>0 then $txt else null end)}'
+        '{
+          images:[{data:$b64,mime_type:$mt}],
+          text: (if ($txt|length)>0 then $txt else null end),
+          context_text: (if ($txt|length)>0 then $txt else null end)
+        }'
     )"
 
     perform_request \
