@@ -648,8 +648,26 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
     if not user_id:
         raise HTTPException(status_code=401, detail="需要登录")
 
-    # Use queue-based approach to ensure backend continues even if client disconnects
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    # Use queue-based approach to ensure backend continues even if client disconnects.
+    #
+    # Important: if the client disconnects, we must not keep enqueueing chunks
+    # forever (unbounded memory growth). We track disconnects and stop
+    # enqueueing while still consuming the generator so the backend can finish
+    # and persist messages.
+    stream_cancelled = asyncio.Event()
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=200)
+
+    async def _enqueue(chunk: str | None) -> None:
+        if stream_cancelled.is_set():
+            return
+        while True:
+            if stream_cancelled.is_set():
+                return
+            try:
+                queue.put_nowait(chunk)
+                return
+            except asyncio.QueueFull:
+                await asyncio.sleep(0.02)
 
     async def process_in_background():
         """Background task that processes the chat and puts results in queue.
@@ -667,11 +685,13 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
                 selected_tools=request.selected_tools,
                 images=images_data,
             ):
-                await queue.put(chunk)
+                if stream_cancelled.is_set():
+                    continue
+                await _enqueue(chunk)
         except Exception as e:
             logger.error(f"Background processing error: {e}", exc_info=True)
         finally:
-            await queue.put(None)  # Signal completion
+            await _enqueue(None)  # Signal completion
 
     async def stream_from_queue() -> AsyncGenerator[str, None]:
         """Stream data from queue to client.
@@ -691,6 +711,7 @@ async def agent_chat(request: AgentChatRequest, http_request: Request):
             logger.info(
                 "Stream cancelled by client, backend continues processing in background"
             )
+            stream_cancelled.set()
             # Don't raise - let the background task complete
 
     try:

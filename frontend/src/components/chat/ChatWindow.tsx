@@ -106,7 +106,7 @@ function EmptyState({
         <div className="flex flex-col items-center justify-center h-full w-full text-gray-500 dark:text-gray-400 animate-in fade-in duration-500 overflow-x-hidden px-4 box-border">
             <section className="empty-state-hero relative flex-1 flex flex-col items-center justify-center overflow-hidden">
                 <div className="relative group w-full px-4">
-                    {/* HealthHero Text Logo */}
+                    {/* CookHero Text Logo */}
                     <div className="flex flex-col items-center justify-center py-8">
                         {/* Icon with gradient background */}
                         <div className="relative mb-4">
@@ -248,7 +248,7 @@ function LoadingIndicator() {
             </div>
             <div className="space-y-2 pt-2">
                 <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-                    <span className="animate-pulse">HealthHero is thinking...</span>
+                    <span className="animate-pulse">CookHero is thinking...</span>
                 </div>
             </div>
         </div>

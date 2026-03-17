@@ -40,6 +40,7 @@ import {
   getWeeklySummary,
   getDietBudget,
 } from '../../services/api/diet';
+import { trackEvent } from '../../services/api/events';
 import type {
   Dish,
   DietPlan,
@@ -1400,6 +1401,11 @@ export default function DietManagementPage() {
         dishes: data.dishes,
         notes: data.notes,
       });
+      trackEvent(token, 'diet_plan_meal_created', {
+        plan_date: formatDate(mealModalData.date),
+        meal_type: mealModalData.mealType,
+        dish_count: data.dishes?.length ?? 0,
+      });
     }
 
     await fetchData();
@@ -1417,7 +1423,12 @@ export default function DietManagementPage() {
   // Handle mark eaten
   const handleMarkEaten = async (mealId: string) => {
     if (!token) return;
-    await markMealEaten(token, mealId, {});
+    const log = await markMealEaten(token, mealId, {});
+    trackEvent(token, 'diet_log_created', {
+      source: 'mark_meal_eaten',
+      log_date: log?.log_date,
+      meal_type: log?.meal_type,
+    });
     await fetchData();
   };
 
@@ -1428,11 +1439,17 @@ export default function DietManagementPage() {
     images?: Array<{ data: string; mime_type: string }>
   ) => {
     if (!token) return;
-    await createLogFromText(token, {
+    const log = await createLogFromText(token, {
       text,
       log_date: formatDate(quickLogDate),
       meal_type: mealType,
       images,
+    });
+    trackEvent(token, 'diet_log_created', {
+      source: images?.length ? 'ai_image' : 'ai_text',
+      log_date: log?.log_date,
+      meal_type: log?.meal_type ?? mealType,
+      has_images: Boolean(images?.length),
     });
     await fetchData();
   };

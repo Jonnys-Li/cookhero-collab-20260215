@@ -22,6 +22,7 @@ import {
 import { useAuth, useTheme } from '../../contexts';
 import type { SubagentSchema, ToolSchema } from '../../types';
 import { TOOLS_UPDATED_EVENT } from '../../constants';
+import { DietPreferencesForm } from '../diet/DietPreferencesForm';
 
 export interface UserProfileModalProps {
   open: boolean;
@@ -38,7 +39,7 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
   const [userInstruction, setUserInstruction] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | string[] | null>(null);
-  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'mcp' | 'agents'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'appearance' | 'diet' | 'mcp' | 'agents'>('general');
   const [mcpServers, setMcpServers] = useState<{
     name: string;
     endpoint: string;
@@ -493,6 +494,12 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
               label="个性化"
             />
             <TabButton
+              active={activeTab === 'diet'}
+              onClick={() => setActiveTab('diet')}
+              icon={<Pencil size={18} />}
+              label="饮食偏好"
+            />
+            <TabButton
               active={activeTab === 'mcp'}
               onClick={() => setActiveTab('mcp')}
               icon={<Plug size={18} />}
@@ -547,6 +554,10 @@ export function UserProfileModal({ open, onClose }: UserProfileModalProps) {
                 onUserInstructionChange={setUserInstruction}
                 onSave={handleSave}
               />
+            )}
+
+            {activeTab === 'diet' && token && (
+              <DietPreferencesForm token={token} />
             )}
 
             {activeTab === 'mcp' && (

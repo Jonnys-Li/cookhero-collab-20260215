@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     community,
     meta,
     mcp,
+    events,
 )
 from app.config import settings
 from app.database.session import init_db, close_db
@@ -456,6 +457,7 @@ app.include_router(diet.router, prefix=settings.API_V1_STR, tags=["Diet"])
 app.include_router(community.router, prefix=settings.API_V1_STR, tags=["Community"])
 app.include_router(meta.router, prefix=settings.API_V1_STR, tags=["Meta"])
 app.include_router(mcp.router, prefix=settings.API_V1_STR, tags=["MCP"])
+app.include_router(events.router, prefix=settings.API_V1_STR, tags=["Events"])
 
 
 @app.get("/")

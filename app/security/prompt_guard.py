@@ -124,16 +124,16 @@ class PromptGuard:
         (r"重复\s*(你的)?\s*指令", "probe"),
     ]
 
-    def __init__(self, enabled: bool = True, max_length: int = 10000):
+    def __init__(self, enabled: Optional[bool] = None, max_length: Optional[int] = None):
         """
         Initialize prompt guard.
 
         Args:
-            enabled: Whether protection is enabled
-            max_length: Maximum allowed input length
+            enabled: Whether protection is enabled. Defaults to `settings.PROMPT_GUARD_ENABLED`.
+            max_length: Maximum allowed input length. Defaults to `settings.MAX_MESSAGE_LENGTH`.
         """
-        self.enabled = enabled if enabled else settings.PROMPT_GUARD_ENABLED
-        self.max_length = max_length if max_length else settings.MAX_MESSAGE_LENGTH
+        self.enabled = settings.PROMPT_GUARD_ENABLED if enabled is None else bool(enabled)
+        self.max_length = settings.MAX_MESSAGE_LENGTH if max_length is None else int(max_length)
 
         # Compile patterns for efficiency
         self._dangerous_patterns = [

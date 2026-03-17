@@ -136,9 +136,28 @@ async def conversation(request: ConversationRequest, http_request: Request):
             for img in request.images
         ]
     
-    # Use queue-based approach to ensure backend continues even if client disconnects
-    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    # Use queue-based approach to ensure backend continues even if client disconnects.
+    #
+    # Important: if the client disconnects, we must not keep enqueueing chunks
+    # forever (unbounded memory growth). We track disconnects and stop
+    # enqueueing while still consuming the generator so the backend can finish
+    # and persist messages.
+    stream_cancelled = asyncio.Event()
+    queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=200)
     user_id = getattr(http_request.state, "user_id", None)
+
+    async def _enqueue(chunk: str | None) -> None:
+        if stream_cancelled.is_set():
+            return
+        while True:
+            if stream_cancelled.is_set():
+                return
+            try:
+                queue.put_nowait(chunk)
+                return
+            except asyncio.QueueFull:
+                # Backpressure without blocking forever; allows cancellation to win.
+                await asyncio.sleep(0.02)
 
     async def process_in_background():
         """Background task that processes the chat and puts results in queue.
@@ -155,11 +174,13 @@ async def conversation(request: ConversationRequest, http_request: Request):
                 extra_options=request.extra_options,
                 images=images_data,
             ):
-                await queue.put(chunk)
+                if stream_cancelled.is_set():
+                    continue
+                await _enqueue(chunk)
         except Exception as e:
             logger.error(f"Background processing error: {e}", exc_info=True)
         finally:
-            await queue.put(None)  # Signal completion
+            await _enqueue(None)  # Signal completion
 
     async def stream_from_queue() -> AsyncGenerator[str, None]:
         """Stream data from queue to client.
@@ -177,6 +198,7 @@ async def conversation(request: ConversationRequest, http_request: Request):
             # Client disconnected (e.g., page refresh)
             # Background task continues running independently
             logger.info("Stream cancelled by client, backend continues processing in background")
+            stream_cancelled.set()
             # Don't raise - let the background task complete
 
     try:
