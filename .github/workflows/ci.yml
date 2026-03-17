@@ -33,7 +33,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           # Coverage gate: increase gradually (weekly) while keeping it reachable.
-          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=63
+          python -m pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=65
 
       - name: Enforce key package coverage thresholds
         run: |
