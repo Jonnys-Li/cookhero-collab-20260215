@@ -1,18 +1,28 @@
 // src/routes/AppRoutes.tsx
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 
 import { KnowledgePanel, MainLayout } from '../components';
 import { useAuth } from '../contexts';
-import CommunityFeedPage from '../pages/community/CommunityFeed';
-import CommunityPostDetailPage from '../pages/community/CommunityPostDetail';
-import DietManagementPage from '../pages/diet/DietManagement';
-import EvaluationPage from '../pages/Evaluation';
-import LLMStatsPage from '../pages/LLMStats';
 import LoginPage from '../pages/Login';
 import RegisterPage from '../pages/Register';
 import ChatView from '../pages/chat/ChatView';
+
+// Route-level code splitting for heavier pages keeps the initial bundle smaller.
+const CommunityFeedPage = lazy(() => import('../pages/community/CommunityFeed'));
+const CommunityPostDetailPage = lazy(() => import('../pages/community/CommunityPostDetail'));
+const DietManagementPage = lazy(() => import('../pages/diet/DietManagement'));
+const EvaluationPage = lazy(() => import('../pages/Evaluation'));
+const LLMStatsPage = lazy(() => import('../pages/LLMStats'));
+
+function RouteFallback() {
+  return (
+    <div className="w-full px-6 py-8 text-sm text-slate-500">
+      Loading...
+    </div>
+  );
+}
 
 function RequireAuth({ children }: { children: ReactElement }) {
   const { isAuthenticated, logout } = useAuth();
@@ -40,7 +50,9 @@ function RequireAuth({ children }: { children: ReactElement }) {
 function ProtectedShell({ children }: { children: ReactNode }) {
   return (
     <RequireAuth>
-      <MainLayout>{children}</MainLayout>
+      <MainLayout>
+        <Suspense fallback={<RouteFallback />}>{children}</Suspense>
+      </MainLayout>
     </RequireAuth>
   );
 }
@@ -188,4 +200,3 @@ export default function AppRoutes() {
     </Routes>
   );
 }
-
