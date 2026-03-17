@@ -6,7 +6,8 @@ on:
       - main
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    # Every 6 hours (UTC). Keep this light to avoid burning Actions quota.
+    - cron: "0 */6 * * *"
 
 permissions:
   contents: read
