@@ -523,3 +523,57 @@ def test_adjustment_history_prunes_to_14_days(run):
     run(service.adjust_today_budget(user_id, 40, reason="new"))
     refreshed = repo.preferences[user_id].stats["today_budget_adjustments"]
     assert all(item["date"] >= (date.today() - timedelta(days=13)).isoformat() for item in refreshed)
+
+
+def test_emotion_subagent_high_risk_activates_exemption_and_skips_budget_ui(monkeypatch, run):
+    events = []
+    captured = {}
+
+    async def fake_run_with_tools(
+        self,
+        task,
+        user_id=None,
+        background=None,
+        event_handler=None,
+        tool_names_override=None,
+    ):
+        captured["background"] = background or ""
+        captured["tools"] = list(tool_names_override or [])
+        return ToolResult(success=True, data={"result": "ok", "iterations": 1})
+
+    async def handle_event(step):
+        events.append(step)
+
+    monkeypatch.setattr(EmotionSupportSubagent, "run_with_tools", fake_run_with_tools)
+    monkeypatch.setattr(
+        AgentHub,
+        "list_tools",
+        classmethod(
+            lambda cls, user_id=None: [
+                "datetime",
+                "diet_analysis",
+                "web_search",
+                "mcp_diet_auto_adjust_get_today_budget",
+                "mcp_diet_auto_adjust_auto_adjust_today_budget",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        AgentHub,
+        "get_tool",
+        classmethod(lambda cls, name, user_id=None: object()),
+    )
+
+    subagent = EmotionSupportSubagent(EmotionSupportSubagent.get_default_config())
+    result = run(
+        subagent.execute(
+            "我今天吃多了，真的很崩溃也特别难受。",
+            user_id="u1",
+            event_handler=handle_event,
+        )
+    )
+
+    assert result.success is True
+    assert "高风险情绪豁免期" in captured["background"]
+    assert "mcp_diet_auto_adjust_get_today_budget" not in captured["tools"]
+    assert [event for event in events if event.action == "ui_action"] == []

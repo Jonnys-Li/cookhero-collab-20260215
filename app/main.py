@@ -282,6 +282,7 @@ async def lifespan(app: FastAPI):
     # Heavy RAG initialization is deferred until first retrieval request by default.
     if os.getenv("RAG_INIT_ON_STARTUP", "false").lower() == "true":
         from app.services.rag_service import get_rag_service
+        from app.services.emotion_exemption_service import emotion_exemption_service
 
         rag_service = get_rag_service()
         if rag_service.cache_manager and rag_service.cache_manager.redis_client:
@@ -291,6 +292,8 @@ async def lifespan(app: FastAPI):
             # Initialize auth service with Redis client for login tracking
             auth_service.set_redis(rag_service.cache_manager.redis_client)
             logger.info("Auth service initialized with Redis for login tracking.")
+            emotion_exemption_service.set_redis(rag_service.cache_manager.redis_client)
+            logger.info("Emotion exemption service initialized with Redis.")
     else:
         logger.info("Skipping eager RAG init at startup (RAG_INIT_ON_STARTUP=false).")
 

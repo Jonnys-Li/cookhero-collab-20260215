@@ -40,6 +40,10 @@ class DishSchema(BaseModel):
     protein: Optional[float] = Field(None, description="蛋白质(克)")
     fat: Optional[float] = Field(None, description="脂肪(克)")
     carbs: Optional[float] = Field(None, description="碳水化合物(克)")
+    low_confidence_candidates: List["LowConfidenceCandidateSchema"] = Field(
+        default_factory=list,
+        description="低置信候选，用于前端二次确认",
+    )
 
 
 class AddMealRequest(BaseModel):
@@ -151,6 +155,22 @@ class ParsedDietItemSchema(BaseModel):
     carbs: Optional[float] = None
     confidence_score: Optional[float] = None
     source: Optional[str] = None
+    low_confidence_candidates: List["LowConfidenceCandidateSchema"] = Field(
+        default_factory=list
+    )
+
+
+class LowConfidenceCandidateSchema(BaseModel):
+    name: str
+    food_name: Optional[str] = None
+    weight_g: Optional[float] = None
+    unit: Optional[str] = None
+    calories: Optional[int] = None
+    protein: Optional[float] = None
+    fat: Optional[float] = None
+    carbs: Optional[float] = None
+    source: Optional[str] = None
+    confidence_score: Optional[float] = None
 
 
 class ParseDietInputResponse(BaseModel):
@@ -158,6 +178,9 @@ class ParseDietInputResponse(BaseModel):
     items: List[ParsedDietItemSchema] = Field(default_factory=list)
     used_vision: bool = False
     message: Optional[str] = None
+    confidence: Optional[float] = None
+    needs_confirmation: bool = False
+    candidates: List[LowConfidenceCandidateSchema] = Field(default_factory=list)
 
 
 class RecognizeMealFromImageRequest(BaseModel):
@@ -177,6 +200,9 @@ class RecognizeMealFromImageResponse(BaseModel):
     dishes: List[DishSchema] = Field(default_factory=list)
     message: str
     source: str = DataSource.AI_IMAGE.value
+    confidence: Optional[float] = None
+    needs_confirmation: bool = False
+    candidates: List[LowConfidenceCandidateSchema] = Field(default_factory=list)
 
 
 class UpdateLogRequest(BaseModel):
@@ -235,6 +261,92 @@ class ApplyNextMealCorrectionRequest(BaseModel):
     nutrition_source: Optional[str] = Field(None, max_length=20)
     nutrition_confidence: Optional[float] = Field(None, ge=0, le=1)
     notes: Optional[str] = Field(None, max_length=200)
+
+
+class ReplanCandidateSchema(BaseModel):
+    dish_name: str = Field(..., min_length=1, max_length=80)
+    calories: Optional[int] = Field(None, ge=0)
+    protein: Optional[float] = Field(None, ge=0)
+    fat: Optional[float] = Field(None, ge=0)
+    carbs: Optional[float] = Field(None, ge=0)
+    nutrition_source: Optional[str] = Field(None, max_length=32)
+    nutrition_confidence: Optional[float] = Field(None, ge=0, le=1)
+    description: Optional[str] = Field(None, max_length=200)
+
+
+class ReplanPreviewRequest(BaseModel):
+    target_date: date = Field(..., description="需要改餐的日期")
+    meal_type: str = Field(..., description="餐次类型: breakfast/lunch/dinner/snack")
+    candidate_count: int = Field(default=3, ge=1, le=3)
+
+
+class ReplanPreviewResponse(BaseModel):
+    target_date: Optional[str] = None
+    meal_type: Optional[str] = None
+    direction: Optional[str] = None
+    reason: Optional[str] = None
+    existing_meal: Optional[Dict[str, Any]] = None
+    candidates: List[ReplanCandidateSchema] = Field(default_factory=list)
+    selected_candidate: Optional[ReplanCandidateSchema] = None
+    apply_path: Optional[str] = None
+    weekly_context: Dict[str, Any] = Field(default_factory=dict)
+    affected_days: List[str] = Field(default_factory=list)
+    before_summary: Dict[str, Any] = Field(default_factory=dict)
+    after_summary: Dict[str, Any] = Field(default_factory=dict)
+    meal_changes: List[Dict[str, Any]] = Field(default_factory=list)
+    write_conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ReplanApplyRequest(BaseModel):
+    target_date: Optional[date] = Field(None, description="需要改餐的日期")
+    meal_type: Optional[str] = Field(None, description="餐次类型: breakfast/lunch/dinner/snack")
+    selected_candidate: Optional[ReplanCandidateSchema] = None
+    notes: Optional[str] = Field(None, max_length=200)
+    replace_existing: bool = True
+    meal_changes: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ReplanApplyResponse(BaseModel):
+    action: str
+    target_date: Optional[str] = None
+    meal_type: Optional[str] = None
+    meal: Optional[Dict[str, Any]] = None
+    applied_count: Optional[int] = None
+    updated_meal_ids: List[str] = Field(default_factory=list)
+    write_conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class EmotionExemptionStatusResponse(BaseModel):
+    active: bool
+    is_active: Optional[bool] = None
+    date: str
+    storage: str
+    level: Optional[str] = None
+    reason: Optional[str] = None
+    source: Optional[str] = None
+    summary: Optional[str] = None
+    activated_at: Optional[str] = None
+    delta_calories: int = 0
+    effective_goal: Optional[int] = None
+    expires_at: Optional[str] = None
+
+
+class ShoppingListItemSchema(BaseModel):
+    name: str
+    planned_count: int
+    total_weight_g: Optional[float] = None
+    meal_slots: List[str] = Field(default_factory=list)
+
+
+class ShoppingListResponse(BaseModel):
+    week_start_date: str
+    week_end_date: str
+    aggregation_basis: str
+    item_count: int
+    items: List[ShoppingListItemSchema] = Field(default_factory=list)
+    matched_items: List[Dict[str, Any]] = Field(default_factory=list)
+    unmatched_dishes: List[str] = Field(default_factory=list)
+    grouped_ingredients: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ==================== Helper Functions ====================
@@ -563,6 +675,9 @@ async def parse_diet_log_input(
     parsed_items = parsed.get("items") if isinstance(parsed, dict) else []
     if not isinstance(parsed_items, list):
         parsed_items = []
+    response_candidates = parsed.get("candidates") if isinstance(parsed, dict) else []
+    if not isinstance(response_candidates, list):
+        response_candidates = []
 
     # Fill source field so frontend can display provenance consistently.
     source = (
@@ -587,11 +702,16 @@ async def parse_diet_log_input(
                 carbs=raw.get("carbs"),
                 confidence_score=raw.get("confidence_score"),
                 source=str(raw.get("source") or source),
+                low_confidence_candidates=[
+                    LowConfidenceCandidateSchema(**candidate)
+                    for candidate in (raw.get("low_confidence_candidates") or [])
+                    if isinstance(candidate, dict) and candidate.get("name")
+                ],
             )
         )
 
     meal_type = payload.meal_type or (parsed.get("meal_type") if isinstance(parsed, dict) else None)
-    message = None
+    message = parsed.get("message") if isinstance(parsed, dict) else None
     if not out_items:
         message = "未识别到清晰食物，你可以手动编辑本餐记录。"
 
@@ -600,6 +720,13 @@ async def parse_diet_log_input(
         items=out_items,
         used_vision=used_vision,
         message=message,
+        confidence=parsed.get("confidence") if isinstance(parsed, dict) else None,
+        needs_confirmation=bool(parsed.get("needs_confirmation")) if isinstance(parsed, dict) else False,
+        candidates=[
+            LowConfidenceCandidateSchema(**candidate)
+            for candidate in response_candidates
+            if isinstance(candidate, dict) and candidate.get("name")
+        ],
     )
 
 
@@ -692,6 +819,21 @@ async def add_item_to_log(
 
 # ==================== Analysis Endpoints ====================
 
+
+@router.get(
+    "/diet/emotion-exemption",
+    response_model=EmotionExemptionStatusResponse,
+)
+async def get_emotion_exemption_status(
+    request: Request,
+    target_date: Optional[date] = Query(None, description="目标日期（默认今天）"),
+) -> EmotionExemptionStatusResponse:
+    """查询当天情绪豁免状态，Redis 不可用时自动降级。"""
+    user_id = get_user_id(request)
+    payload = await diet_service.get_emotion_exemption_status(user_id, target_date)
+    return EmotionExemptionStatusResponse(**payload)
+
+
 @router.get("/diet/budget")
 async def get_budget(
     request: Request,
@@ -755,6 +897,104 @@ async def get_deviation_analysis(
 # ==================== Summary / Correction Endpoints ====================
 
 
+@router.get(
+    "/diet/replan/preview",
+    response_model=ReplanPreviewResponse,
+)
+async def get_weekly_replan_preview(
+    request: Request,
+    week_start_date: Optional[date] = Query(None, description="周开始日期（默认本周）"),
+) -> ReplanPreviewResponse:
+    """预览未来 3-5 天的滚动重规划结果。"""
+    user_id = get_user_id(request)
+    preview = await diet_service.preview_weekly_replan(
+        user_id=user_id,
+        week_start_date=week_start_date,
+    )
+    return ReplanPreviewResponse(**preview)
+
+
+@router.post(
+    "/diet/replan/preview",
+    response_model=ReplanPreviewResponse,
+)
+async def preview_replan(
+    payload: ReplanPreviewRequest,
+    request: Request,
+) -> ReplanPreviewResponse:
+    """兼容旧版：生成单餐次 replan 候选。"""
+    user_id = get_user_id(request)
+    meal_type_value = str(payload.meal_type or "").strip().lower()
+    if meal_type_value not in {"breakfast", "lunch", "dinner", "snack"}:
+        raise HTTPException(
+            status_code=400,
+            detail="meal_type 仅支持 breakfast/lunch/dinner/snack",
+        )
+
+    preview = await diet_service.preview_replan(
+        user_id=user_id,
+        target_date=payload.target_date,
+        meal_type=meal_type_value,
+        candidate_count=payload.candidate_count,
+    )
+    return ReplanPreviewResponse(**preview)
+
+
+@router.post(
+    "/diet/replan/apply",
+    response_model=ReplanApplyResponse,
+)
+async def apply_replan(
+    payload: ReplanApplyRequest,
+    request: Request,
+) -> ReplanApplyResponse:
+    """应用滚动重规划或兼容旧版单餐次改餐。"""
+    user_id = get_user_id(request)
+    if payload.meal_changes:
+        result = await diet_service.apply_weekly_replan(
+            user_id=user_id,
+            meal_changes=payload.meal_changes,
+        )
+        return ReplanApplyResponse(action="applied_weekly_replan", **result)
+
+    if payload.target_date is None or payload.meal_type is None or payload.selected_candidate is None:
+        raise HTTPException(status_code=400, detail="缺少 replan 应用参数")
+
+    meal_type_value = str(payload.meal_type or "").strip().lower()
+    if meal_type_value not in {"breakfast", "lunch", "dinner", "snack"}:
+        raise HTTPException(
+            status_code=400,
+            detail="meal_type 仅支持 breakfast/lunch/dinner/snack",
+        )
+
+    result = await diet_service.apply_replan(
+        user_id=user_id,
+        target_date=payload.target_date,
+        meal_type=meal_type_value,
+        selected_candidate=payload.selected_candidate.model_dump(),
+        notes=payload.notes,
+        replace_existing=payload.replace_existing,
+    )
+    return ReplanApplyResponse(**result)
+
+
+@router.get(
+    "/diet/shopping-list",
+    response_model=ShoppingListResponse,
+)
+async def get_shopping_list(
+    request: Request,
+    week_start_date: Optional[date] = Query(None, description="周开始日期（默认本周）"),
+) -> ShoppingListResponse:
+    """按计划菜品聚合一周购物清单。"""
+    user_id = get_user_id(request)
+    payload = await diet_service.get_shopping_list(
+        user_id=user_id,
+        week_start_date=week_start_date,
+    )
+    return ShoppingListResponse(**payload)
+
+
 @router.get("/diet/summary/weekly")
 async def get_weekly_summary_bundle(
     request: Request,
@@ -811,18 +1051,23 @@ async def get_weekly_summary_bundle(
         }
         reason = "下一餐建议选择高蛋白稳定餐，帮助维持节奏与饱腹感。"
 
-    next_meal_correction = {
-        "action_id": str(uuid.uuid4()),
-        "action_kind": "apply_next_meal_correction",
-        "apply_path": "/api/v1/diet/actions/apply-next-meal-correction",
-        "reason": reason,
-        "payload": {
-            "plan_date": inferred_date.isoformat(),
-            "meal_type": meal_type_value,
-            **suggestion,
-            "notes": "来自本周复盘的一键纠偏建议",
-        },
-    }
+    emotion_exemption = (
+        weekly_summary.get("emotion_exemption") if isinstance(weekly_summary, dict) else None
+    )
+    next_meal_correction = None
+    if not (isinstance(emotion_exemption, dict) and emotion_exemption.get("active")):
+        next_meal_correction = {
+            "action_id": str(uuid.uuid4()),
+            "action_kind": "apply_next_meal_correction",
+            "apply_path": "/api/v1/diet/actions/apply-next-meal-correction",
+            "reason": reason,
+            "payload": {
+                "plan_date": inferred_date.isoformat(),
+                "meal_type": meal_type_value,
+                **suggestion,
+                "notes": "来自本周复盘的一键纠偏建议",
+            },
+        }
 
     return {
         "weekly_summary": weekly_summary,

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Camera, CheckCircle2, Loader2, Plus, Sparkles, Trash2, X } from 'lucide-react';
 
 import type { ImageData } from '../../types/api';
-import type { CreateLogRequest, DietLog } from '../../types/diet';
+import type { CreateLogRequest, DietLog, ParsedDietCandidate, ParsedDietItem } from '../../types/diet';
 import { createLog, createLogFromText, parseDietLog } from '../../services/api/diet';
 import { trackEvent } from '../../services/api/events';
 
@@ -30,7 +30,13 @@ type ParsedItem = {
   protein?: number;
   fat?: number;
   carbs?: number;
+  confidence_score?: number;
+  source?: string;
+  candidates?: ParsedDietCandidate[];
+  selectedCandidateIndex?: number | null;
 };
+
+const LOW_CONFIDENCE_THRESHOLD = 0.65;
 
 function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -59,7 +65,23 @@ async function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function normalizeItems(items: ParsedItem[]): ParsedItem[] {
+function normalizeCandidate(candidate: ParsedDietCandidate): ParsedDietCandidate | null {
+  const foodName = String(candidate.food_name || candidate.name || '').trim();
+  if (!foodName) return null;
+  return {
+    food_name: foodName,
+    weight_g: candidate.weight_g,
+    unit: candidate.unit,
+    calories: candidate.calories,
+    protein: candidate.protein,
+    fat: candidate.fat,
+    carbs: candidate.carbs,
+    confidence_score: candidate.confidence_score,
+    source: candidate.source,
+  };
+}
+
+function normalizeItems(items: ParsedDietItem[]): ParsedItem[] {
   const normalized = (items || [])
     .map((i) => ({
       food_name: String(i.food_name || '').trim(),
@@ -69,10 +91,42 @@ function normalizeItems(items: ParsedItem[]): ParsedItem[] {
       protein: i.protein,
       fat: i.fat,
       carbs: i.carbs,
+      confidence_score: i.confidence_score,
+      source: i.source,
+      candidates: ((i.candidates || i.low_confidence_candidates) || [])
+        .map((candidate) => normalizeCandidate(candidate))
+        .filter((candidate): candidate is ParsedDietCandidate => Boolean(candidate)),
+      selectedCandidateIndex: null,
     }))
     .filter((i) => i.food_name);
 
   return normalized.length ? normalized : [{ food_name: '' }];
+}
+
+function buildCandidateOptions(item: ParsedItem): ParsedDietCandidate[] {
+  const primary = normalizeCandidate(item);
+  const options = [
+    ...(primary ? [primary] : []),
+    ...((item.candidates || []).map((candidate) => normalizeCandidate(candidate)).filter(
+      (candidate): candidate is ParsedDietCandidate => Boolean(candidate)
+    )),
+  ];
+
+  const seen = new Set<string>();
+  return options.filter((candidate) => {
+    const key = JSON.stringify([
+      candidate.food_name,
+      candidate.weight_g ?? null,
+      candidate.unit ?? null,
+      candidate.calories ?? null,
+      candidate.protein ?? null,
+      candidate.fat ?? null,
+      candidate.carbs ?? null,
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function PhotoLogModal({
@@ -238,12 +292,39 @@ export function PhotoLogModal({
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
   };
 
+  const handleSelectCandidate = (idx: number, candidate: ParsedDietCandidate, candidateIndex: number) => {
+    setItems((prev) =>
+      prev.map((item, itemIndex) =>
+        itemIndex === idx
+          ? {
+              ...item,
+              food_name: candidate.food_name,
+              weight_g: candidate.weight_g,
+              unit: candidate.unit,
+              calories: candidate.calories,
+              protein: candidate.protein,
+              fat: candidate.fat,
+              carbs: candidate.carbs,
+              confidence_score: candidate.confidence_score,
+              source: candidate.source,
+              selectedCandidateIndex: candidateIndex,
+            }
+          : item
+      )
+    );
+  };
+
   const handleSave = async () => {
     if (saving) return;
     const cleaned = items
       .map((i) => ({
-        ...i,
         food_name: String(i.food_name || '').trim(),
+        weight_g: i.weight_g,
+        unit: i.unit,
+        calories: i.calories,
+        protein: i.protein,
+        fat: i.fat,
+        carbs: i.carbs,
       }))
       .filter((i) => i.food_name);
 
@@ -507,47 +588,153 @@ export function PhotoLogModal({
                 </div>
 
                 <div className="mt-4 space-y-3">
-                  {items.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 p-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                          条目 {idx + 1}
-                        </div>
-                        {items.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem(idx)}
-                            disabled={saving}
-                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20 disabled:opacity-70"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            删除
-                          </button>
-                        )}
-                      </div>
+                  {items.map((item, idx) => {
+                    const candidateOptions = buildCandidateOptions(item);
+                    const shouldShowCandidates =
+                      candidateOptions.length > 1 ||
+                      ((item.confidence_score ?? 1) > 0 &&
+                        (item.confidence_score ?? 1) < LOW_CONFIDENCE_THRESHOLD);
 
-                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <label className="block">
-                          <span className="text-xs text-gray-500">食物名称</span>
-                          <input
-                            value={item.food_name}
-                            onChange={(e) => updateItem(idx, { food_name: e.target.value })}
-                            placeholder="例如：牛肉面"
-                            className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
-                            disabled={saving}
-                          />
-                        </label>
-                        <div className="grid grid-cols-2 gap-3">
+                    return (
+                      <div
+                        key={idx}
+                        className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-900/40 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                            条目 {idx + 1}
+                          </div>
+                          {items.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveItem(idx)}
+                              disabled={saving}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-900/20 disabled:opacity-70"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              删除
+                            </button>
+                          )}
+                        </div>
+
+                        {shouldShowCandidates ? (
+                          <div className="mt-3 rounded-2xl border border-amber-200/70 bg-amber-50/70 px-3 py-3 dark:border-amber-900/40 dark:bg-amber-900/10">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <div className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                                  识别把握偏低，建议先确认候选
+                                </div>
+                                <div className="mt-1 text-[11px] text-amber-700/90 dark:text-amber-300/90">
+                                  切换候选后会直接用于保存，你也可以继续手动编辑。
+                                </div>
+                              </div>
+                              <div className="rounded-full bg-white/80 px-2.5 py-1 text-[11px] text-amber-700 dark:bg-gray-900/70 dark:text-amber-200">
+                                当前置信度 {Math.round((item.confidence_score ?? 0) * 100)}%
+                              </div>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {candidateOptions.map((candidate, candidateIndex) => {
+                                const selected =
+                                  item.selectedCandidateIndex === candidateIndex ||
+                                  (item.selectedCandidateIndex === null &&
+                                    item.food_name === candidate.food_name &&
+                                    item.calories === candidate.calories &&
+                                    item.weight_g === candidate.weight_g);
+
+                                return (
+                                  <button
+                                    key={`${candidate.food_name}-${candidateIndex}`}
+                                    type="button"
+                                    onClick={() =>
+                                      handleSelectCandidate(idx, candidate, candidateIndex)
+                                    }
+                                    disabled={saving}
+                                    className={`rounded-xl border px-3 py-2 text-left text-xs transition-colors ${
+                                      selected
+                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200'
+                                        : 'border-white/80 bg-white/80 text-gray-700 hover:border-amber-300 hover:bg-white dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:border-amber-900/50'
+                                    }`}
+                                    aria-label={`选择候选 ${candidate.food_name}`}
+                                  >
+                                    <div className="font-medium">{candidate.food_name}</div>
+                                    <div className="mt-1 text-[11px] opacity-80">
+                                      {candidate.calories ?? '--'} kcal
+                                      {typeof candidate.protein === 'number'
+                                        ? ` · P ${candidate.protein}g`
+                                        : ''}
+                                      {typeof candidate.weight_g === 'number'
+                                        ? ` · ${candidate.weight_g}${candidate.unit || 'g'}`
+                                        : ''}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-3">
                           <label className="block">
-                            <span className="text-xs text-gray-500">重量(g)</span>
+                            <span className="text-xs text-gray-500">食物名称</span>
                             <input
-                              value={item.weight_g ?? ''}
+                              value={item.food_name}
+                              onChange={(e) => updateItem(idx, { food_name: e.target.value })}
+                              placeholder="例如：牛肉面"
+                              className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
+                              disabled={saving}
+                            />
+                          </label>
+                          <div className="grid grid-cols-2 gap-3">
+                            <label className="block">
+                              <span className="text-xs text-gray-500">重量(g)</span>
+                              <input
+                                value={item.weight_g ?? ''}
+                                onChange={(e) =>
+                                  updateItem(idx, {
+                                    weight_g: e.target.value ? Number(e.target.value) : undefined,
+                                  })
+                                }
+                                inputMode="decimal"
+                                className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
+                                disabled={saving}
+                              />
+                            </label>
+                            <label className="block">
+                              <span className="text-xs text-gray-500">单位</span>
+                              <input
+                                value={item.unit ?? ''}
+                                onChange={(e) => updateItem(idx, { unit: e.target.value })}
+                                placeholder="份/碗/个"
+                                className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
+                                disabled={saving}
+                              />
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <label className="block">
+                            <span className="text-xs text-gray-500">kcal</span>
+                            <input
+                              value={item.calories ?? ''}
                               onChange={(e) =>
                                 updateItem(idx, {
-                                  weight_g: e.target.value ? Number(e.target.value) : undefined,
+                                  calories: e.target.value ? Number(e.target.value) : undefined,
+                                })
+                              }
+                              inputMode="numeric"
+                              className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
+                              disabled={saving}
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">P(g)</span>
+                            <input
+                              value={item.protein ?? ''}
+                              onChange={(e) =>
+                                updateItem(idx, {
+                                  protein: e.target.value ? Number(e.target.value) : undefined,
                                 })
                               }
                               inputMode="decimal"
@@ -556,78 +743,37 @@ export function PhotoLogModal({
                             />
                           </label>
                           <label className="block">
-                            <span className="text-xs text-gray-500">单位</span>
+                            <span className="text-xs text-gray-500">F(g)</span>
                             <input
-                              value={item.unit ?? ''}
-                              onChange={(e) => updateItem(idx, { unit: e.target.value })}
-                              placeholder="份/碗/个"
+                              value={item.fat ?? ''}
+                              onChange={(e) =>
+                                updateItem(idx, {
+                                  fat: e.target.value ? Number(e.target.value) : undefined,
+                                })
+                              }
+                              inputMode="decimal"
+                              className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
+                              disabled={saving}
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-xs text-gray-500">C(g)</span>
+                            <input
+                              value={item.carbs ?? ''}
+                              onChange={(e) =>
+                                updateItem(idx, {
+                                  carbs: e.target.value ? Number(e.target.value) : undefined,
+                                })
+                              }
+                              inputMode="decimal"
                               className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
                               disabled={saving}
                             />
                           </label>
                         </div>
                       </div>
-
-                      <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <label className="block">
-                          <span className="text-xs text-gray-500">kcal</span>
-                          <input
-                            value={item.calories ?? ''}
-                            onChange={(e) =>
-                              updateItem(idx, {
-                                calories: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            inputMode="numeric"
-                            className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
-                            disabled={saving}
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-xs text-gray-500">P(g)</span>
-                          <input
-                            value={item.protein ?? ''}
-                            onChange={(e) =>
-                              updateItem(idx, {
-                                protein: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            inputMode="decimal"
-                            className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
-                            disabled={saving}
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-xs text-gray-500">F(g)</span>
-                          <input
-                            value={item.fat ?? ''}
-                            onChange={(e) =>
-                              updateItem(idx, {
-                                fat: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            inputMode="decimal"
-                            className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
-                            disabled={saving}
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="text-xs text-gray-500">C(g)</span>
-                          <input
-                            value={item.carbs ?? ''}
-                            onChange={(e) =>
-                              updateItem(idx, {
-                                carbs: e.target.value ? Number(e.target.value) : undefined,
-                              })
-                            }
-                            inputMode="decimal"
-                            className="mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200 dark:focus:ring-emerald-900/30"
-                            disabled={saving}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
@@ -657,4 +803,3 @@ export function PhotoLogModal({
     </div>
   );
 }
-
