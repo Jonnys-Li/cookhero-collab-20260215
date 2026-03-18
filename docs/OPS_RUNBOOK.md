@@ -75,7 +75,7 @@ vercel --prod --yes
 监控来源:
 - GitHub Actions 工作流: `.github/workflows/prod-smoke.yml`
 - 触发方式: `push main`、`workflow_dispatch`、每 30 分钟定时
-- 默认运行模式: 演示稳定模式（`SMOKE_STRICT=false`，fail-open）
+- 默认运行模式: 严格模式（`SMOKE_STRICT=true`，fail-close）
 
 故障分级:
 - 单次失败: 记录失败端点与状态码，人工复查一次。
@@ -84,14 +84,17 @@ vercel --prod --yes
 
 人工排查流程:
 1. 在 Actions 日志中定位失败步骤（端点、状态码、响应头/响应体）。
-2. 本地复现实验:
+2. 先看 `Backend OpenAPI diet route guard`：
+   - 若该步骤缺路由，优先判定为后端部署版本偏差（Render 未部署到最新）。
+   - 若该步骤通过但代理接口失败，再排查 Vercel rewrite / 前端代理链路。
+3. 本地复现实验:
    - `scripts/smoke-prod.sh`
    - `scripts/test-connection.sh https://cookhero-collab-20260215.onrender.com https://frontend-one-gray-39.vercel.app`
-3. 判断故障范围:
+4. 判断故障范围:
    - 仅前端代理异常（Vercel 路由/部署问题）
    - 仅后端异常（Render 服务不可用/启动失败）
    - 鉴权与配置异常（`JWT_SECRET_KEY`、CORS 等）
-4. 根据根因执行修复并重新触发 `workflow_dispatch`。
+5. 根据根因执行修复并重新触发 `workflow_dispatch`。
 
 ## 7. GitHub Secrets 配置
 

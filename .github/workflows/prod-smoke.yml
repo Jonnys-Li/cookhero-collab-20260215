@@ -34,8 +34,10 @@ jobs:
           SMOKE_USERNAME: ${{ secrets.SMOKE_USERNAME }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           MCP_SERVICE_KEY: ${{ secrets.MCP_DIET_SERVICE_KEY }}
-          SMOKE_STRICT: "false"
-          MAX_RETRIES: "2"
+          SMOKE_STRICT: "true"
+          MAX_RETRIES: "3"
           CONNECT_TIMEOUT_SECONDS: "8"
-          REQUEST_TIMEOUT_SECONDS: "20"
+          REQUEST_TIMEOUT_SECONDS: "90"
+          ROUTE_GUARD_WAIT_SECONDS: "900"
+          ROUTE_GUARD_POLL_SECONDS: "15"
         run: ./scripts/smoke-prod.sh

@@ -19,6 +19,9 @@ SMOKE_PHOTO_IMAGE_B64="${SMOKE_PHOTO_IMAGE_B64:-}"
 SMOKE_PHOTO_MIME_TYPE="${SMOKE_PHOTO_MIME_TYPE:-image/png}"
 SMOKE_PHOTO_CONTEXT_TEXT="${SMOKE_PHOTO_CONTEXT_TEXT:-}"
 SMOKE_AUTO_REGISTER_AUTH="${SMOKE_AUTO_REGISTER_AUTH:-true}"
+ROUTE_GUARD_WAIT_SECONDS="${ROUTE_GUARD_WAIT_SECONDS:-720}"
+ROUTE_GUARD_POLL_SECONDS="${ROUTE_GUARD_POLL_SECONDS:-15}"
+REQUIRED_DIET_ROUTE_PATHS="${REQUIRED_DIET_ROUTE_PATHS:-/api/v1/diet/replan/preview|/api/v1/diet/replan/apply|/api/v1/diet/summary/weekly|/api/v1/diet/analysis/three-lines|/api/v1/diet/shopping-list|/api/v1/diet/budget}"
 
 TMP_DIR="$(mktemp -d)"
 TMP_HEADERS="${TMP_DIR}/headers.txt"
@@ -68,7 +71,9 @@ dump_last_response() {
   echo "---- Last Response Headers ----"
   sed -n '1,30p' "${TMP_HEADERS}" || true
   echo "---- Last Response Body ----"
-  sed -n '1,30p' "${TMP_BODY}" || true
+  # Keep logs compact even when body is single-line JSON (for example openapi.json).
+  head -c 1200 "${TMP_BODY}" || true
+  echo ""
 }
 
 handle_assert_failure() {
@@ -83,6 +88,77 @@ handle_assert_failure() {
 
   log_warn "${message}"
   dump_last_response
+}
+
+openapi_missing_paths() {
+  local openapi_json="$1"
+  local required_csv="$2"
+
+  python3 - "$openapi_json" "$required_csv" <<'PY'
+import json
+import sys
+
+openapi_path = sys.argv[1]
+required = [item for item in sys.argv[2].split("|") if item]
+try:
+    with open(openapi_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+except Exception:
+    print("OPENAPI_PARSE_ERROR")
+    raise SystemExit(0)
+
+paths = data.get("paths") or {}
+missing = [item for item in required if item not in paths]
+print("|".join(missing))
+PY
+}
+
+assert_backend_openapi_routes_ready() {
+  local title="$1"
+  local openapi_url="$2"
+  local required_csv="$3"
+  local deadline=$((SECONDS + ROUTE_GUARD_WAIT_SECONDS))
+  local attempt=0
+
+  while true; do
+    attempt=$((attempt + 1))
+    perform_request "GET" "${openapi_url}"
+
+    if [[ "${LAST_STATUS}" == "200" ]]; then
+      local missing
+      missing="$(openapi_missing_paths "${TMP_BODY}" "${required_csv}")"
+
+      if [[ -z "${missing}" ]]; then
+        log_pass "${title} | route manifest ready on attempt ${attempt}"
+        return 0
+      fi
+
+      if [[ "${missing}" == "OPENAPI_PARSE_ERROR" ]]; then
+        if (( SECONDS >= deadline )); then
+          handle_assert_failure "${title} | failed to parse ${openapi_url}"
+          return 0
+        fi
+        echo "[WARN] ${title} | openapi parse failed on attempt ${attempt}, retry in ${ROUTE_GUARD_POLL_SECONDS}s"
+        sleep "${ROUTE_GUARD_POLL_SECONDS}"
+        continue
+      fi
+
+      if (( SECONDS >= deadline )); then
+        handle_assert_failure "${title} | missing backend routes after wait: ${missing}"
+        return 0
+      fi
+      echo "[WARN] ${title} | backend routes not ready (attempt ${attempt}), missing: ${missing}; retry in ${ROUTE_GUARD_POLL_SECONDS}s"
+      sleep "${ROUTE_GUARD_POLL_SECONDS}"
+      continue
+    fi
+
+    if (( SECONDS >= deadline )); then
+      handle_assert_failure "${title} | GET ${openapi_url} expected 200, got ${LAST_STATUS}"
+      return 0
+    fi
+    echo "[WARN] ${title} | GET ${openapi_url} got ${LAST_STATUS} on attempt ${attempt}, retry in ${ROUTE_GUARD_POLL_SECONDS}s"
+    sleep "${ROUTE_GUARD_POLL_SECONDS}"
+  done
 }
 
 perform_request() {
@@ -196,6 +272,8 @@ echo "BACKEND_URL=${BACKEND_URL}"
 echo "MAX_RETRIES=${MAX_RETRIES}"
 echo "CONNECT_TIMEOUT_SECONDS=${CONNECT_TIMEOUT_SECONDS}"
 echo "REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS}"
+echo "ROUTE_GUARD_WAIT_SECONDS=${ROUTE_GUARD_WAIT_SECONDS}"
+echo "ROUTE_GUARD_POLL_SECONDS=${ROUTE_GUARD_POLL_SECONDS}"
 echo ""
 
 # 1) 代理健康探测（应命中后端鉴权层，返回 401 JSON）
@@ -211,6 +289,12 @@ assert_status_with_retry \
   "GET" \
   "${FRONTEND_URL}/api/v1/auth/login" \
   "405"
+
+# 2.5) 后端路由清单就绪探测（区分“代理问题”与“后端版本偏差”）
+assert_backend_openapi_routes_ready \
+  "Backend OpenAPI diet route guard" \
+  "${BACKEND_URL%/}/openapi.json" \
+  "${REQUIRED_DIET_ROUTE_PATHS}"
 
 if [[ -z "${SMOKE_USERNAME:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
   if [[ "${STRICT_MODE}" == "true" ]]; then
