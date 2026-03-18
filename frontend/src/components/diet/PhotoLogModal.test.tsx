@@ -33,7 +33,7 @@ class MockFileReader {
 describe('PhotoLogModal', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    // @ts-expect-error - test shim
+    // @ts-expect-error test shim
     globalThis.FileReader = MockFileReader;
   });
 
@@ -68,10 +68,25 @@ describe('PhotoLogModal', () => {
     });
   });
 
-  it('confirms save and calls createLog', async () => {
+  it('switches low-confidence candidate before save', async () => {
     const user = userEvent.setup();
     vi.mocked(dietApi.parseDietLog).mockResolvedValue({
-      items: [{ food_name: '牛肉面', calories: 500 }],
+      items: [
+        {
+          food_name: '拌面',
+          calories: 520,
+          confidence_score: 0.41,
+          candidates: [
+            {
+              food_name: '牛肉面',
+              calories: 610,
+              protein: 28,
+              weight_g: 320,
+              unit: 'g',
+            },
+          ],
+        },
+      ],
       meal_type: 'lunch',
     });
     vi.mocked(dietApi.createLog).mockResolvedValue({
@@ -79,8 +94,8 @@ describe('PhotoLogModal', () => {
       user_id: 'u1',
       log_date: '2026-03-17',
       meal_type: 'lunch',
-      total_calories: 500,
-      total_protein: 0,
+      total_calories: 610,
+      total_protein: 28,
       total_fat: 0,
       total_carbs: 0,
       notes: '',
@@ -103,14 +118,28 @@ describe('PhotoLogModal', () => {
     await user.upload(input, file);
 
     await user.click(screen.getByRole('button', { name: '开始识别' }));
-    await waitFor(() => {
-      expect(dietApi.parseDietLog).toHaveBeenCalledTimes(1);
-    });
+    await screen.findByText('识别把握偏低，建议先确认候选');
 
+    await user.click(screen.getByRole('button', { name: '选择候选 牛肉面' }));
     await user.click(screen.getByRole('button', { name: '确认写入' }));
 
     await waitFor(() => {
       expect(dietApi.createLog).toHaveBeenCalledTimes(1);
     });
+
+    expect(vi.mocked(dietApi.createLog).mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        meal_type: 'lunch',
+        items: [
+          expect.objectContaining({
+            food_name: '牛肉面',
+            calories: 610,
+            protein: 28,
+            weight_g: 320,
+            unit: 'g',
+          }),
+        ],
+      })
+    );
   });
 });

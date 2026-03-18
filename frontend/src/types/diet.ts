@@ -65,6 +65,24 @@ export interface DietLog {
   updated_at: string;
 }
 
+export interface ParsedDietCandidate {
+  food_name: string;
+  name?: string;
+  weight_g?: number;
+  unit?: string;
+  calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+  confidence_score?: number;
+  source?: string;
+}
+
+export interface ParsedDietItem extends ParsedDietCandidate {
+  candidates?: ParsedDietCandidate[];
+  low_confidence_candidates?: ParsedDietCandidate[];
+}
+
 export interface DailySummary {
   date: string;
   total_calories: number;
@@ -90,6 +108,8 @@ export interface WeeklySummary {
   total_fat: number;
   total_carbs: number;
   avg_daily_calories: number;
+  today_budget?: DietBudgetSnapshot;
+  emotion_exemption?: EmotionExemptionStatus | null;
 }
 
 export interface DeviationAnalysis {
@@ -183,6 +203,9 @@ export interface RecognizeMealFromImageResponse {
   dishes: Dish[];
   message: string;
   source: string;
+  confidence?: number | null;
+  needs_confirmation?: boolean;
+  candidates?: ParsedDietCandidate[];
 }
 
 export interface MarkMealEatenRequest {
@@ -209,6 +232,147 @@ export interface DietBudgetSnapshot {
   effective_goal?: number | null;
   remaining_adjustment_cap?: number | null;
   adjustment_cap?: number | null;
+  requested_delta?: number | null;
+  applied_delta?: number | null;
+  capped?: boolean | null;
   goal_source?: 'explicit' | 'avg7d' | 'default1800' | string | null;
   goal_seeded?: boolean | null;
+  emotion_exemption?: EmotionExemptionStatus | null;
+}
+
+export interface EmotionExemptionStatus {
+  active?: boolean;
+  is_active?: boolean;
+  date: string;
+  storage?: string;
+  level?: string | null;
+  reason?: string | null;
+  source?: string | null;
+  summary?: string | null;
+  activated_at?: string | null;
+  delta_calories?: number | null;
+  effective_goal?: number | null;
+  expires_at?: string | null;
+}
+
+export interface DietReplanMealChange {
+  meal_id: string;
+  plan_date: string;
+  meal_type: string;
+  old_total_calories?: number | null;
+  new_total_calories?: number | null;
+  delta_calories?: number | null;
+  old_note?: string | null;
+  new_note?: string | null;
+  new_dishes?: Dish[];
+  new_totals?: {
+    total_calories?: number | null;
+    total_protein?: number | null;
+    total_fat?: number | null;
+    total_carbs?: number | null;
+  };
+}
+
+export interface DietReplanPreview {
+  week_start_date: string;
+  affected_days: string[];
+  before_summary: Record<string, unknown>;
+  after_summary: Record<string, unknown>;
+  meal_changes: DietReplanMealChange[];
+  write_conflicts: Array<{
+    meal_id?: string;
+    plan_date?: string;
+    meal_type?: string;
+    reason: string;
+  }>;
+}
+
+export interface DietReplanApplyResponse {
+  action: string;
+  applied_count?: number | null;
+  updated_meal_ids?: string[];
+  write_conflicts: Array<{
+    meal_id?: string;
+    plan_date?: string;
+    meal_type?: string;
+    reason: string;
+  }>;
+}
+
+export interface ShoppingListMatchedItem {
+  dish_name: string;
+  matched_doc_id: string;
+  ingredients: string[];
+}
+
+export interface ShoppingGroupedIngredient {
+  name: string;
+  count: number;
+  dishes: string[];
+}
+
+export interface ShoppingListResponse {
+  week_start_date: string;
+  week_end_date: string;
+  aggregation_basis: string;
+  item_count: number;
+  items: Array<{
+    name: string;
+    planned_count: number;
+    total_weight_g?: number | null;
+    meal_slots: string[];
+  }>;
+  matched_items: ShoppingListMatchedItem[];
+  unmatched_dishes: string[];
+  grouped_ingredients: ShoppingGroupedIngredient[];
+}
+
+export interface NextMealCorrectionPayload {
+  plan_date: string;
+  meal_type: string;
+  dish_name: string;
+  calories?: number | null;
+  protein?: number | null;
+  fat?: number | null;
+  carbs?: number | null;
+  nutrition_source?: string | null;
+  nutrition_confidence?: number | null;
+  notes?: string | null;
+}
+
+export interface NextMealCorrectionAction {
+  action_id: string;
+  action_kind: string;
+  apply_path?: string;
+  reason?: string;
+  payload: NextMealCorrectionPayload;
+}
+
+export interface WeeklyNutritionSnapshot {
+  title?: string;
+  summary?: string;
+  total_calories?: number;
+  total_protein?: number;
+  total_fat?: number;
+  total_carbs?: number;
+  deviation?: number;
+  execution_rate?: number;
+  [key: string]: unknown;
+}
+
+export interface WeeklySummaryBundle {
+  weekly_summary: WeeklySummary;
+  deviation: DeviationAnalysis;
+  next_meal_correction?: NextMealCorrectionAction | null;
+  nutrition_snapshot?: WeeklyNutritionSnapshot | null;
+}
+
+export interface ApplyNextMealCorrectionRequest extends NextMealCorrectionPayload {
+  action_id?: string;
+}
+
+export interface ApplyNextMealCorrectionResponse {
+  plan_date: string;
+  meal_type: string;
+  meal: DietPlanMeal;
 }

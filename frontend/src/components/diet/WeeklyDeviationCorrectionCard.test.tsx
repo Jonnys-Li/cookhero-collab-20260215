@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -6,8 +6,8 @@ import { WeeklyDeviationCorrectionCard } from './WeeklyDeviationCorrectionCard';
 
 vi.mock('../../services/api/diet', () => {
   return {
-    getDeviationAnalysis: vi.fn(),
-    addMealToPlan: vi.fn(),
+    getReplanPreview: vi.fn(),
+    applyReplan: vi.fn(),
   };
 });
 
@@ -19,6 +19,45 @@ vi.mock('../../services/api/events', () => {
 
 import * as dietApi from '../../services/api/diet';
 
+const weeklySummary = {
+  week_start_date: '2026-03-16',
+  week_end_date: '2026-03-22',
+  daily_data: {},
+  total_calories: 4200,
+  total_protein: 320,
+  total_fat: 160,
+  total_carbs: 480,
+  avg_daily_calories: 600,
+};
+
+const previewResponse = {
+  week_start_date: '2026-03-16',
+  affected_days: ['2026-03-19', '2026-03-20'],
+  before_summary: {
+    total_deviation: 240,
+  },
+  after_summary: {
+    applied_shift: -180,
+  },
+  meal_changes: [
+    {
+      meal_id: 'meal-1',
+      plan_date: '2026-03-19',
+      meal_type: 'dinner',
+      old_total_calories: 680,
+      new_total_calories: 520,
+      delta_calories: -160,
+    },
+  ],
+  write_conflicts: [
+    {
+      plan_date: '2026-03-20',
+      meal_type: 'lunch',
+      reason: '该餐次已存在日志关联，已跳过。',
+    },
+  ],
+};
+
 describe('WeeklyDeviationCorrectionCard', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -28,73 +67,64 @@ describe('WeeklyDeviationCorrectionCard', () => {
     cleanup();
   });
 
-  it('loads deviation analysis when clicking generate button', async () => {
-    const user = userEvent.setup();
-    vi.mocked(dietApi.getDeviationAnalysis).mockResolvedValue({
-      has_plan: true,
-      week_start_date: '2026-03-16',
-      total_deviation: 300,
-      total_deviation_pct: 10,
-      execution_rate: 75,
-      meal_deviations: [],
-    });
+  it('loads rolling replan preview on mount', async () => {
+    vi.mocked(dietApi.getReplanPreview).mockResolvedValue(previewResponse);
 
     render(
       <WeeklyDeviationCorrectionCard
         token="t1"
         weekStartDate="2026-03-16"
-        weeklySummary={null}
+        weeklySummary={weeklySummary}
         planMeals={[]}
       />
     );
 
-    await user.click(screen.getByRole('button', { name: '生成纠偏建议' }));
-
     await waitFor(() => {
-      expect(dietApi.getDeviationAnalysis).toHaveBeenCalledTimes(1);
-      expect(dietApi.getDeviationAnalysis).toHaveBeenCalledWith('t1', '2026-03-16');
+      expect(dietApi.getReplanPreview).toHaveBeenCalledWith('t1', '2026-03-16');
     });
+
+    expect(await screen.findByText('2026-03-19 · 晚餐 · 680 → 520 kcal')).toBeInTheDocument();
+    expect(screen.getByText('该餐次已存在日志关联，已跳过。')).toBeInTheDocument();
   });
 
-  it('applies correction by writing next meal plan via addMealToPlan', async () => {
+  it('applies rolling replan via applyReplan', async () => {
     const user = userEvent.setup();
-    vi.mocked(dietApi.getDeviationAnalysis).mockResolvedValue({
-      has_plan: true,
-      week_start_date: '2026-03-16',
-      total_deviation: 300,
-      total_deviation_pct: 10,
-      execution_rate: 75,
-      meal_deviations: [],
+    const onApplied = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(dietApi.getReplanPreview)
+      .mockResolvedValueOnce(previewResponse)
+      .mockResolvedValueOnce({
+        ...previewResponse,
+        meal_changes: [],
+        write_conflicts: [],
+      });
+    vi.mocked(dietApi.applyReplan).mockResolvedValue({
+      action: 'applied_weekly_replan',
+      applied_count: 1,
+      updated_meal_ids: ['meal-1'],
+      write_conflicts: [],
     });
-    vi.mocked(dietApi.addMealToPlan).mockResolvedValue(undefined);
 
     render(
       <WeeklyDeviationCorrectionCard
         token="t1"
         weekStartDate="2026-03-16"
-        weeklySummary={null}
+        weeklySummary={weeklySummary}
         planMeals={[]}
+        onApplied={onApplied}
       />
     );
 
-    await user.click(screen.getByRole('button', { name: '生成纠偏建议' }));
-    await waitFor(() => {
-      expect(dietApi.getDeviationAnalysis).toHaveBeenCalledTimes(1);
-    });
-
-    await user.click(screen.getByRole('button', { name: '一键写入下一餐' }));
+    await screen.findByText('2026-03-19 · 晚餐 · 680 → 520 kcal');
+    await user.click(screen.getByRole('button', { name: '写回未来餐次' }));
 
     await waitFor(() => {
-      expect(dietApi.addMealToPlan).toHaveBeenCalledTimes(1);
+      expect(dietApi.applyReplan).toHaveBeenCalledWith('t1', previewResponse.meal_changes);
     });
 
-    expect(vi.mocked(dietApi.addMealToPlan).mock.calls[0]?.[0]).toBe('t1');
-    expect(vi.mocked(dietApi.addMealToPlan).mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({
-        plan_date: expect.any(String),
-        meal_type: expect.any(String),
-        dishes: expect.any(Array),
-      })
-    );
+    expect(onApplied).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(dietApi.getReplanPreview).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.getByText('当前没有可安全调整的未来餐次。')).toBeInTheDocument();
   });
 });

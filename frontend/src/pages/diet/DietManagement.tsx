@@ -39,11 +39,13 @@ import {
   deleteLog,
   getWeeklySummary,
   getDietBudget,
+  getShoppingList,
 } from '../../services/api/diet';
 import { trackEvent } from '../../services/api/events';
 import { WeeklyDeviationCorrectionCard } from '../../components/diet/WeeklyDeviationCorrectionCard';
 import { WeeklyShareToCommunityCard } from '../../components/diet/WeeklyShareToCommunityCard';
 import { PhotoLogModal } from '../../components/diet/PhotoLogModal';
+import { ShoppingListPanel } from '../../components/diet/ShoppingListPanel';
 import type {
   Dish,
   DietPlan,
@@ -52,6 +54,8 @@ import type {
   WeeklySummary,
   DailySummary,
   DietBudgetSnapshot,
+  EmotionExemptionStatus,
+  ShoppingListResponse,
 } from '../../types';
 
 // Meal type icons
@@ -96,6 +100,11 @@ function formatDate(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   const d = startOfLocalDay(date);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+function isEmotionExemptionActive(status?: EmotionExemptionStatus | null): boolean {
+  if (!status) return false;
+  return Boolean(status.active ?? status.is_active);
 }
 
 function parseLocalYMD(dateStr: string): Date | null {
@@ -1179,6 +1188,7 @@ export default function DietManagementPage() {
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
   const [dailySummaries, setDailySummaries] = useState<Record<string, DailySummary>>({});
   const [budgetSnapshot, setBudgetSnapshot] = useState<DietBudgetSnapshot | null>(null);
+  const [shoppingList, setShoppingList] = useState<ShoppingListResponse | null>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetError, setBudgetError] = useState<string | null>(null);
   const [budgetHighlighted, setBudgetHighlighted] = useState(false);
@@ -1290,8 +1300,15 @@ export default function DietManagementPage() {
         // Ignore
       }
 
-    } catch (err: any) {
-      setError(err.message || '加载数据失败');
+      try {
+        const shoppingListData = await getShoppingList(token, weekStartStr);
+        setShoppingList(shoppingListData);
+      } catch {
+        setShoppingList(null);
+      }
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载数据失败');
     } finally {
       setIsLoading(false);
     }
@@ -1577,6 +1594,15 @@ export default function DietManagementPage() {
 
   const getActiveDayDate = () => addDays(currentWeekStart, activeDayIndex);
   const activeDayDate = getActiveDayDate();
+  const activeDayDateStr = formatDate(activeDayDate);
+  const emotionExemptionStatus =
+    budgetSnapshot?.emotion_exemption || weeklySummary?.emotion_exemption || null;
+  const emotionExemptionActive = isEmotionExemptionActive(emotionExemptionStatus);
+  const emotionExemptionMessage =
+    emotionExemptionActive
+      ? (emotionExemptionStatus?.summary ||
+        `${formatDateShort(activeDayDate)} 已进入情绪豁免，今日将暂停预算调整与下一餐纠偏引导。`)
+      : null;
 
   return (
     <div className="flex-1 overflow-auto p-4 md:p-6">
@@ -1646,7 +1672,7 @@ export default function DietManagementPage() {
         />
 
         {/* Deviation -> Correction (default entry) */}
-        {token && (
+        {token && !emotionExemptionActive && (
           <WeeklyDeviationCorrectionCard
             token={token}
             weekStartDate={formatDate(currentWeekStart)}
@@ -1656,6 +1682,20 @@ export default function DietManagementPage() {
           />
         )}
 
+        {token && emotionExemptionMessage && (
+          <div className="rounded-3xl border border-amber-200/70 dark:border-amber-900/40 bg-gradient-to-br from-amber-50 via-white to-rose-50/40 dark:from-slate-900 dark:via-slate-900 dark:to-slate-800 p-5 shadow-sm">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-100/70 px-3 py-1 text-xs font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+              当前周视图
+            </div>
+            <div className="mt-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
+              情绪豁免已生效
+            </div>
+            <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+              {emotionExemptionMessage}
+            </div>
+          </div>
+        )}
+
         {/* Share Weekly Summary (share = review) */}
         {token && (
           <WeeklyShareToCommunityCard
@@ -1663,6 +1703,8 @@ export default function DietManagementPage() {
             weeklySummary={weeklySummary}
           />
         )}
+
+        <ShoppingListPanel shoppingList={shoppingList} />
 
         {/* Daily Focus */}
         <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm transition-all duration-200 hover:shadow-md">
@@ -1757,8 +1799,13 @@ export default function DietManagementPage() {
                 <>
                   <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <div className="text-xs text-emerald-700 dark:text-emerald-200">
-                        当日预算 · {formatDateShort(date)}
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-700 dark:text-emerald-200">
+                        <span>当日预算 · {formatDateShort(date)}</span>
+                        {emotionExemptionActive && dateStr === activeDayDateStr && (
+                          <span className="rounded-full border border-amber-200 bg-amber-100/80 px-2.5 py-1 text-[11px] font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+                            情绪豁免期
+                          </span>
+                        )}
                       </div>
                       <div className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
                         {budgetSnapshot?.effective_goal ?? '--'}{' '}
@@ -1772,6 +1819,11 @@ export default function DietManagementPage() {
                         </span>
                       </div>
                       <div className={`mt-2 text-xs ${remainingClass}`}>{remainingLine}</div>
+                      {emotionExemptionActive && dateStr === activeDayDateStr && (
+                        <div className="mt-3 rounded-xl border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
+                          情绪豁免中：今天优先稳住节奏，不触发下一餐纠偏入口。
+                        </div>
+                      )}
                     </div>
 
                     <div className="rounded-xl border border-emerald-100 dark:border-emerald-900/50 bg-white/70 dark:bg-gray-900/50 px-3 py-2">

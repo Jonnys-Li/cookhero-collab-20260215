@@ -11,6 +11,9 @@ import type {
   WeeklySummary,
   DeviationAnalysis,
   DietBudgetSnapshot,
+  DietReplanPreview,
+  DietReplanApplyResponse,
+  ShoppingListResponse,
   UserFoodPreference,
   AddMealRequest,
   UpdateMealRequest,
@@ -21,6 +24,7 @@ import type {
   MarkMealEatenRequest,
   UpdateLogRequest,
   UpdatePreferenceRequest,
+  ParsedDietItem,
 } from '../../types/diet';
 import type { ImageData } from '../../types/api';
 
@@ -161,17 +165,7 @@ export type ParseDietLogRequest = {
 
 export type ParseDietLogResponse = {
   message?: string;
-  items: Array<{
-    food_name: string;
-    weight_g?: number;
-    unit?: string;
-    calories?: number;
-    protein?: number;
-    fat?: number;
-    carbs?: number;
-    confidence_score?: number;
-    source?: string;
-  }>;
+  items: ParsedDietItem[];
   meal_type?: string;
   used_vision?: boolean;
 };
@@ -268,6 +262,33 @@ export async function getDeviationAnalysis(
 ): Promise<DeviationAnalysis> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
   return apiGet(`${DIET_BASE}/analysis/deviation${query}`, token);
+}
+
+export async function getReplanPreview(
+  token: string,
+  weekStartDate?: string
+): Promise<DietReplanPreview> {
+  const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
+  return apiGet(`${DIET_BASE}/replan/preview${query}`, token);
+}
+
+export async function applyReplan(
+  token: string,
+  mealChanges: DietReplanPreview['meal_changes']
+): Promise<DietReplanApplyResponse> {
+  return apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
+    `${DIET_BASE}/replan/apply`,
+    { meal_changes: mealChanges },
+    token
+  );
+}
+
+export async function getShoppingList(
+  token: string,
+  weekStartDate?: string
+): Promise<ShoppingListResponse> {
+  const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
+  return apiGet(`${DIET_BASE}/shopping-list${query}`, token);
 }
 
 /**

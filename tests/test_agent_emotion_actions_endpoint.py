@@ -45,6 +45,14 @@ def test_apply_emotion_budget_adjust_success(monkeypatch, run, build_request):
             "goal_source": "explicit",
             "goal_seeded": False,
             "used_provider": "mcp",
+            "budget": {
+                "effective_goal": 2000,
+                "today_adjustment": 100,
+                "emotion_exemption": {
+                    "active": False,
+                    "is_active": False,
+                },
+            },
         }
 
     async def fake_save_message(session_id: str, role: str, content: str, trace=None):
@@ -90,6 +98,8 @@ def test_apply_emotion_budget_adjust_success(monkeypatch, run, build_request):
     assert response.effective_goal == 2000
     assert response.goal_source == "explicit"
     assert response.goal_seeded is False
+    assert response.budget["today_adjustment"] == 100
+    assert response.emotion_exemption["active"] is False
     assert saved_messages
     assert saved_messages[0]["role"] == "assistant"
     assert saved_messages[0]["trace"][0]["action"] == "emotion_budget_adjust_result"
@@ -253,3 +263,73 @@ def test_apply_emotion_budget_adjust_unknown_action_id(monkeypatch, run, build_r
 
     assert exc_info.value.status_code == 404
     assert "action_id" in str(exc_info.value.detail)
+
+
+def test_apply_emotion_budget_adjust_blocked_during_exemption(monkeypatch, run, build_request):
+    async def fake_get_session(session_id: str):
+        return {"id": session_id, "user_id": "u1"}
+
+    async def fake_find_action(session_id: str, action_id: str):
+        return {"action_id": action_id, "action_type": "emotion_budget_adjust", "can_apply": True}
+
+    async def fake_get_status(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {
+            "is_active": True,
+            "date": "2026-03-18",
+            "level": "high",
+            "reason": "high_risk_emotion",
+            "source": "emotion_support",
+            "summary": "检测到高风险负面情绪，已暂停纠偏与预算调整。",
+            "activated_at": "2026-03-18T10:00:00",
+            "expires_at": "2026-03-18T23:59:59",
+        }
+
+    monkeypatch.setattr(agent_endpoint.agent_service, "get_session", fake_get_session)
+    monkeypatch.setattr(agent_endpoint, "_find_emotion_ui_action", fake_find_action)
+    monkeypatch.setattr(
+        agent_endpoint.emotion_exemption_service,
+        "get_status",
+        fake_get_status,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            agent_endpoint.apply_emotion_budget_adjust(
+                build_payload(),
+                build_request(),
+            )
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "情绪豁免期" in str(exc_info.value.detail)
+
+
+def test_get_agent_emotion_exemption_status(monkeypatch, run, build_request):
+    async def fake_get_status(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {
+            "is_active": True,
+            "date": "2026-03-18",
+            "level": "high",
+            "reason": "high_risk_emotion",
+            "source": "emotion_support",
+            "summary": "检测到高风险负面情绪，已暂停纠偏与预算调整。",
+            "activated_at": "2026-03-18T10:00:00",
+            "expires_at": "2026-03-18T23:59:59",
+        }
+
+    monkeypatch.setattr(
+        agent_endpoint.emotion_exemption_service,
+        "get_status",
+        fake_get_status,
+    )
+
+    response = run(
+        agent_endpoint.get_agent_emotion_exemption_status(
+            build_request(user_id="u1"),
+        )
+    )
+
+    assert response.is_active is True
+    assert response.level == "high"

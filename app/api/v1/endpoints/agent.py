@@ -25,6 +25,7 @@ from app.agent.registry import AgentHub
 from app.security.dependencies import check_message_security
 from app.services.mcp_service import mcp_service
 from app.services.emotion_budget_service import emotion_budget_service
+from app.services.emotion_exemption_service import emotion_exemption_service
 from app.services.subagent_service import subagent_service
 from app.diet.service import diet_service
 
@@ -228,6 +229,19 @@ class ApplyEmotionBudgetAdjustResponse(BaseModel):
     used_provider: str
     mode: str
     message: str
+    budget: Optional[Dict[str, Any]] = None
+    emotion_exemption: Optional[Dict[str, Any]] = None
+
+
+class EmotionExemptionStatusResponse(BaseModel):
+    is_active: bool
+    date: str
+    level: Optional[str] = None
+    reason: Optional[str] = None
+    source: Optional[str] = None
+    summary: Optional[str] = None
+    activated_at: Optional[str] = None
+    expires_at: Optional[str] = None
 
 
 class ApplySmartActionRequest(BaseModel):
@@ -2247,6 +2261,10 @@ async def apply_emotion_budget_adjust(
         reason = action_payload.get("unavailable_reason") or "当前自动预算调整不可用"
         raise HTTPException(status_code=400, detail=reason)
 
+    exemption_status = await emotion_exemption_service.get_status(user_id=str(user_id))
+    if exemption_status.get("is_active"):
+        raise HTTPException(status_code=409, detail="当前处于情绪豁免期，已暂停预算调整")
+
     existing = await _find_existing_emotion_action_result(
         payload.session_id,
         payload.action_id,
@@ -2263,6 +2281,8 @@ async def apply_emotion_budget_adjust(
             used_provider=str(existing.get("used_provider") or "unknown"),
             mode=str(existing.get("mode") or payload.mode),
             message=str(existing.get("message") or "调整已完成"),
+            budget=existing.get("budget"),
+            emotion_exemption=existing.get("emotion_exemption"),
         )
 
     demo_state = await _load_emotion_demo_state(payload.session_id)
@@ -2291,6 +2311,13 @@ async def apply_emotion_budget_adjust(
         "used_provider": result.get("used_provider") or "unknown",
         "mode": payload.mode,
         "message": result.get("message") or "自动调整完成",
+        "budget": result.get("budget"),
+        "emotion_exemption": result.get("emotion_exemption")
+        or (
+            result.get("budget", {}).get("emotion_exemption")
+            if isinstance(result.get("budget"), dict)
+            else None
+        ),
     }
 
     applied = response_data["applied"]
@@ -2360,6 +2387,22 @@ async def apply_emotion_budget_adjust(
     )
 
     return ApplyEmotionBudgetAdjustResponse(**response_data)
+
+
+@router.get(
+    "/agent/emotion-exemption/status",
+    response_model=EmotionExemptionStatusResponse,
+)
+async def get_agent_emotion_exemption_status(
+    http_request: Request,
+) -> EmotionExemptionStatusResponse:
+    """Return today's emotion exemption status for Agent and Diet coordination."""
+    user_id = getattr(http_request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="需要登录")
+
+    status = await emotion_exemption_service.get_status(user_id=str(user_id))
+    return EmotionExemptionStatusResponse(**status)
 
 
 @router.get("/agent/session/{session_id}")

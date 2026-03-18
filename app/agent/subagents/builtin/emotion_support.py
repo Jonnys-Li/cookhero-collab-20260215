@@ -14,6 +14,7 @@ from app.agent.registry import AgentHub
 from app.agent.subagents.base import BaseSubagent, SubagentConfig
 from app.agent.types import TraceStep, ToolResult
 from app.services.emotion_budget_service import emotion_budget_service
+from app.services.emotion_exemption_service import emotion_exemption_service
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ OVEREAT_PATTERNS = [
 
 HIGH_INTENSITY_PATTERNS = [
     re.compile(r"(崩溃|绝望|完全失控|特别难受|非常糟糕)", re.IGNORECASE),
+    re.compile(r"(毫无意义|彻底失败|撑不住了|不想管了)", re.IGNORECASE),
 ]
 
 LOW_INTENSITY_PATTERNS = [
@@ -141,7 +143,21 @@ class EmotionSupportSubagent(BaseSubagent):
         combined_background = self._build_background(background, tool_names)
         llm_tool_names = tool_names
 
-        if user_id and self._should_offer_budget_adjustment(scan_text):
+        exemption_status = await self._maybe_activate_emotion_exemption(
+            user_id=user_id,
+            scan_text=scan_text,
+        )
+
+        if exemption_status:
+            llm_tool_names = self._build_non_budget_toolset(tool_names)
+            combined_background = self._build_background(
+                self._merge_background(
+                    background,
+                    self._build_exemption_background_hint(exemption_status),
+                ),
+                llm_tool_names,
+            )
+        elif user_id and self._should_offer_budget_adjustment(scan_text):
             action_payload = await self._build_budget_ui_action(
                 user_id=user_id,
                 scan_text=scan_text,
@@ -270,6 +286,29 @@ class EmotionSupportSubagent(BaseSubagent):
             return "low"
         return "medium"
 
+    def _is_high_risk_text(self, text: str) -> bool:
+        has_negative = any(pattern.search(text) for pattern in NEGATIVE_EMOTION_PATTERNS)
+        has_high_intensity = any(
+            pattern.search(text) for pattern in HIGH_INTENSITY_PATTERNS
+        )
+        return has_negative and has_high_intensity
+
+    async def _maybe_activate_emotion_exemption(
+        self,
+        *,
+        user_id: Optional[str],
+        scan_text: str,
+    ) -> Optional[dict]:
+        if not user_id or not self._is_high_risk_text(scan_text):
+            return None
+        return await emotion_exemption_service.activate(
+            user_id=user_id,
+            level="high",
+            reason="high_risk_emotion",
+            source="emotion_support",
+            summary="检测到高风险负面情绪，已暂停纠偏与预算调整。",
+        )
+
     async def _build_budget_ui_action(
         self,
         *,
@@ -322,6 +361,15 @@ class EmotionSupportSubagent(BaseSubagent):
             "budget_provider": provider,
             "source": "emotion_support",
         }
+
+    def _build_exemption_background_hint(self, exemption_status: dict) -> str:
+        return (
+            "## 高风险情绪豁免期\n"
+            "- 当前已进入当天情绪豁免期，请暂停预算调整、热量纠偏和任何惩罚性饮食建议。\n"
+            "- 回复目标：优先稳定情绪，只提供低刺激、可立即执行的小步行动。\n"
+            "- 禁止输出“补偿”“控制”“扣减热量”等强约束措辞。\n"
+            f"- 当前状态：{str(exemption_status.get('summary') or '已激活高风险保护')}。"
+        )
 
     def _build_ui_action_background_hint(self, action_payload: dict) -> str:
         budget_snapshot = action_payload.get("budget_snapshot") or {}

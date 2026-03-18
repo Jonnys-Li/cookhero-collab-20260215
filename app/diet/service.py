@@ -7,9 +7,10 @@
 
 import json
 import logging
+import re
 from copy import deepcopy
-from datetime import date, datetime, timedelta
-from typing import Any, List, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from app.diet.database.repository import diet_repository, DietRepository
 from app.diet.database.models import (
@@ -21,6 +22,7 @@ from app.diet.prompts import (
     DIET_LOG_TEXT_PROMPT_TEMPLATE,
     DIET_LOG_SYSTEM_PROMPT,
 )
+from app.services.emotion_exemption_service import emotion_exemption_service
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,87 @@ DEFAULT_AUTO_CALORIE_GOAL = 1800
 TODAY_BUDGET_ADJUSTMENTS_KEY = "today_budget_adjustments"
 TODAY_BUDGET_HISTORY_DAYS = 14
 TODAY_BUDGET_DAILY_CAP = 150
+EMOTION_EXEMPTION_REDIS_PREFIX = "diet:emotion_exemption"
+LOW_CONFIDENCE_THRESHOLD = 0.65
+LOW_CONFIDENCE_CANDIDATE_LIMIT = 3
+SHOPPING_LIST_MAX_SLOTS = 8
+ROLLING_REPLAN_LOOKAHEAD_DAYS = 5
+ROLLING_REPLAN_TARGET_DAYS = 3
+ROLLING_REPLAN_MIN_CALORIES = 220
+REPLAN_AUTO_NOTE_MARKER = "[auto_replan]"
+SHOPPING_SECTION_LINE_RE = re.compile(r"^(#+\s*)?(原料|食材|用料)[:：]?\s*$")
+SHOPPING_BULLET_RE = re.compile(r"^[-*+]\s+")
+
+REPLAN_TEMPLATE_LIBRARY: dict[str, dict[str, list[dict[str, Any]]]] = {
+    "breakfast": {
+        "lighter": [
+            {"dish_name": "希腊酸奶水果碗", "calories": 320, "description": "更轻盈但有饱腹感"},
+            {"dish_name": "燕麦豆乳杯", "calories": 300, "description": "控卡稳态早餐"},
+            {"dish_name": "鸡蛋全麦三明治", "calories": 360, "description": "通勤友好型早餐"},
+        ],
+        "balanced": [
+            {"dish_name": "鸡蛋牛油果吐司", "calories": 420, "description": "稳定输出的平衡早餐"},
+            {"dish_name": "玉米鸡胸能量碗", "calories": 430, "description": "蛋白和碳水更均衡"},
+            {"dish_name": "杂粮粥配水煮蛋", "calories": 390, "description": "温和、易执行"},
+        ],
+        "replenish": [
+            {"dish_name": "鸡蛋贝果能量堡", "calories": 500, "description": "适合补充能量"},
+            {"dish_name": "花生酱香蕉燕麦杯", "calories": 520, "description": "更适合偏低摄入回补"},
+            {"dish_name": "牛奶麦片坚果碗", "calories": 480, "description": "高依从性补能早餐"},
+        ],
+    },
+    "lunch": {
+        "lighter": [
+            {"dish_name": "鸡胸肉藜麦沙拉", "calories": 430, "description": "高蛋白轻负担午餐"},
+            {"dish_name": "牛肉菌菇暖沙拉", "calories": 450, "description": "兼顾满足感与热量"},
+            {"dish_name": "豆腐时蔬饭盒", "calories": 420, "description": "清爽但不空腹"},
+        ],
+        "balanced": [
+            {"dish_name": "照烧鸡腿杂粮饭", "calories": 560, "description": "均衡、易复购"},
+            {"dish_name": "番茄牛肉意面", "calories": 580, "description": "稳定执行的工作日午餐"},
+            {"dish_name": "虾仁滑蛋饭", "calories": 540, "description": "恢复节奏型组合"},
+        ],
+        "replenish": [
+            {"dish_name": "牛肉土豆能量饭", "calories": 680, "description": "适合补回偏低摄入"},
+            {"dish_name": "鸡腿糙米双拼饭", "calories": 650, "description": "提高午后稳定度"},
+            {"dish_name": "三文鱼牛油果饭碗", "calories": 700, "description": "补能同时保留优质脂肪"},
+        ],
+    },
+    "dinner": {
+        "lighter": [
+            {"dish_name": "三文鱼蔬菜拼盘", "calories": 460, "description": "晚餐减负但保持满足感"},
+            {"dish_name": "鸡丝南瓜暖碗", "calories": 420, "description": "更适合复盘后纠偏"},
+            {"dish_name": "豆腐菌菇汤面", "calories": 440, "description": "温和收尾"},
+        ],
+        "balanced": [
+            {"dish_name": "牛肉杂粮饭", "calories": 600, "description": "平衡型家常晚餐"},
+            {"dish_name": "鸡腿时蔬意面", "calories": 620, "description": "兼顾恢复与饱腹"},
+            {"dish_name": "虾仁豆腐盖饭", "calories": 580, "description": "稳定节奏优先"},
+        ],
+        "replenish": [
+            {"dish_name": "牛肉土豆炖饭", "calories": 720, "description": "适合低摄入后的补足晚餐"},
+            {"dish_name": "鸡腿南瓜能量盘", "calories": 700, "description": "稳步回补不暴冲"},
+            {"dish_name": "三文鱼意面碗", "calories": 740, "description": "优先恢复状态"},
+        ],
+    },
+    "snack": {
+        "lighter": [
+            {"dish_name": "无糖酸奶坚果杯", "calories": 220, "description": "低负担加餐"},
+            {"dish_name": "苹果奶酪盒", "calories": 210, "description": "控量满足口欲"},
+            {"dish_name": "豆乳水果杯", "calories": 230, "description": "更柔和的过渡加餐"},
+        ],
+        "balanced": [
+            {"dish_name": "香蕉酸奶麦片杯", "calories": 280, "description": "平衡型加餐"},
+            {"dish_name": "鸡蛋玉米小食盒", "calories": 260, "description": "延缓晚间饥饿"},
+            {"dish_name": "牛奶全麦能量棒", "calories": 300, "description": "日常友好"},
+        ],
+        "replenish": [
+            {"dish_name": "花生酱香蕉三明治", "calories": 360, "description": "适合快速回补"},
+            {"dish_name": "牛奶坚果麦片杯", "calories": 340, "description": "补能但可控"},
+            {"dish_name": "酸奶水果格兰诺拉", "calories": 380, "description": "高依从性补给"},
+        ],
+    },
+}
 
 
 def get_week_start_date(target_date: date) -> date:
@@ -46,6 +129,10 @@ class DietService:
 
     def __init__(self, repository: Optional[DietRepository] = None):
         self.repository = repository or diet_repository
+        self._redis = None
+
+    def set_redis(self, redis_client: Any) -> None:
+        self._redis = redis_client
 
     async def _build_plan_response(
         self,
@@ -441,7 +528,51 @@ class DietService:
         return json.loads(content.strip())
 
     @staticmethod
-    def _normalize_parsed_items(items: Any) -> List[dict]:
+    def _normalize_low_confidence_candidates(raw_candidates: Any) -> List[dict]:
+        if not isinstance(raw_candidates, list):
+            return []
+
+        normalized: List[dict] = []
+        for raw in raw_candidates[:LOW_CONFIDENCE_CANDIDATE_LIMIT]:
+            if isinstance(raw, str):
+                name = raw.strip()
+                if not name:
+                    continue
+                normalized.append({"food_name": name, "name": name})
+                continue
+
+            if not isinstance(raw, dict):
+                continue
+
+            name = str(
+                raw.get("name")
+                or raw.get("food_name")
+                or raw.get("dish_name")
+                or ""
+            ).strip()
+            if not name:
+                continue
+
+            candidate: dict[str, Any] = {
+                "food_name": name,
+                "name": name,
+                "weight_g": raw.get("weight_g"),
+                "unit": raw.get("unit"),
+                "calories": raw.get("calories"),
+                "protein": raw.get("protein"),
+                "fat": raw.get("fat"),
+                "carbs": raw.get("carbs"),
+                "source": raw.get("source"),
+            }
+            confidence = raw.get("confidence_score", raw.get("confidence"))
+            if isinstance(confidence, (int, float)):
+                candidate["confidence_score"] = float(confidence)
+            normalized.append(candidate)
+
+        return normalized
+
+    @classmethod
+    def _normalize_parsed_items(cls, items: Any) -> List[dict]:
         if not isinstance(items, list):
             return []
 
@@ -463,9 +594,806 @@ class DietService:
                     "protein": item.get("protein"),
                     "fat": item.get("fat"),
                     "carbs": item.get("carbs"),
+                    "confidence_score": item.get("confidence_score"),
+                    "source": item.get("source"),
+                    "low_confidence_candidates": cls._normalize_low_confidence_candidates(
+                        item.get("low_confidence_candidates") or item.get("candidates")
+                    ),
+                    "candidates": cls._normalize_low_confidence_candidates(
+                        item.get("low_confidence_candidates") or item.get("candidates")
+                    ),
                 }
             )
         return normalized
+
+    @staticmethod
+    def _coerce_iso_datetime(raw_value: Any) -> Optional[datetime]:
+        if not isinstance(raw_value, str) or not raw_value.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+            if parsed.tzinfo is not None:
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+            return parsed
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _build_inactive_emotion_exemption(target_date: date, storage: str = "none") -> dict:
+        return {
+            "active": False,
+            "date": target_date.isoformat(),
+            "storage": storage,
+            "reason": None,
+            "source": None,
+            "delta_calories": 0,
+            "effective_goal": None,
+            "expires_at": None,
+        }
+
+    async def _get_redis_client(self) -> Any:
+        if self._redis is not None:
+            return self._redis
+
+        try:
+            from app.services.auth_service import auth_service
+
+            redis_client = getattr(auth_service, "_redis", None)
+            if redis_client is not None:
+                return redis_client
+        except Exception:
+            pass
+
+        return None
+
+    def _emotion_exemption_key(self, user_id: str, target_date: date) -> str:
+        return f"{EMOTION_EXEMPTION_REDIS_PREFIX}:{user_id}:{target_date.isoformat()}"
+
+    @staticmethod
+    def _seconds_until_end_of_target_date(target_date: date) -> int:
+        tomorrow = datetime.combine(target_date + timedelta(days=1), datetime.min.time())
+        remaining = int((tomorrow - datetime.utcnow()).total_seconds())
+        return max(3600, remaining)
+
+    async def _set_emotion_exemption_state(
+        self,
+        *,
+        user_id: str,
+        target_date: date,
+        delta_calories: int,
+        effective_goal: Optional[int],
+        reason: Optional[str],
+        source: Optional[str],
+    ) -> dict:
+        expires_at = (
+            datetime.utcnow() + timedelta(seconds=self._seconds_until_end_of_target_date(target_date))
+        ).isoformat()
+        payload = {
+            "active": delta_calories > 0,
+            "date": target_date.isoformat(),
+            "storage": "redis",
+            "reason": reason or "情绪支持临时热量豁免",
+            "source": source or "emotion_subagent",
+            "delta_calories": max(0, int(delta_calories or 0)),
+            "effective_goal": effective_goal,
+            "created_at": datetime.utcnow().isoformat(),
+            "expires_at": expires_at,
+        }
+
+        redis_client = await self._get_redis_client()
+        if redis_client is None:
+            payload["storage"] = "preference_fallback"
+            return payload
+
+        try:
+            await redis_client.setex(
+                self._emotion_exemption_key(user_id, target_date),
+                self._seconds_until_end_of_target_date(target_date),
+                json.dumps(payload, ensure_ascii=False),
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist emotion exemption state: %s", exc)
+            payload["storage"] = "preference_fallback"
+
+        return payload
+
+    def _build_emotion_exemption_from_stats(
+        self,
+        *,
+        pref: Optional[object],
+        target_date: date,
+    ) -> dict:
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        entries = self._prune_adjustment_history(
+            list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []),
+            target_date,
+        )
+        target_key = target_date.isoformat()
+        today_entries = [
+            entry
+            for entry in entries
+            if entry.get("date") == target_key
+            and "emotion" in str(entry.get("source") or "").lower()
+        ]
+        if not today_entries:
+            return self._build_inactive_emotion_exemption(
+                target_date,
+                storage="preference_fallback",
+            )
+
+        latest = today_entries[-1]
+        total_delta = sum(int(entry.get("delta_calories") or 0) for entry in today_entries)
+        base_goal, _, _ = self._resolve_base_calorie_goal(pref)
+        return {
+            "active": total_delta > 0,
+            "date": target_key,
+            "storage": "preference_fallback",
+            "reason": latest.get("reason") or "情绪支持临时热量豁免",
+            "source": latest.get("source") or "emotion_subagent",
+            "delta_calories": total_delta,
+            "effective_goal": (
+                base_goal + total_delta if isinstance(base_goal, int) else None
+            ),
+            "expires_at": None,
+            "updated_at": latest.get("updated_at"),
+        }
+
+    async def get_emotion_exemption_status(
+        self,
+        user_id: str,
+        target_date: Optional[date] = None,
+        pref: Optional[object] = None,
+    ) -> dict:
+        actual_date = target_date or date.today()
+        payload = await emotion_exemption_service.get_status(
+            user_id=user_id,
+            target_date=actual_date,
+        )
+
+        return {
+            "active": bool(payload.get("is_active")),
+            "is_active": bool(payload.get("is_active")),
+            "date": payload.get("date") or actual_date.isoformat(),
+            "storage": "redis" if payload.get("is_active") else "none",
+            "level": payload.get("level"),
+            "reason": payload.get("reason"),
+            "source": payload.get("source"),
+            "summary": payload.get("summary"),
+            "activated_at": payload.get("activated_at"),
+            "delta_calories": 0,
+            "effective_goal": None,
+            "expires_at": payload.get("expires_at"),
+        }
+
+    @staticmethod
+    def _resolve_replan_direction(total_deviation: Any) -> str:
+        try:
+            deviation_value = int(round(float(total_deviation or 0)))
+        except (TypeError, ValueError):
+            deviation_value = 0
+        if deviation_value > 300:
+            return "lighter"
+        if deviation_value < -300:
+            return "replenish"
+        return "balanced"
+
+    @staticmethod
+    def _build_replan_reason(direction: str, total_deviation: Any) -> str:
+        try:
+            deviation_value = int(round(float(total_deviation or 0)))
+        except (TypeError, ValueError):
+            deviation_value = 0
+        if direction == "lighter":
+            return f"本周累计约超出 {deviation_value} kcal，建议下一餐收一收总量。"
+        if direction == "replenish":
+            return f"本周累计约低于计划 {abs(deviation_value)} kcal，建议下一餐温和补回。"
+        return "本周整体波动可控，下一餐以稳定执行为主。"
+
+    def _build_replan_candidates(
+        self,
+        *,
+        goal: str,
+        meal_type: str,
+        day_index: int,
+        direction: str,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        try:
+            from app.diet.macro_estimation import estimate_macros_from_calories
+        except Exception:
+            estimate_macros_from_calories = None
+
+        templates = (
+            REPLAN_TEMPLATE_LIBRARY.get(meal_type, {}).get(direction)
+            or REPLAN_TEMPLATE_LIBRARY["dinner"]["balanced"]
+        )
+        max_candidates = max(1, min(limit, len(templates)))
+        candidates: list[dict[str, Any]] = []
+        for offset in range(max_candidates):
+            template = templates[(day_index + offset) % len(templates)]
+            calories = int(template.get("calories") or 0)
+            macros = (
+                estimate_macros_from_calories(calories, goal)
+                if estimate_macros_from_calories
+                else {}
+            )
+            candidates.append(
+                {
+                    "dish_name": str(template.get("dish_name") or "个性化推荐餐"),
+                    "calories": calories or None,
+                    "protein": macros.get("protein_g"),
+                    "fat": macros.get("fat_g"),
+                    "carbs": macros.get("carbs_g"),
+                    "nutrition_source": macros.get("source") if macros else "template",
+                    "nutrition_confidence": macros.get("confidence") if macros else 0.5,
+                    "description": str(template.get("description") or ""),
+                }
+            )
+        return candidates
+
+    async def preview_replan(
+        self,
+        *,
+        user_id: str,
+        target_date: date,
+        meal_type: str,
+        candidate_count: int = 3,
+    ) -> dict:
+        week_start = get_week_start_date(target_date)
+        weekly_summary = await self.get_weekly_summary(user_id, week_start)
+        deviation = await self.get_deviation_analysis(user_id, week_start)
+        plan_meals = await self.repository.get_plan_meals_by_week(user_id, week_start)
+        current_meal = next(
+            (
+                meal
+                for meal in plan_meals
+                if meal.plan_date == target_date and meal.meal_type == meal_type
+            ),
+            None,
+        )
+        pref = await self.repository.get_user_preference(user_id)
+        direction = self._resolve_replan_direction(
+            deviation.get("total_deviation") if isinstance(deviation, dict) else 0
+        )
+        candidates = self._build_replan_candidates(
+            goal=self._resolve_macro_goal_from_preference(pref),
+            meal_type=meal_type,
+            day_index=max(0, (target_date - week_start).days),
+            direction=direction,
+            limit=candidate_count,
+        )
+        selected_candidate = candidates[0]
+        return {
+            "target_date": target_date.isoformat(),
+            "meal_type": meal_type,
+            "direction": direction,
+            "reason": self._build_replan_reason(
+                direction,
+                deviation.get("total_deviation") if isinstance(deviation, dict) else 0,
+            ),
+            "existing_meal": current_meal.to_dict() if current_meal else None,
+            "candidates": candidates,
+            "selected_candidate": selected_candidate,
+            "apply_path": "/api/v1/diet/replan/apply",
+            "weekly_context": {
+                "avg_daily_calories": (
+                    weekly_summary.get("avg_daily_calories")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "total_deviation": (
+                    deviation.get("total_deviation") if isinstance(deviation, dict) else None
+                ),
+                "execution_rate": (
+                    deviation.get("execution_rate") if isinstance(deviation, dict) else None
+                ),
+            },
+        }
+
+    async def apply_replan(
+        self,
+        *,
+        user_id: str,
+        target_date: date,
+        meal_type: str,
+        selected_candidate: dict[str, Any],
+        notes: Optional[str] = None,
+        replace_existing: bool = True,
+    ) -> dict:
+        dish_payload = {
+            "name": str(selected_candidate.get("dish_name") or "个性化推荐餐").strip(),
+            "calories": selected_candidate.get("calories"),
+            "protein": selected_candidate.get("protein"),
+            "fat": selected_candidate.get("fat"),
+            "carbs": selected_candidate.get("carbs"),
+            "nutrition_source": selected_candidate.get("nutrition_source"),
+            "nutrition_confidence": selected_candidate.get("nutrition_confidence"),
+        }
+        dishes = [dish_payload]
+        totals = self._calculate_meal_totals(dishes)
+
+        week_start = get_week_start_date(target_date)
+        existing_meals = await self.repository.get_plan_meals_by_week(user_id, week_start)
+        existing_meal = next(
+            (
+                meal
+                for meal in existing_meals
+                if meal.plan_date == target_date and meal.meal_type == meal_type
+            ),
+            None,
+        )
+
+        if replace_existing and existing_meal:
+            meal = await self.repository.update_meal(
+                str(existing_meal.id),
+                dishes=dishes,
+                total_calories=totals["total_calories"],
+                total_protein=totals["total_protein"],
+                total_fat=totals["total_fat"],
+                total_carbs=totals["total_carbs"],
+                notes=notes or "由 replan 建议更新",
+            )
+            action = "updated"
+        else:
+            meal = await self.repository.add_meal_to_plan(
+                user_id=user_id,
+                plan_date=target_date,
+                meal_type=meal_type,
+                dishes=dishes,
+                total_calories=totals["total_calories"],
+                total_protein=totals["total_protein"],
+                total_fat=totals["total_fat"],
+                total_carbs=totals["total_carbs"],
+                notes=notes or "由 replan 建议创建",
+            )
+            action = "created"
+
+        if not meal:
+            raise RuntimeError("replan 应用失败")
+
+        return {
+            "action": action,
+            "target_date": target_date.isoformat(),
+            "meal_type": meal_type,
+            "meal": meal.to_dict(),
+        }
+
+    @staticmethod
+    def _slot_key(plan_date: date, meal_type: str) -> str:
+        return f"{plan_date.isoformat()}:{meal_type}"
+
+    @staticmethod
+    def _is_replan_note(note: Optional[str]) -> bool:
+        text = str(note or "").strip().lower()
+        if not text:
+            return False
+        return REPLAN_AUTO_NOTE_MARKER in text or "由 replan" in text or "自动纠偏建议" in text
+
+    def _build_log_slot_keys(self, logs: list[Any]) -> set[str]:
+        slot_keys: set[str] = set()
+        for item in logs:
+            plan_date = getattr(item, "log_date", None)
+            meal_type = getattr(item, "meal_type", None)
+            if isinstance(plan_date, date) and isinstance(meal_type, str):
+                slot_keys.add(self._slot_key(plan_date, meal_type))
+        return slot_keys
+
+    def _scale_dishes_for_replan(
+        self,
+        *,
+        dishes: list[dict[str, Any]],
+        current_calories: int,
+        target_calories: int,
+    ) -> list[dict[str, Any]]:
+        if not dishes:
+            return []
+
+        if current_calories <= 0 or target_calories <= 0:
+            return deepcopy(dishes)
+
+        ratio = target_calories / current_calories
+        scaled: list[dict[str, Any]] = []
+        for dish in dishes:
+            next_dish = deepcopy(dish)
+            calories = dish.get("calories")
+            protein = dish.get("protein")
+            fat = dish.get("fat")
+            carbs = dish.get("carbs")
+            weight_g = dish.get("weight_g")
+
+            if isinstance(calories, (int, float)):
+                next_dish["calories"] = max(0, int(round(float(calories) * ratio)))
+            if isinstance(protein, (int, float)):
+                next_dish["protein"] = round(float(protein) * ratio, 1)
+            if isinstance(fat, (int, float)):
+                next_dish["fat"] = round(float(fat) * ratio, 1)
+            if isinstance(carbs, (int, float)):
+                next_dish["carbs"] = round(float(carbs) * ratio, 1)
+            if isinstance(weight_g, (int, float)):
+                next_dish["weight_g"] = round(float(weight_g) * ratio, 1)
+            scaled.append(next_dish)
+        return scaled
+
+    def _build_rolling_replan_note(self, *, reason: str, original_note: Optional[str]) -> str:
+        base = f"{REPLAN_AUTO_NOTE_MARKER} {reason}"
+        note = str(original_note or "").strip()
+        if note and note != base and not self._is_replan_note(note):
+            return f"{base} | 原备注：{note}"
+        return base
+
+    def _build_write_conflict(
+        self,
+        *,
+        meal: Any,
+        reason: str,
+    ) -> dict[str, Any]:
+        return {
+            "meal_id": str(getattr(meal, "id", "")),
+            "plan_date": getattr(meal, "plan_date").isoformat(),
+            "meal_type": getattr(meal, "meal_type"),
+            "reason": reason,
+        }
+
+    async def preview_weekly_replan(
+        self,
+        *,
+        user_id: str,
+        week_start_date: Optional[date] = None,
+        lookahead_days: int = ROLLING_REPLAN_LOOKAHEAD_DAYS,
+    ) -> dict:
+        actual_week_start = week_start_date or get_week_start_date(date.today())
+        deviation = await self.get_deviation_analysis(user_id, actual_week_start)
+        plan_meals = await self.repository.get_plan_meals_by_week(user_id, actual_week_start)
+        end_date = actual_week_start + timedelta(days=6)
+        start_date = max(date.today(), actual_week_start)
+        preview_end = min(end_date, start_date + timedelta(days=max(1, lookahead_days) - 1))
+
+        logs = await self.repository.get_log_items_by_date_range(
+            user_id=user_id,
+            start_date=actual_week_start,
+            end_date=end_date,
+        )
+        log_slot_keys = self._build_log_slot_keys(logs)
+
+        future_meals = [
+            meal
+            for meal in sorted(plan_meals, key=lambda m: (m.plan_date, m.meal_type))
+            if start_date <= meal.plan_date <= preview_end
+        ]
+
+        eligible_meals: list[Any] = []
+        write_conflicts: list[dict[str, Any]] = []
+        affected_day_keys: list[str] = []
+
+        for meal in future_meals:
+            slot_key = self._slot_key(meal.plan_date, meal.meal_type)
+            if slot_key in log_slot_keys:
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="已有实际记录，跳过重规划")
+                )
+                continue
+
+            if meal.notes and not self._is_replan_note(meal.notes):
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="检测到人工备注，视为手动调整")
+                )
+                continue
+
+            meal_total = meal.total_calories or self._calculate_meal_totals(meal.dishes).get(
+                "total_calories"
+            )
+            if not isinstance(meal_total, (int, float)) or meal_total <= 0:
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="餐次缺少可调整的热量信息")
+                )
+                continue
+
+            eligible_meals.append(meal)
+            day_key = meal.plan_date.isoformat()
+            if day_key not in affected_day_keys:
+                affected_day_keys.append(day_key)
+
+        deviation_value = int(round(float(deviation.get("total_deviation") or 0)))
+        requested_shift = -deviation_value
+        remaining_shift = requested_shift
+        meal_changes: list[dict[str, Any]] = []
+
+        for index, meal in enumerate(eligible_meals):
+            meal_total = int(
+                round(
+                    float(
+                        meal.total_calories
+                        or self._calculate_meal_totals(meal.dishes).get("total_calories")
+                        or 0
+                    )
+                )
+            )
+            remaining_count = max(1, len(eligible_meals) - index)
+            proposed_shift = int(round(remaining_shift / remaining_count))
+            next_total = max(ROLLING_REPLAN_MIN_CALORIES, meal_total + proposed_shift)
+            actual_shift = next_total - meal_total
+            remaining_shift -= actual_shift
+
+            updated_dishes = self._scale_dishes_for_replan(
+                dishes=list(meal.dishes or []),
+                current_calories=meal_total,
+                target_calories=next_total,
+            )
+            updated_totals = self._calculate_meal_totals(updated_dishes)
+            reason = self._build_replan_reason(
+                self._resolve_replan_direction(deviation_value),
+                deviation_value,
+            )
+            meal_changes.append(
+                {
+                    "meal_id": str(meal.id),
+                    "plan_date": meal.plan_date.isoformat(),
+                    "meal_type": meal.meal_type,
+                    "old_total_calories": meal_total,
+                    "new_total_calories": updated_totals.get("total_calories") or next_total,
+                    "delta_calories": actual_shift,
+                    "old_note": meal.notes,
+                    "new_note": self._build_rolling_replan_note(
+                        reason=reason,
+                        original_note=meal.notes,
+                    ),
+                    "new_dishes": updated_dishes,
+                    "new_totals": updated_totals,
+                }
+            )
+
+        before_total = sum(
+            int(round(float(change.get("old_total_calories") or 0))) for change in meal_changes
+        )
+        after_total = sum(
+            int(round(float(change.get("new_total_calories") or 0))) for change in meal_changes
+        )
+
+        return {
+            "week_start_date": actual_week_start.isoformat(),
+            "affected_days": affected_day_keys,
+            "before_summary": {
+                "future_meal_count": len(meal_changes),
+                "total_future_calories": before_total,
+                "total_deviation": deviation_value,
+            },
+            "after_summary": {
+                "future_meal_count": len(meal_changes),
+                "projected_future_calories": after_total,
+                "applied_shift": after_total - before_total,
+                "remaining_unapplied_shift": remaining_shift,
+            },
+            "meal_changes": meal_changes,
+            "write_conflicts": write_conflicts,
+        }
+
+    async def apply_weekly_replan(
+        self,
+        *,
+        user_id: str,
+        meal_changes: list[dict[str, Any]],
+    ) -> dict:
+        write_conflicts: list[dict[str, Any]] = []
+        applied_meal_ids: list[str] = []
+
+        for change in meal_changes:
+            meal_id = str(change.get("meal_id") or "").strip()
+            if not meal_id:
+                continue
+            meal = await self.repository.get_meal(meal_id)
+            if not meal or meal.user_id != user_id:
+                write_conflicts.append(
+                    {
+                        "meal_id": meal_id,
+                        "plan_date": change.get("plan_date"),
+                        "meal_type": change.get("meal_type"),
+                        "reason": "餐次不存在或无权访问",
+                    }
+                )
+                continue
+
+            slot_logs = await self.repository.get_log_items_by_date(
+                user_id=user_id,
+                log_date=meal.plan_date,
+            )
+            if any(str(item.meal_type) == str(meal.meal_type) for item in slot_logs):
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="已有实际记录，未覆盖")
+                )
+                continue
+
+            expected_total = change.get("old_total_calories")
+            if (
+                isinstance(expected_total, (int, float))
+                and isinstance(meal.total_calories, (int, float))
+                and int(round(float(expected_total))) != int(round(float(meal.total_calories)))
+            ):
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="餐次热量已变化，请刷新预览")
+                )
+                continue
+
+            if meal.notes and not self._is_replan_note(meal.notes):
+                write_conflicts.append(
+                    self._build_write_conflict(meal=meal, reason="检测到人工备注，未覆盖")
+                )
+                continue
+
+            updated_dishes = change.get("new_dishes") if isinstance(change.get("new_dishes"), list) else []
+            updated_totals = change.get("new_totals") if isinstance(change.get("new_totals"), dict) else {}
+            updated_meal = await self.repository.update_meal(
+                meal_id,
+                dishes=updated_dishes,
+                total_calories=updated_totals.get("total_calories"),
+                total_protein=updated_totals.get("total_protein"),
+                total_fat=updated_totals.get("total_fat"),
+                total_carbs=updated_totals.get("total_carbs"),
+                notes=change.get("new_note") or self._build_rolling_replan_note(
+                    reason="来自滚动重规划",
+                    original_note=meal.notes,
+                ),
+            )
+            if updated_meal:
+                applied_meal_ids.append(str(updated_meal.id))
+
+        return {
+            "applied_count": len(applied_meal_ids),
+            "updated_meal_ids": applied_meal_ids,
+            "write_conflicts": write_conflicts,
+        }
+
+    @staticmethod
+    def _normalize_ingredient_name(raw_value: str) -> str:
+        text = str(raw_value or "").strip()
+        if not text:
+            return ""
+        text = SHOPPING_BULLET_RE.sub("", text).strip()
+        text = re.split(r"\s{2,}|\t+", text)[0]
+        text = re.split(r"(?<!\d)[0-9]+", text)[0]
+        text = text.replace("适量", "").replace("少许", "").strip(" ：:-")
+        return text.strip()
+
+    def _extract_ingredients_from_content(self, content: str) -> list[str]:
+        if not isinstance(content, str) or not content.strip():
+            return []
+        lines = [line.rstrip() for line in content.splitlines()]
+        ingredients: list[str] = []
+        in_section = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if in_section and ingredients:
+                    break
+                continue
+            if SHOPPING_SECTION_LINE_RE.match(stripped):
+                in_section = True
+                continue
+            if in_section:
+                if stripped.startswith("#"):
+                    break
+                normalized = self._normalize_ingredient_name(stripped)
+                if normalized:
+                    ingredients.append(normalized)
+        return ingredients
+
+    async def get_shopping_list(
+        self,
+        *,
+        user_id: str,
+        week_start_date: Optional[date] = None,
+    ) -> dict:
+        actual_week_start = week_start_date or get_week_start_date(date.today())
+        meals = await self.repository.get_plan_meals_by_week(user_id, actual_week_start)
+        aggregated: Dict[str, dict[str, Any]] = {}
+        dish_names: list[str] = []
+
+        for meal in meals:
+            dishes = meal.dishes if isinstance(meal.dishes, list) else []
+            for dish in dishes:
+                if not isinstance(dish, dict):
+                    continue
+                name = str(dish.get("name") or "").strip()
+                if not name:
+                    continue
+                dish_names.append(name)
+                normalized_key = name.lower()
+                slot = f"{meal.plan_date.isoformat()}:{meal.meal_type}"
+                entry = aggregated.setdefault(
+                    normalized_key,
+                    {
+                        "name": name,
+                        "planned_count": 0,
+                        "total_weight_g": 0.0,
+                        "meal_slots": [],
+                    },
+                )
+                entry["planned_count"] += 1
+                weight = dish.get("weight_g")
+                if isinstance(weight, (int, float)):
+                    entry["total_weight_g"] += float(weight)
+                if slot not in entry["meal_slots"] and len(entry["meal_slots"]) < SHOPPING_LIST_MAX_SLOTS:
+                    entry["meal_slots"].append(slot)
+
+        items = sorted(
+            (
+                {
+                    **value,
+                    "total_weight_g": (
+                        round(value["total_weight_g"], 1) if value["total_weight_g"] > 0 else None
+                    ),
+                }
+                for value in aggregated.values()
+            ),
+            key=lambda item: (-item["planned_count"], item["name"]),
+        )
+
+        matched_items: list[dict[str, Any]] = []
+        unmatched_dishes: list[str] = []
+        grouped_index: dict[str, dict[str, Any]] = {}
+
+        if dish_names:
+            try:
+                from sqlalchemy import or_, select
+
+                from app.database.models import KnowledgeDocumentModel
+                from app.database.session import get_session_context
+
+                async with get_session_context() as session:
+                    stmt = (
+                        select(KnowledgeDocumentModel)
+                        .where(KnowledgeDocumentModel.dish_name.in_(list(set(dish_names))))
+                        .order_by(KnowledgeDocumentModel.updated_at.desc())
+                    )
+                    docs = list((await session.execute(stmt)).scalars().all())
+                docs_by_name: dict[str, Any] = {}
+                for doc in docs:
+                    docs_by_name.setdefault(str(doc.dish_name).strip().lower(), doc)
+            except Exception as exc:
+                logger.warning("Failed to build shopping-list doc matches: %s", exc)
+                docs_by_name = {}
+
+            for raw_name in dish_names:
+                normalized_name = raw_name.strip().lower()
+                doc = docs_by_name.get(normalized_name)
+                if not doc:
+                    unmatched_dishes.append(raw_name)
+                    continue
+
+                ingredients = self._extract_ingredients_from_content(str(doc.content or ""))
+                matched_items.append(
+                    {
+                        "dish_name": raw_name,
+                        "matched_doc_id": str(doc.id),
+                        "ingredients": ingredients,
+                    }
+                )
+
+                for ingredient in ingredients:
+                    grouped = grouped_index.setdefault(
+                        ingredient,
+                        {
+                            "name": ingredient,
+                            "count": 0,
+                            "dishes": [],
+                        },
+                    )
+                    grouped["count"] += 1
+                    if raw_name not in grouped["dishes"]:
+                        grouped["dishes"].append(raw_name)
+
+        return {
+            "week_start_date": actual_week_start.isoformat(),
+            "week_end_date": (actual_week_start + timedelta(days=6)).isoformat(),
+            "aggregation_basis": "planned_dishes",
+            "item_count": len(items),
+            "items": items,
+            "matched_items": matched_items,
+            "unmatched_dishes": sorted(set(unmatched_dishes)),
+            "grouped_ingredients": sorted(
+                grouped_index.values(),
+                key=lambda item: (-item["count"], item["name"]),
+            ),
+        }
 
     async def _parse_diet_input_with_ai(
         self,
@@ -532,6 +1460,7 @@ class DietService:
             "meal_type": parsed.get("meal_type"),
             "items": self._normalize_parsed_items(parsed.get("items", [])),
             "used_vision": used_vision,
+            "message": parsed.get("message"),
         }
 
     async def parse_diet_input(
@@ -575,8 +1504,9 @@ class DietService:
 
         return {
             "meal_type": parsed.get("meal_type"),
-            "items": items,
+            "items": self._normalize_parsed_items(items),
             "used_vision": bool(parsed.get("used_vision")),
+            "message": parsed.get("message"),
         }
 
     async def parse_diet_input_without_side_effects(
@@ -629,6 +1559,9 @@ class DietService:
             dish_name = str(item.get("food_name") or "").strip()
             if not dish_name:
                 continue
+            candidates = self._normalize_low_confidence_candidates(
+                item.get("low_confidence_candidates") or item.get("candidates")
+            )
             dishes.append(
                 {
                     "name": dish_name,
@@ -638,6 +1571,9 @@ class DietService:
                     "protein": item.get("protein"),
                     "fat": item.get("fat"),
                     "carbs": item.get("carbs"),
+                    "confidence_score": item.get("confidence_score"),
+                    "candidates": candidates,
+                    "low_confidence_candidates": candidates,
                 }
             )
 
@@ -646,12 +1582,42 @@ class DietService:
                 "dishes": [],
                 "message": "未识别到清晰食物，请手动补充",
                 "source": DataSource.AI_IMAGE.value,
+                "needs_confirmation": False,
+                "confidence": None,
+                "candidates": [],
             }
+
+        confidence_values = [
+            float(item.get("confidence_score"))
+            for item in parsed.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("confidence_score"), (int, float))
+        ]
+        confidence = min(confidence_values) if confidence_values else None
+        needs_confirmation = bool(
+            isinstance(confidence, float) and confidence < LOW_CONFIDENCE_THRESHOLD
+        )
+        top_candidates: list[dict[str, Any]] = []
+        for dish in dishes:
+            for candidate in dish.get("candidates") or []:
+                if candidate in top_candidates:
+                    continue
+                top_candidates.append(candidate)
+                if len(top_candidates) >= LOW_CONFIDENCE_CANDIDATE_LIMIT:
+                    break
+            if len(top_candidates) >= LOW_CONFIDENCE_CANDIDATE_LIMIT:
+                break
 
         return {
             "dishes": dishes,
-            "message": "识别完成",
+            "message": (
+                "识别存在低置信候选，请确认后再保存"
+                if needs_confirmation
+                else "识别完成"
+            ),
             "source": DataSource.AI_IMAGE.value,
+            "confidence": confidence,
+            "needs_confirmation": needs_confirmation,
+            "candidates": top_candidates,
         }
 
     async def log_from_text(
@@ -870,7 +1836,19 @@ class DietService:
         """获取某周的饮食摘要"""
         if not week_start_date:
             week_start_date = get_week_start_date(date.today())
-        return await self.repository.get_weekly_summary(user_id, week_start_date)
+        summary = await self.repository.get_weekly_summary(user_id, week_start_date)
+        if not isinstance(summary, dict):
+            return {}
+
+        context_date = (
+            date.today()
+            if week_start_date <= date.today() <= week_start_date + timedelta(days=6)
+            else week_start_date
+        )
+        budget = await self.get_today_budget(user_id, context_date)
+        summary["today_budget"] = budget
+        summary["emotion_exemption"] = budget.get("emotion_exemption")
+        return summary
 
     async def get_deviation_analysis(
         self, user_id: str, week_start_date: Optional[date] = None
@@ -1097,7 +2075,7 @@ class DietService:
 
         if not pref:
             fallback_goal = DEFAULT_AUTO_CALORIE_GOAL
-            return {
+            snapshot = {
                 "date": actual_date.isoformat(),
                 "base_goal": fallback_goal,
                 "today_adjustment": 0,
@@ -1107,6 +2085,12 @@ class DietService:
                 "goal_source": "default1800",
                 "goal_seeded": True,
             }
+            snapshot["emotion_exemption"] = await self.get_emotion_exemption_status(
+                user_id=user_id,
+                target_date=actual_date,
+                pref=None,
+            )
+            return snapshot
 
         stats = self._normalize_stats(pref.stats)
         cleaned_entries = self._prune_adjustment_history(
@@ -1117,7 +2101,13 @@ class DietService:
             stats[TODAY_BUDGET_ADJUSTMENTS_KEY] = cleaned_entries
             pref = await self.repository.upsert_user_preference(user_id, stats=stats)
 
-        return self._build_budget_snapshot(pref, actual_date)
+        snapshot = self._build_budget_snapshot(pref, actual_date)
+        snapshot["emotion_exemption"] = await self.get_emotion_exemption_status(
+            user_id=user_id,
+            target_date=actual_date,
+            pref=pref,
+        )
+        return snapshot
 
     async def adjust_today_budget(
         self,
@@ -1172,11 +2162,17 @@ class DietService:
         pref = await self.repository.upsert_user_preference(user_id, stats=stats)
 
         snapshot = self._build_budget_snapshot(pref, actual_date)
+        emotion_exemption = await self.get_emotion_exemption_status(
+            user_id=user_id,
+            target_date=actual_date,
+            pref=pref,
+        )
         snapshot.update(
             {
                 "requested_delta": requested_delta,
                 "applied_delta": applied_delta,
                 "capped": applied_delta < requested_delta,
+                "emotion_exemption": emotion_exemption,
             }
         )
         return snapshot
