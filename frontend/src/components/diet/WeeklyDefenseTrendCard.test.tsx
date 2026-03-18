@@ -44,7 +44,7 @@ describe('WeeklyDefenseTrendCard', () => {
       />
     );
 
-    expect(screen.getByText('三线答辩视图')).toBeInTheDocument();
+    expect(screen.getByText('一周趋势总览')).toBeInTheDocument();
     expect(screen.getByText('周偏差 +250 kcal')).toBeInTheDocument();
     expect(screen.getByText('偏差 +100 kcal')).toBeInTheDocument();
     expect(screen.getByText('偏差 -200 kcal')).toBeInTheDocument();

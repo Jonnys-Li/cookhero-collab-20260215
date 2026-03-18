@@ -93,10 +93,10 @@ export function WeeklyGoalTrendCard({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-100/70 px-3 py-1 text-xs font-medium text-sky-800 dark:border-sky-800/60 dark:bg-sky-900/30 dark:text-sky-200">
             <LineChartIcon className="h-3.5 w-3.5" />
-            周三线视图
+            周趋势视图
           </div>
           <div className="mt-3 text-sm text-gray-800 dark:text-gray-200">
-            同时查看每日摄入、基线目标和当日偏差，并标出情绪豁免与 goal source 变化。
+            同时查看每日摄入、基线目标和当日偏差，并标出情绪保护期与目标来源变化。
           </div>
         </div>
         <div className="text-right text-xs text-gray-500 dark:text-gray-400">
@@ -146,7 +146,7 @@ export function WeeklyGoalTrendCard({
                 if (!row) return label;
                 const badges = [
                   row.goalSourceLabel ? `来源 ${row.goalSourceLabel}` : null,
-                  row.emotionExemptionActive ? '情绪豁免' : null,
+                  row.emotionExemptionActive ? '情绪保护期' : null,
                   row.goalSourceChanged ? '来源切换' : null,
                 ].filter(Boolean);
                 return badges.length ? `${row.date} · ${badges.join(' · ')}` : row.date;
@@ -214,7 +214,7 @@ export function WeeklyGoalTrendCard({
               {row.emotionExemptionActive ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[10px] text-amber-700 dark:bg-amber-900/20 dark:text-amber-200">
                   <ShieldPlus className="h-3 w-3" />
-                  情绪豁免
+                  情绪保护期
                 </span>
               ) : null}
               {row.goalSourceChanged ? (

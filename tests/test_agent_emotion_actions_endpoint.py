@@ -329,7 +329,7 @@ def test_apply_emotion_budget_adjust_blocked_during_exemption(monkeypatch, run, 
         )
 
     assert exc_info.value.status_code == 409
-    assert "情绪豁免期" in str(exc_info.value.detail)
+    assert "情绪保护期" in str(exc_info.value.detail)
 
 
 def test_get_agent_emotion_exemption_status(monkeypatch, run, build_request):

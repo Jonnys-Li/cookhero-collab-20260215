@@ -909,7 +909,7 @@ async def get_emotion_exemption_status(
     request: Request,
     target_date: Optional[date] = Query(None, description="目标日期（默认今天）"),
 ) -> EmotionExemptionStatusResponse:
-    """查询当天情绪豁免状态，Redis 不可用时自动降级。"""
+    """查询当天情绪保护期状态，Redis 不可用时自动降级。"""
     user_id = get_user_id(request)
     payload = await diet_service.get_emotion_exemption_status(user_id, target_date)
     return EmotionExemptionStatusResponse(**payload)
@@ -1005,7 +1005,7 @@ async def get_three_line_trends(
     days: int = Query(14, ge=7, le=14, description="查询天数，支持 7-14 天"),
     end_date: Optional[date] = Query(None, description="结束日期（默认今天）"),
 ) -> ThreeLineTrendResponse:
-    """为三线视图提供近 7-14 天的摄入、目标、偏差及状态标记。"""
+    """为趋势图提供近 7-14 天的摄入、目标、偏差及状态标记。"""
     user_id = get_user_id(request)
     payload = await diet_service.get_three_line_view(
         user_id=user_id,
