@@ -315,6 +315,8 @@ class ReplanPreviewResponse(BaseModel):
     after_summary: Dict[str, Any] = Field(default_factory=dict)
     meal_changes: List[Dict[str, Any]] = Field(default_factory=list)
     write_conflicts: List[Dict[str, Any]] = Field(default_factory=list)
+    compensation_summary: Optional[str] = None
+    compensation_suggestions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class ReplanApplyRequest(BaseModel):
@@ -367,6 +369,65 @@ class ShoppingListResponse(BaseModel):
     matched_items: List[Dict[str, Any]] = Field(default_factory=list)
     unmatched_dishes: List[str] = Field(default_factory=list)
     grouped_ingredients: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class CompensationSuggestionResponse(BaseModel):
+    kind: str
+    title: str
+    recommended_date: Optional[str] = None
+    training_title: Optional[str] = None
+    training_description: Optional[str] = None
+    suggested_minutes: Optional[int] = None
+    estimated_burn_kcal: Optional[int] = None
+    relax_suggestions: List[str] = Field(default_factory=list)
+    reason: str
+    remaining_meal_count: int
+    remaining_correction_capacity: int
+    uncovered_gap: int
+    goal_source: Optional[str] = None
+    goal_context: Optional[Dict[str, Any]] = None
+
+
+class TrendPointSchema(BaseModel):
+    date: str
+    value: Optional[int] = None
+
+
+class GoalSourceChangeSchema(BaseModel):
+    date: str
+    from_: Optional[str] = Field(None, alias="from")
+    to: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
+
+class ThreeLineDailySchema(BaseModel):
+    date: str
+    intake_calories: int
+    base_goal: Optional[int] = None
+    effective_goal: Optional[int] = None
+    deviation_calories: Optional[int] = None
+    goal_source: Optional[str] = None
+    goal_source_changed: bool = False
+    emotion_exemption_active: bool = False
+    emotion_exemption: Optional[Dict[str, Any]] = None
+
+
+class ThreeLineSeriesSchema(BaseModel):
+    intake: List[TrendPointSchema] = Field(default_factory=list)
+    goal: List[TrendPointSchema] = Field(default_factory=list)
+    deviation: List[TrendPointSchema] = Field(default_factory=list)
+
+
+class ThreeLineTrendResponse(BaseModel):
+    start_date: str
+    end_date: str
+    days: int
+    goal_context: Optional[Dict[str, Any]] = None
+    estimate_context: Optional[Dict[str, Any]] = None
+    daily: List[ThreeLineDailySchema] = Field(default_factory=list)
+    series: ThreeLineSeriesSchema
+    goal_source_changes: List[GoalSourceChangeSchema] = Field(default_factory=list)
 
 
 # ==================== Helper Functions ====================
@@ -914,6 +975,46 @@ async def get_deviation_analysis(
     return analysis
 
 
+@router.get(
+    "/diet/analysis/compensation-suggestion",
+    response_model=Optional[CompensationSuggestionResponse],
+)
+async def get_compensation_suggestion(
+    request: Request,
+    week_start_date: Optional[date] = Query(None, description="周开始日期（默认本周）"),
+    target_date: Optional[date] = Query(None, description="目标日期（默认今天）"),
+) -> Optional[CompensationSuggestionResponse]:
+    """当剩余餐次修正空间不足时，返回训练补偿或恢复日建议。"""
+    user_id = get_user_id(request)
+    payload = await diet_service.get_compensation_suggestion(
+        user_id=user_id,
+        week_start_date=week_start_date,
+        target_date=target_date,
+    )
+    if payload is None:
+        return None
+    return CompensationSuggestionResponse(**payload)
+
+
+@router.get(
+    "/diet/analysis/three-lines",
+    response_model=ThreeLineTrendResponse,
+)
+async def get_three_line_trends(
+    request: Request,
+    days: int = Query(14, ge=7, le=14, description="查询天数，支持 7-14 天"),
+    end_date: Optional[date] = Query(None, description="结束日期（默认今天）"),
+) -> ThreeLineTrendResponse:
+    """为三线视图提供近 7-14 天的摄入、目标、偏差及状态标记。"""
+    user_id = get_user_id(request)
+    payload = await diet_service.get_three_line_view(
+        user_id=user_id,
+        days=days,
+        end_date=end_date,
+    )
+    return ThreeLineTrendResponse(**payload)
+
+
 # ==================== Summary / Correction Endpoints ====================
 
 
@@ -1034,6 +1135,11 @@ async def get_weekly_summary_bundle(
     user_id = get_user_id(request)
     weekly_summary = await diet_service.get_weekly_summary(user_id, week_start_date)
     deviation = await diet_service.get_deviation_analysis(user_id, week_start_date)
+    compensation_suggestion = await diet_service.get_compensation_suggestion(
+        user_id=user_id,
+        week_start_date=week_start_date,
+        target_date=target_date,
+    )
 
     target = target_date or date.today()
     inferred_date, inferred_meal_type = _infer_default_next_meal(target)
@@ -1093,6 +1199,7 @@ async def get_weekly_summary_bundle(
         "weekly_summary": weekly_summary,
         "deviation": deviation,
         "goal_context": weekly_summary.get("goal_context") if isinstance(weekly_summary, dict) else None,
+        "compensation_suggestion": compensation_suggestion,
         "next_meal_correction": next_meal_correction,
         "nutrition_snapshot": build_weekly_nutrition_snapshot(
             weekly_summary=weekly_summary,

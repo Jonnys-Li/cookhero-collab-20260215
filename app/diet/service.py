@@ -67,6 +67,38 @@ GOAL_INTENT_ADJUSTMENTS = {
     "maintain": 0,
     "muscle_gain": 250,
 }
+PLANMODE_PROFILE_STATS_KEY = "planmode_profile"
+TRAINING_FOCUS_LABEL_MAP = {
+    "low_impact": "低冲击恢复训练",
+    "strength": "基础力量训练",
+    "cardio": "有氧耐力训练",
+    "mobility": "灵活性与拉伸训练",
+}
+INTENSITY_LABEL_MAP = {
+    "conservative": "保守",
+    "balanced": "平衡",
+    "aggressive": "积极",
+}
+RELAX_MODE_HINT_MAP = {
+    "breathing": "3 轮方块呼吸（吸4秒-停4秒-呼4秒-停4秒）。",
+    "walk": "餐后慢走 10 分钟，放松肩颈和下颌。",
+    "journaling": "用 3 句话记录情绪触发点与可替代行动。",
+    "music": "听 10 分钟舒缓音乐，避免持续刷短视频。",
+}
+COMPENSATION_MIN_SURPLUS_KCAL = 180
+COMPENSATION_MAX_MINUTES = 45
+COMPENSATION_MIN_MINUTES = 10
+TRAINING_BURN_PER_MINUTE = {
+    "low_impact": 4.0,
+    "mobility": 3.5,
+    "strength": 5.5,
+    "cardio": 7.0,
+}
+INTENSITY_BURN_FACTOR = {
+    "conservative": 0.9,
+    "balanced": 1.0,
+    "aggressive": 1.1,
+}
 
 REPLAN_TEMPLATE_LIBRARY: dict[str, dict[str, list[dict[str, Any]]]] = {
     "breakfast": {
@@ -1029,6 +1061,292 @@ class DietService:
                 slot_keys.add(self._slot_key(plan_date, meal_type))
         return slot_keys
 
+    def _build_training_schedule(
+        self,
+        *,
+        week_start: date,
+        profile: Optional[dict],
+    ) -> list[dict[str, Any]]:
+        normalized = self._normalize_planmode_profile(profile)
+        training_focus = normalized.get("training_focus") or "low_impact"
+        weekly_intensity = normalized.get("weekly_intensity") or "balanced"
+        training_minutes_per_day = int(normalized.get("training_minutes_per_day") or 25)
+        training_days_per_week = int(normalized.get("training_days_per_week") or 0)
+        training_custom = str(normalized.get("training_custom") or "").strip()
+
+        schedule: list[dict[str, Any]] = []
+        for day_index in range(7):
+            target_date = week_start + timedelta(days=day_index)
+            if day_index < training_days_per_week:
+                title = f"{TRAINING_FOCUS_LABEL_MAP.get(training_focus, TRAINING_FOCUS_LABEL_MAP['low_impact'])} Day {day_index + 1}"
+                description = (
+                    f"{training_minutes_per_day} 分钟，强度档："
+                    f"{INTENSITY_LABEL_MAP.get(weekly_intensity, '平衡')}"
+                )
+                if training_custom:
+                    description = f"{description}；个性化备注：{training_custom}"
+                schedule.append(
+                    {
+                        "date": target_date.isoformat(),
+                        "kind": "training_day",
+                        "title": title,
+                        "description": description,
+                        "training_focus": training_focus,
+                        "weekly_intensity": weekly_intensity,
+                        "training_minutes": training_minutes_per_day,
+                    }
+                )
+            else:
+                schedule.append(
+                    {
+                        "date": target_date.isoformat(),
+                        "kind": "recovery_day",
+                        "title": "恢复日",
+                        "description": "主动恢复（散步+拉伸）",
+                    }
+                )
+        return schedule
+
+    def _estimate_compensation_minutes(
+        self,
+        *,
+        uncovered_gap: int,
+        training_focus: str,
+        weekly_intensity: str,
+    ) -> tuple[int, int]:
+        burn_per_minute = TRAINING_BURN_PER_MINUTE.get(training_focus, 4.0) * INTENSITY_BURN_FACTOR.get(
+            weekly_intensity,
+            1.0,
+        )
+        raw_minutes = int(round(uncovered_gap / max(1.0, burn_per_minute) / 5.0) * 5)
+        suggested_minutes = max(
+            COMPENSATION_MIN_MINUTES,
+            min(COMPENSATION_MAX_MINUTES, raw_minutes),
+        )
+        estimated_burn = int(round(suggested_minutes * burn_per_minute / 10.0) * 10)
+        return suggested_minutes, max(40, estimated_burn)
+
+    async def get_compensation_suggestion(
+        self,
+        *,
+        user_id: str,
+        week_start_date: Optional[date] = None,
+        target_date: Optional[date] = None,
+    ) -> Optional[dict]:
+        actual_date = target_date or date.today()
+        actual_week_start = week_start_date or get_week_start_date(actual_date)
+        deviation = await self.get_deviation_analysis(user_id, actual_week_start)
+        if not isinstance(deviation, dict) or not deviation.get("has_plan"):
+            return None
+
+        try:
+            total_deviation = int(round(float(deviation.get("total_deviation") or 0)))
+        except (TypeError, ValueError):
+            total_deviation = 0
+        if total_deviation < COMPENSATION_MIN_SURPLUS_KCAL:
+            return None
+
+        end_date = actual_week_start + timedelta(days=6)
+        plan_meals = await self.repository.get_plan_meals_by_week(user_id, actual_week_start)
+        logs = await self.repository.get_log_items_by_date_range(
+            user_id=user_id,
+            start_date=actual_week_start,
+            end_date=end_date,
+        )
+        logged_slots = self._build_log_slot_keys(logs)
+        remaining_meals = [
+            meal
+            for meal in plan_meals
+            if meal.plan_date >= actual_date and self._slot_key(meal.plan_date, meal.meal_type) not in logged_slots
+        ]
+        remaining_capacity = 0
+        for meal in remaining_meals:
+            meal_total = meal.total_calories or self._calculate_meal_totals(meal.dishes).get("total_calories")
+            if not isinstance(meal_total, (int, float)):
+                continue
+            remaining_capacity += max(0, int(round(float(meal_total) - ROLLING_REPLAN_MIN_CALORIES)))
+
+        if remaining_capacity >= total_deviation:
+            return None
+
+        uncovered_gap = max(0, total_deviation - remaining_capacity)
+        pref = await self.repository.get_user_preference(user_id)
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        planmode_profile = self._normalize_planmode_profile(self._extract_planmode_profile(stats))
+        goal_context = await self.get_goal_context(user_id, actual_date)
+        schedule = self._build_training_schedule(
+            week_start=actual_week_start,
+            profile=planmode_profile,
+        )
+        upcoming_training = next(
+            (
+                item
+                for item in schedule
+                if item.get("kind") == "training_day"
+                and isinstance(item.get("date"), str)
+                and date.fromisoformat(item["date"]) >= actual_date
+            ),
+            None,
+        )
+
+        base_payload = {
+            "reason": (
+                f"本周累计约超出 {total_deviation} kcal，剩余 {len(remaining_meals)} 餐最多还能通过改餐回收 "
+                f"{remaining_capacity} kcal，单靠饮食修正空间不足。"
+            ),
+            "remaining_meal_count": len(remaining_meals),
+            "remaining_correction_capacity": remaining_capacity,
+            "uncovered_gap": uncovered_gap,
+            "goal_source": goal_context.get("goal_source"),
+            "goal_context": goal_context,
+        }
+
+        if upcoming_training:
+            training_focus = str(upcoming_training.get("training_focus") or "low_impact")
+            weekly_intensity = str(upcoming_training.get("weekly_intensity") or "balanced")
+            suggested_minutes, estimated_burn_kcal = self._estimate_compensation_minutes(
+                uncovered_gap=uncovered_gap,
+                training_focus=training_focus,
+                weekly_intensity=weekly_intensity,
+            )
+            return {
+                "kind": "training_compensation",
+                "title": "训练日补偿建议",
+                "recommended_date": upcoming_training.get("date"),
+                "training_title": upcoming_training.get("title"),
+                "training_description": upcoming_training.get("description"),
+                "suggested_minutes": suggested_minutes,
+                "estimated_burn_kcal": estimated_burn_kcal,
+                **base_payload,
+            }
+
+        relax_modes = planmode_profile.get("relax_modes") if isinstance(planmode_profile.get("relax_modes"), list) else []
+        relax_suggestions = [
+            RELAX_MODE_HINT_MAP[mode]
+            for mode in relax_modes
+            if mode in RELAX_MODE_HINT_MAP
+        ] or [
+            RELAX_MODE_HINT_MAP["walk"],
+            RELAX_MODE_HINT_MAP["breathing"],
+        ]
+        recovery_day = next(
+            (
+                item
+                for item in schedule
+                if item.get("kind") == "recovery_day"
+                and isinstance(item.get("date"), str)
+                and date.fromisoformat(item["date"]) >= actual_date
+            ),
+            None,
+        )
+        return {
+            "kind": "recovery_day",
+            "title": "恢复日建议",
+            "recommended_date": (recovery_day or {}).get("date") or actual_date.isoformat(),
+            "training_title": (recovery_day or {}).get("title") or "恢复日",
+            "training_description": (recovery_day or {}).get("description") or "主动恢复（散步+拉伸）",
+            "suggested_minutes": None,
+            "estimated_burn_kcal": None,
+            "relax_suggestions": relax_suggestions[:3],
+            **base_payload,
+        }
+
+    async def get_three_line_view(
+        self,
+        *,
+        user_id: str,
+        days: int = 14,
+        end_date: Optional[date] = None,
+    ) -> dict:
+        actual_days = max(7, min(14, int(days or 14)))
+        actual_end_date = end_date or date.today()
+        start_date = actual_end_date - timedelta(days=actual_days - 1)
+
+        budget_snapshot = await self.get_today_budget(user_id, actual_end_date)
+        pref = await self.repository.get_user_preference(user_id)
+        items = await self.repository.get_log_items_by_date_range(
+            user_id=user_id,
+            start_date=start_date,
+            end_date=actual_end_date,
+        )
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        adjustment_entries = self._prune_adjustment_history(
+            list(stats.get(TODAY_BUDGET_ADJUSTMENTS_KEY) or []),
+            actual_end_date,
+        )
+
+        intake_by_day: dict[str, int] = {}
+        for item in items:
+            day_key = item.log_date.isoformat()
+            intake_by_day[day_key] = intake_by_day.get(day_key, 0) + int(round(float(item.calories or 0)))
+
+        base_goal = budget_snapshot.get("base_goal")
+        goal_source = str(budget_snapshot.get("goal_source") or "default1800")
+        estimate_context = budget_snapshot.get("estimate_context")
+        daily: list[dict[str, Any]] = []
+        series_intake: list[dict[str, Any]] = []
+        series_goal: list[dict[str, Any]] = []
+        series_deviation: list[dict[str, Any]] = []
+        goal_source_changes: list[dict[str, Any]] = []
+        previous_goal_source: Optional[str] = None
+
+        for offset in range(actual_days):
+            current_date = start_date + timedelta(days=offset)
+            date_key = current_date.isoformat()
+            intake_calories = intake_by_day.get(date_key, 0)
+            day_adjustment = self._sum_today_adjustment(adjustment_entries, current_date)
+            effective_goal = (
+                int(base_goal) + day_adjustment if isinstance(base_goal, int) else None
+            )
+            deviation_calories = (
+                intake_calories - effective_goal if isinstance(effective_goal, int) else None
+            )
+            equivalent_exemption = self._build_emotion_exemption_from_stats(
+                pref=pref,
+                target_date=current_date,
+            )
+            goal_source_changed = goal_source != previous_goal_source
+            if goal_source_changed:
+                goal_source_changes.append(
+                    {
+                        "date": date_key,
+                        "from": previous_goal_source,
+                        "to": goal_source,
+                    }
+                )
+            previous_goal_source = goal_source
+
+            row = {
+                "date": date_key,
+                "intake_calories": intake_calories,
+                "base_goal": base_goal,
+                "effective_goal": effective_goal,
+                "deviation_calories": deviation_calories,
+                "goal_source": goal_source,
+                "goal_source_changed": goal_source_changed,
+                "emotion_exemption_active": bool(equivalent_exemption.get("active")),
+                "emotion_exemption": equivalent_exemption,
+            }
+            daily.append(row)
+            series_intake.append({"date": date_key, "value": intake_calories})
+            series_goal.append({"date": date_key, "value": effective_goal})
+            series_deviation.append({"date": date_key, "value": deviation_calories})
+
+        return {
+            "start_date": start_date.isoformat(),
+            "end_date": actual_end_date.isoformat(),
+            "days": actual_days,
+            "goal_context": budget_snapshot.get("goal_context"),
+            "estimate_context": estimate_context,
+            "daily": daily,
+            "series": {
+                "intake": series_intake,
+                "goal": series_goal,
+                "deviation": series_deviation,
+            },
+            "goal_source_changes": goal_source_changes,
+        }
+
     def _scale_dishes_for_replan(
         self,
         *,
@@ -1084,6 +1402,111 @@ class DietService:
             "meal_type": getattr(meal, "meal_type"),
             "reason": reason,
         }
+
+    def _build_training_compensation_suggestions(
+        self,
+        *,
+        deviation_value: int,
+        remaining_shift: int,
+        meal_changes: list[dict[str, Any]],
+        write_conflicts: list[dict[str, Any]],
+    ) -> tuple[Optional[str], list[dict[str, Any]]]:
+        if deviation_value <= 450:
+            return None, []
+
+        unresolved_kcal = abs(remaining_shift) if remaining_shift < 0 else 0
+        if meal_changes and unresolved_kcal < 180:
+            return None, []
+        if not meal_changes and not write_conflicts:
+            return None, []
+
+        target_kcal = unresolved_kcal or deviation_value
+        if target_kcal >= 550:
+            suggestions = [
+                {
+                    "title": "轻快步行",
+                    "minutes": 40,
+                    "estimated_kcal_burn": 170,
+                    "intensity": "low_impact",
+                    "reason": "放在饭后或晚间完成，帮助回收一部分多余热量，同时不打乱恢复节奏。",
+                },
+                {
+                    "title": "低冲击单车 / 椭圆机",
+                    "minutes": 30,
+                    "estimated_kcal_burn": 180,
+                    "intensity": "moderate",
+                    "reason": "优先中低强度有氧，不需要一次性补完整周偏差。",
+                },
+            ]
+        elif target_kcal >= 320:
+            suggestions = [
+                {
+                    "title": "晚饭后快走",
+                    "minutes": 30,
+                    "estimated_kcal_burn": 130,
+                    "intensity": "low_impact",
+                    "reason": "优先稳态活动，帮助消化并降低补偿性节食的冲动。",
+                },
+                {
+                    "title": "短时循环训练",
+                    "minutes": 20,
+                    "estimated_kcal_burn": 110,
+                    "intensity": "moderate",
+                    "reason": "选择自重深蹲、划船机或台阶等可控动作，以舒适强度为主。",
+                },
+            ]
+        else:
+            suggestions = [
+                {
+                    "title": "饭后散步",
+                    "minutes": 20,
+                    "estimated_kcal_burn": 80,
+                    "intensity": "low_impact",
+                    "reason": "把注意力放在回到节奏，而不是惩罚式补偿。",
+                },
+                {
+                    "title": "拉伸 + 核心激活",
+                    "minutes": 15,
+                    "estimated_kcal_burn": 50,
+                    "intensity": "mobility",
+                    "reason": "适合饮食修正空间有限时作为低压力补充，不建议叠加高强度训练。",
+                },
+            ]
+
+        if meal_changes:
+            summary = (
+                f"未来餐次最多只能平滑吸收约 {target_kcal} kcal，"
+                "可在本周补 1-2 次轻量运动帮助回到节奏，不建议用极端节食或高强度惩罚式训练。"
+            )
+        else:
+            summary = (
+                f"未来餐次已基本没有安全调整空间，本周仍有约 {target_kcal} kcal 需要温和处理；"
+                "建议优先选择低冲击活动，而不是再压低进食。"
+            )
+
+        return summary, suggestions
+
+    async def _build_weekly_budget_timeline(
+        self,
+        *,
+        user_id: str,
+        week_start_date: date,
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for offset in range(7):
+            target_date = week_start_date + timedelta(days=offset)
+            budget = await self.get_today_budget(user_id, target_date)
+            rows.append(
+                {
+                    "date": target_date.isoformat(),
+                    "base_goal": budget.get("base_goal"),
+                    "effective_goal": budget.get("effective_goal"),
+                    "goal_source": budget.get("goal_source"),
+                    "goal_seeded": budget.get("goal_seeded"),
+                    "emotion_exemption": budget.get("emotion_exemption"),
+                }
+            )
+        return rows
 
     async def preview_weekly_replan(
         self,
@@ -1200,6 +1623,14 @@ class DietService:
         after_total = sum(
             int(round(float(change.get("new_total_calories") or 0))) for change in meal_changes
         )
+        compensation_summary, compensation_suggestions = (
+            self._build_training_compensation_suggestions(
+                deviation_value=deviation_value,
+                remaining_shift=remaining_shift,
+                meal_changes=meal_changes,
+                write_conflicts=write_conflicts,
+            )
+        )
 
         return {
             "week_start_date": actual_week_start.isoformat(),
@@ -1244,6 +1675,8 @@ class DietService:
             },
             "meal_changes": meal_changes,
             "write_conflicts": write_conflicts,
+            "compensation_summary": compensation_summary,
+            "compensation_suggestions": compensation_suggestions,
         }
 
     async def apply_weekly_replan(
@@ -1932,6 +2365,10 @@ class DietService:
         summary["base_goal"] = budget.get("base_goal")
         summary["effective_goal"] = budget.get("effective_goal")
         summary["estimate_context"] = budget.get("estimate_context")
+        summary["daily_budget_timeline"] = await self._build_weekly_budget_timeline(
+            user_id=user_id,
+            week_start_date=week_start_date,
+        )
         base_goal = budget.get("base_goal")
         if isinstance(base_goal, int):
             weekly_goal_calories = int(base_goal) * 7
@@ -1998,6 +2435,41 @@ class DietService:
             return {}
         profile = stats.get(METABOLIC_PROFILE_STATS_KEY)
         return profile if isinstance(profile, dict) else {}
+
+    def _extract_planmode_profile(self, stats: Optional[dict]) -> dict:
+        if not isinstance(stats, dict):
+            return {}
+        profile = stats.get(PLANMODE_PROFILE_STATS_KEY)
+        return profile if isinstance(profile, dict) else {}
+
+    def _normalize_planmode_profile(self, profile: Optional[dict]) -> dict:
+        if not isinstance(profile, dict):
+            return {}
+
+        weekly_intensity = str(profile.get("weekly_intensity") or "balanced").strip().lower()
+        if weekly_intensity not in INTENSITY_LABEL_MAP:
+            weekly_intensity = "balanced"
+
+        training_focus = str(profile.get("training_focus") or "low_impact").strip().lower()
+        if training_focus not in TRAINING_FOCUS_LABEL_MAP:
+            training_focus = "low_impact"
+
+        relax_modes = profile.get("relax_modes") if isinstance(profile.get("relax_modes"), list) else []
+        normalized_relax_modes = [
+            str(mode).strip().lower()
+            for mode in relax_modes
+            if str(mode).strip().lower() in RELAX_MODE_HINT_MAP
+        ]
+
+        return {
+            "goal": str(profile.get("goal") or "maintenance").strip().lower(),
+            "weekly_intensity": weekly_intensity,
+            "training_focus": training_focus,
+            "training_minutes_per_day": max(10, min(120, int(profile.get("training_minutes_per_day") or 25))),
+            "training_days_per_week": max(0, min(7, int(profile.get("training_days_per_week") or 0))),
+            "training_custom": str(profile.get("training_custom") or "").strip(),
+            "relax_modes": normalized_relax_modes,
+        }
 
     def _normalize_metabolic_profile(self, profile: Optional[dict]) -> dict:
         if not isinstance(profile, dict):

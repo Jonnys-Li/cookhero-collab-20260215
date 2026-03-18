@@ -223,3 +223,67 @@ def test_parse_and_recognize_low_confidence_candidates(monkeypatch, run, build_r
         )
     )
     assert recognized.dishes[0].low_confidence_candidates[0].name == "红烧排骨"
+
+
+def test_weekly_replan_adds_training_compensation_when_diet_space_is_insufficient(
+    run,
+    build_request,
+    sqlite_session_context,
+    monkeypatch,
+):
+    import app.diet.database.repository as diet_repo_module
+
+    monkeypatch.setattr(diet_repo_module, "get_session_context", sqlite_session_context)
+
+    from app.api.v1.endpoints import diet as diet_endpoint
+    from app.diet.service import get_week_start_date
+
+    request = build_request(user_id="u_replan_comp")
+    today = date.today()
+    week_start = get_week_start_date(today)
+
+    run(
+        diet_endpoint.add_meal(
+            diet_endpoint.AddMealRequest(
+                plan_date=today,
+                meal_type="breakfast",
+                dishes=[diet_endpoint.DishSchema(name="计划早餐", calories=420)],
+            ),
+            request,
+        )
+    )
+    run(
+        diet_endpoint.add_meal(
+            diet_endpoint.AddMealRequest(
+                plan_date=today,
+                meal_type="dinner",
+                dishes=[diet_endpoint.DishSchema(name="已锁定晚餐", calories=280)],
+                notes="用户手动固定，不自动调整",
+            ),
+            request,
+        )
+    )
+    run(
+        diet_endpoint.create_log(
+            diet_endpoint.CreateLogRequest(
+                log_date=today,
+                meal_type="breakfast",
+                items=[diet_endpoint.FoodItemSchema(food_name="额外加餐", calories=1400)],
+                notes="unit-test over target",
+            ),
+            request,
+        )
+    )
+
+    preview = run(
+        diet_endpoint.get_weekly_replan_preview(
+            request,
+            week_start_date=week_start,
+        )
+    )
+
+    assert preview.meal_changes == []
+    assert preview.write_conflicts
+    assert preview.compensation_summary is not None
+    assert preview.compensation_suggestions
+    assert preview.compensation_suggestions[0]["minutes"] >= 20

@@ -89,6 +89,37 @@ Acceptance focus:
 - Existing emotion exemption, rolling replan, and low-confidence food confirmation
   flows do not regress.
 
+## Weekly Replan + Trend Regression Focus
+
+For the next QA phase, include these checks for training compensation and the
+weekly three-line view:
+
+```bash
+cd /Users/zjs/Desktop/code/COOK/cookhero-collab-20260215
+source .venv/bin/activate
+pytest -q tests/test_diet_goal_context_unit.py \
+  tests/test_diet_replan_budget_features_unit.py \
+  tests/test_emotion_support_agent.py \
+  tests/test_emotion_budget_service.py \
+  tests/test_diet_metabolic_profile_unit.py
+
+cd /Users/zjs/Desktop/code/COOK/cookhero-collab-20260215/frontend
+npm test -- src/components/diet/WeeklyDeviationCorrectionCard.test.tsx \
+  src/components/diet/WeeklyGoalTrendCard.test.tsx \
+  src/components/diet/DietPreferencesForm.test.tsx \
+  src/components/diet/CalorieGoalSourceCard.test.tsx
+```
+
+Acceptance focus:
+
+- When weekly deviation is high and future meal correction space is limited, the
+  UI surfaces low-risk training / movement suggestions instead of extreme
+  compensation.
+- The weekly three-line view keeps daily intake, baseline target, deviation,
+  emotion exemption markers, and goal-source badges readable and stable.
+- Emotion exemption, rolling replan, metabolic goal source, and low-confidence
+  photo confirmation remain green.
+
 ## Performance (k6)
 
 We keep k6 focused on non-LLM endpoints. LLM/chat latency is tracked separately.

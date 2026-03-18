@@ -32,8 +32,12 @@ function buildSummary(preview: DietReplanPreview | null, weeklySummary: WeeklySu
     mealCount > 0
       ? `预计影响 ${affectedDays} 天、${mealCount} 餐，总调整 ${shift >= 0 ? '+' : ''}${shift} kcal。`
       : '当前没有可安全调整的未来餐次。';
+  const compensationText =
+    preview.compensation_summary && preview.compensation_suggestions?.length
+      ? '饮食修正空间不足，已补充轻量训练建议。'
+      : '';
 
-  return `${base}${deviationText}${shiftText}`;
+  return `${base}${deviationText}${shiftText}${compensationText}`;
 }
 
 function formatMealChange(change: DietReplanPreview['meal_changes'][number]): string {
@@ -218,6 +222,35 @@ export function WeeklyDeviationCorrectionCard({
             </div>
           </div>
         </div>
+
+        {preview?.compensation_suggestions?.length ? (
+          <div className="mt-3 rounded-2xl border border-emerald-200/70 bg-emerald-50/70 px-3 py-3 dark:border-emerald-900/40 dark:bg-emerald-900/10">
+            <div className="text-[11px] font-medium text-emerald-700 dark:text-emerald-200">
+              训练 / 运动补偿建议
+            </div>
+            {preview.compensation_summary ? (
+              <div className="mt-2 text-[12px] text-emerald-800/90 dark:text-emerald-100/90">
+                {preview.compensation_summary}
+              </div>
+            ) : null}
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {preview.compensation_suggestions.map((item) => (
+                <div
+                  key={`${item.title}-${item.minutes}`}
+                  className="rounded-xl bg-white/80 px-3 py-2 text-[12px] text-gray-700 dark:bg-gray-900 dark:text-gray-200"
+                >
+                  <div className="font-medium">
+                    {item.title} · {item.minutes} 分钟
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                    预计消耗约 {item.estimated_kcal_burn} kcal · 强度 {item.intensity}
+                  </div>
+                  <div className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">{item.reason}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {(error || appliedMessage) && (
