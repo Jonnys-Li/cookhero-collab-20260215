@@ -110,6 +110,15 @@ export interface WeeklySummary {
   avg_daily_calories: number;
   today_budget?: DietBudgetSnapshot;
   emotion_exemption?: EmotionExemptionStatus | null;
+  goal_context?: Record<string, unknown> | null;
+  goal_source?: 'explicit' | 'avg7d' | 'default1800' | string | null;
+  base_goal?: number | null;
+  effective_goal?: number | null;
+  estimate_context?: Record<string, unknown> | null;
+  weekly_goal_calories?: number | null;
+  weekly_goal_gap?: number | null;
+  avg_daily_goal_gap?: number | null;
+  daily_budget_timeline?: WeeklyBudgetTimelineEntry[];
 }
 
 export interface DeviationAnalysis {
@@ -273,6 +282,23 @@ export interface DietBudgetSnapshot {
   emotion_exemption?: EmotionExemptionStatus | null;
 }
 
+export interface WeeklyBudgetTimelineEntry {
+  date: string;
+  base_goal?: number | null;
+  effective_goal?: number | null;
+  goal_source?: 'explicit' | 'avg7d' | 'default1800' | string | null;
+  goal_seeded?: boolean | null;
+  emotion_exemption?: EmotionExemptionStatus | null;
+}
+
+export interface DietCompensationSuggestion {
+  title: string;
+  minutes: number;
+  estimated_kcal_burn: number;
+  intensity: string;
+  reason: string;
+}
+
 export interface EmotionExemptionStatus {
   active?: boolean;
   is_active?: boolean;
@@ -318,6 +344,8 @@ export interface DietReplanPreview {
     meal_type?: string;
     reason: string;
   }>;
+  compensation_summary?: string | null;
+  compensation_suggestions?: DietCompensationSuggestion[];
 }
 
 export interface DietReplanApplyResponse {

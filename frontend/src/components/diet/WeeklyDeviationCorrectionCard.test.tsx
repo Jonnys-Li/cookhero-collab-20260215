@@ -56,6 +56,16 @@ const previewResponse = {
       reason: '该餐次已存在日志关联，已跳过。',
     },
   ],
+  compensation_summary: '未来餐次可调整空间有限，建议补 1-2 次轻量运动帮助回到节奏。',
+  compensation_suggestions: [
+    {
+      title: '晚饭后快走',
+      minutes: 30,
+      estimated_kcal_burn: 130,
+      intensity: 'low_impact',
+      reason: '优先稳态活动，帮助消化并降低补偿性节食的冲动。',
+    },
+  ],
 };
 
 describe('WeeklyDeviationCorrectionCard', () => {
@@ -85,6 +95,8 @@ describe('WeeklyDeviationCorrectionCard', () => {
 
     expect(await screen.findByText('2026-03-19 · 晚餐 · 680 → 520 kcal')).toBeInTheDocument();
     expect(screen.getByText('该餐次已存在日志关联，已跳过。')).toBeInTheDocument();
+    expect(screen.getByText('训练 / 运动补偿建议')).toBeInTheDocument();
+    expect(screen.getByText('晚饭后快走 · 30 分钟')).toBeInTheDocument();
   });
 
   it('applies rolling replan via applyReplan', async () => {

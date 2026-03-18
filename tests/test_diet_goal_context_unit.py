@@ -48,6 +48,8 @@ def test_budget_and_weekly_summary_use_tdee_estimate_when_profile_complete(
     assert weekly["base_goal"] == 2760
     assert weekly["weekly_goal_calories"] == 19320
     assert weekly["goal_context"]["estimate_context"]["recommended_calorie_goal"] == 2760
+    assert len(weekly["daily_budget_timeline"]) == 7
+    assert weekly["daily_budget_timeline"][0]["goal_source"] == "tdee_estimate"
 
 
 def test_budget_falls_back_when_metabolic_profile_incomplete(
@@ -89,6 +91,8 @@ def test_budget_falls_back_when_metabolic_profile_incomplete(
     )
     assert weekly["goal_source"] == "default1800"
     assert weekly["estimate_context"] is None
+    assert len(weekly["daily_budget_timeline"]) == 7
+    assert weekly["daily_budget_timeline"][0]["goal_source"] == "default1800"
 
 
 def test_replan_preview_exposes_goal_context_without_regression(

@@ -48,6 +48,9 @@ import { WeeklyShareToCommunityCard } from '../../components/diet/WeeklyShareToC
 import { PhotoLogModal } from '../../components/diet/PhotoLogModal';
 import { ShoppingListPanel } from '../../components/diet/ShoppingListPanel';
 import { CalorieGoalSourceCard } from '../../components/diet/CalorieGoalSourceCard';
+import { WeeklyGoalTrendCard } from '../../components/diet/WeeklyGoalTrendCard';
+import { TrainingCompensationCard } from '../../components/diet/TrainingCompensationCard';
+import { WeeklyDefenseTrendCard } from '../../components/diet/WeeklyDefenseTrendCard';
 import type {
   Dish,
   DietPlan,
@@ -1683,12 +1686,29 @@ export default function DietManagementPage() {
         />
 
         {token && (
+          <TrainingCompensationCard
+            summary={weeklySummary}
+            budgetSnapshot={budgetSnapshot}
+            preference={preference}
+          />
+        )}
+
+        {token && (
+          <WeeklyDefenseTrendCard
+            summary={weeklySummary}
+            budgetSnapshot={budgetSnapshot}
+          />
+        )}
+
+        {token && (
           <CalorieGoalSourceCard
             budgetSnapshot={budgetSnapshot}
             preference={preference}
             title="当前预算与目标来源"
           />
         )}
+
+        <WeeklyGoalTrendCard weeklySummary={weeklySummary} />
 
         {/* Deviation -> Correction (default entry) */}
         {token && !emotionExemptionActive && (
