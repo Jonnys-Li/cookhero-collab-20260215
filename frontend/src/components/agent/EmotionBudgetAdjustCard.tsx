@@ -178,6 +178,7 @@ export function EmotionBudgetAdjustCard({
   const goalSourceText = (() => {
     const source = budgetSnapshot?.goal_source;
     if (source === 'explicit') return '用户目标';
+    if (source === 'tdee_estimate') return 'TDEE 估算';
     if (source === 'avg7d') return '近7天均值';
     if (source === 'default1800') return '系统默认 1800';
     return '未标注';

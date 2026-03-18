@@ -33,6 +33,10 @@ def test_apply_emotion_budget_adjust_success(monkeypatch, run, build_request):
     async def fake_find_existing(session_id: str, action_id: str):
         return None
 
+    async def fake_get_status(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {"is_active": False}
+
     async def fake_adjust(**kwargs):
         assert kwargs["user_id"] == "u1"
         assert kwargs["delta_calories"] == 100
@@ -72,6 +76,11 @@ def test_apply_emotion_budget_adjust_success(monkeypatch, run, build_request):
         agent_endpoint,
         "_find_existing_emotion_action_result",
         fake_find_existing,
+    )
+    monkeypatch.setattr(
+        agent_endpoint.emotion_exemption_service,
+        "get_status",
+        fake_get_status,
     )
     monkeypatch.setattr(
         agent_endpoint.emotion_budget_service,
@@ -129,6 +138,10 @@ def test_apply_emotion_budget_adjust_idempotent(monkeypatch, run, build_request)
             "message": "已完成",
         }
 
+    async def fake_get_status(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {"is_active": False}
+
     async def should_not_adjust(**kwargs):
         raise AssertionError("idempotent path should not call adjust_today_budget")
 
@@ -138,6 +151,11 @@ def test_apply_emotion_budget_adjust_idempotent(monkeypatch, run, build_request)
         agent_endpoint,
         "_find_existing_emotion_action_result",
         fake_find_existing,
+    )
+    monkeypatch.setattr(
+        agent_endpoint.emotion_exemption_service,
+        "get_status",
+        fake_get_status,
     )
     monkeypatch.setattr(
         agent_endpoint.emotion_budget_service,
@@ -174,6 +192,10 @@ def test_apply_emotion_budget_adjust_cooldown_skips_followup_card(monkeypatch, r
     async def fake_find_existing(session_id: str, action_id: str):
         return None
 
+    async def fake_get_status(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {"is_active": False}
+
     async def fake_adjust(**kwargs):
         return {
             "message": "自动调整完成",
@@ -208,6 +230,11 @@ def test_apply_emotion_budget_adjust_cooldown_skips_followup_card(monkeypatch, r
         agent_endpoint,
         "_find_existing_emotion_action_result",
         fake_find_existing,
+    )
+    monkeypatch.setattr(
+        agent_endpoint.emotion_exemption_service,
+        "get_status",
+        fake_get_status,
     )
     monkeypatch.setattr(
         agent_endpoint,

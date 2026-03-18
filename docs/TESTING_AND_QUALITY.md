@@ -61,6 +61,34 @@ npm run test:e2e
 
 Workflow: `.github/workflows/e2e.yml` (scheduled + manual).
 
+## Diet Goal-Source Regression Focus
+
+For the metabolic profile / BMR-TDEE rollout and follow-up acceptance, keep these
+checks in the default regression pack:
+
+```bash
+cd /Users/zjs/Desktop/code/COOK/cookhero-collab-20260215
+source .venv/bin/activate
+pytest -q tests/test_diet_metabolic_profile_unit.py \
+  tests/test_diet_goal_context_unit.py \
+  tests/test_emotion_support_agent.py \
+  tests/test_emotion_budget_service.py \
+  tests/test_diet_replan_budget_features_unit.py
+
+cd /Users/zjs/Desktop/code/COOK/cookhero-collab-20260215/frontend
+npm test -- src/components/diet/DietPreferencesForm.test.tsx \
+  src/components/diet/CalorieGoalSourceCard.test.tsx
+```
+
+Acceptance focus:
+
+- Budget / weekly summary / replan flows stay aligned after updating metabolic profile.
+- `goal_source` remains correctly surfaced for `tdee_estimate`, `avg7d`,
+  `default1800`, and `explicit`.
+- Incomplete metabolic profiles fall back safely without breaking goal context.
+- Existing emotion exemption, rolling replan, and low-confidence food confirmation
+  flows do not regress.
+
 ## Performance (k6)
 
 We keep k6 focused on non-LLM endpoints. LLM/chat latency is tracked separately.
@@ -83,4 +111,3 @@ Workflow: `.github/workflows/perf-k6.yml` (manual).
 - `.github/workflows/cloud-config-sync.yml`: Render env sync + optional deploy trigger.
 - `.github/workflows/e2e.yml`: Playwright E2E smoke (scheduled + manual).
 - `.github/workflows/perf-k6.yml`: k6 non-LLM performance smoke (manual).
-
