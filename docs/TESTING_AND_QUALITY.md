@@ -120,6 +120,23 @@ Acceptance focus:
 - Emotion exemption, rolling replan, metabolic goal source, and low-confidence
   photo confirmation remain green.
 
+## Production Smoke (QA Baseline)
+
+```bash
+cd /Users/zjs/Desktop/code/COOK/cookhero-collab-20260215
+CONNECT_TIMEOUT_SECONDS=8 REQUEST_TIMEOUT_SECONDS=90 ./scripts/smoke-prod.sh
+```
+
+Notes:
+
+- If `SMOKE_USERNAME` / `SMOKE_PASSWORD` are missing, smoke now auto-registers a
+  temporary user and still runs authenticated checks.
+- Smoke includes route guards for diet weekly-replan/trend endpoints:
+  `/diet/replan/preview`, `/diet/replan/apply`, `/diet/summary/weekly`,
+  `/diet/analysis/three-lines`, `/diet/shopping-list`.
+- In demo mode (`SMOKE_STRICT=false`) these mismatches are warnings; in strict
+  mode they fail fast.
+
 ## Performance (k6)
 
 We keep k6 focused on non-LLM endpoints. LLM/chat latency is tracked separately.
