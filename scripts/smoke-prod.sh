@@ -18,6 +18,7 @@ SMOKE_DIET_PHOTO="${SMOKE_DIET_PHOTO:-false}"
 SMOKE_PHOTO_IMAGE_B64="${SMOKE_PHOTO_IMAGE_B64:-}"
 SMOKE_PHOTO_MIME_TYPE="${SMOKE_PHOTO_MIME_TYPE:-image/png}"
 SMOKE_PHOTO_CONTEXT_TEXT="${SMOKE_PHOTO_CONTEXT_TEXT:-}"
+SMOKE_AUTO_REGISTER_AUTH="${SMOKE_AUTO_REGISTER_AUTH:-true}"
 
 TMP_DIR="$(mktemp -d)"
 TMP_HEADERS="${TMP_DIR}/headers.txt"
@@ -212,12 +213,27 @@ assert_status_with_retry \
   "405"
 
 if [[ -z "${SMOKE_USERNAME:-}" || -z "${SMOKE_PASSWORD:-}" ]]; then
-  AUTH_CHECKS_ENABLED=false
   if [[ "${STRICT_MODE}" == "true" ]]; then
     echo "[FAIL] Missing required secrets in strict mode: SMOKE_USERNAME / SMOKE_PASSWORD"
     exit 1
   fi
-  log_warn "SMOKE_USERNAME / SMOKE_PASSWORD missing, skip authenticated checks in demo mode."
+  if is_truthy "${SMOKE_AUTO_REGISTER_AUTH}"; then
+    SMOKE_USERNAME="smoke_$(date +%s)_${RANDOM}"
+    SMOKE_PASSWORD="Smoke_${RANDOM}_Aa1!"
+    log_warn "SMOKE_USERNAME / SMOKE_PASSWORD missing, auto-register temporary smoke user."
+
+    REGISTER_PAYLOAD="{\"username\":\"${SMOKE_USERNAME}\",\"password\":\"${SMOKE_PASSWORD}\"}"
+    assert_status_with_retry \
+      "Smoke user auto-register" \
+      "POST" \
+      "${FRONTEND_URL}/api/v1/auth/register" \
+      "200,409" \
+      -H "Content-Type: application/json" \
+      --data "${REGISTER_PAYLOAD}"
+  else
+    AUTH_CHECKS_ENABLED=false
+    log_warn "SMOKE_USERNAME / SMOKE_PASSWORD missing, skip authenticated checks in demo mode."
+  fi
 fi
 
 if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
@@ -304,6 +320,44 @@ if [[ "${AUTH_CHECKS_ENABLED}" == "true" ]]; then
     "${FRONTEND_URL}/api/v1/diet/enums" \
     "200" \
     -H "Authorization: Bearer ${TOKEN}"
+
+  # 8.2) Diet wave endpoints route + availability checks (regression guard)
+  assert_status_with_retry \
+    "Diet weekly replan preview route check" \
+    "GET" \
+    "${FRONTEND_URL}/api/v1/diet/replan/preview" \
+    "200" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  assert_status_with_retry \
+    "Diet weekly summary route check" \
+    "GET" \
+    "${FRONTEND_URL}/api/v1/diet/summary/weekly" \
+    "200" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  assert_status_with_retry \
+    "Diet three-line route check" \
+    "GET" \
+    "${FRONTEND_URL}/api/v1/diet/analysis/three-lines" \
+    "200" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  assert_status_with_retry \
+    "Diet shopping-list route check" \
+    "GET" \
+    "${FRONTEND_URL}/api/v1/diet/shopping-list" \
+    "200" \
+    -H "Authorization: Bearer ${TOKEN}"
+
+  assert_status_with_retry \
+    "Diet replan apply route check" \
+    "POST" \
+    "${FRONTEND_URL}/api/v1/diet/replan/apply" \
+    "200,400,409,422" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    --data '{"meal_changes":[]}'
 
   # 8.5) Wave 3 (optional): photo-first diet logging flow (parse -> write -> refresh)
   if is_truthy "${SMOKE_DIET_PHOTO}"; then
