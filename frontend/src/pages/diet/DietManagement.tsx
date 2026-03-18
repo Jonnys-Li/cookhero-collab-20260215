@@ -1615,7 +1615,7 @@ export default function DietManagementPage() {
   const emotionExemptionMessage =
     emotionExemptionActive
       ? (emotionExemptionStatus?.summary ||
-        `${formatDateShort(activeDayDate)} 已进入情绪豁免，今日将暂停预算调整与下一餐纠偏引导。`)
+        `${formatDateShort(activeDayDate)} 已进入情绪保护期，今天会暂停预算调整和下一餐纠偏提示。`)
       : null;
 
   return (
@@ -1727,7 +1727,7 @@ export default function DietManagementPage() {
               当前周视图
             </div>
             <div className="mt-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
-              情绪豁免已生效
+              情绪保护期已开启
             </div>
             <div className="mt-1 text-sm text-gray-600 dark:text-gray-300">
               {emotionExemptionMessage}
@@ -1843,7 +1843,7 @@ export default function DietManagementPage() {
                         <span>当日预算 · {formatDateShort(date)}</span>
                         {emotionExemptionActive && dateStr === activeDayDateStr && (
                           <span className="rounded-full border border-amber-200 bg-amber-100/80 px-2.5 py-1 text-[11px] font-medium text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
-                            情绪豁免期
+                            情绪保护期
                           </span>
                         )}
                       </div>
@@ -1868,7 +1868,7 @@ export default function DietManagementPage() {
                       <div className={`mt-2 text-xs ${remainingClass}`}>{remainingLine}</div>
                       {emotionExemptionActive && dateStr === activeDayDateStr && (
                         <div className="mt-3 rounded-xl border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">
-                          情绪豁免中：今天优先稳住节奏，不触发下一餐纠偏入口。
+                          情绪保护期：今天优先稳住节奏，不再提示下一餐纠偏。
                         </div>
                       )}
                     </div>

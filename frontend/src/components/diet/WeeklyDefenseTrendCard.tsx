@@ -138,9 +138,9 @@ export function WeeklyDefenseTrendCard({
     <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-5 shadow-sm transition-all duration-200 hover:shadow-md">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">三线答辩视图</h3>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">一周趋势总览</h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            同屏看每日摄入、目标线、偏差，以及情绪豁免和目标来源上下文。
+            把每天吃了多少、目标是多少、差多少放在一张图里，并标出情绪保护期和目标来源。
           </p>
         </div>
         <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-medium text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200">

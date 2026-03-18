@@ -84,12 +84,12 @@ describe('WeeklyGoalTrendCard', () => {
       />
     );
 
-    expect(screen.getByText('周三线视图')).toBeInTheDocument();
+    expect(screen.getByText('周趋势视图')).toBeInTheDocument();
     expect(screen.getByText('实际摄入')).toBeInTheDocument();
     expect(screen.getByText('基线目标')).toBeInTheDocument();
     expect(screen.getByText('当日偏差')).toBeInTheDocument();
     expect(screen.getByText('来源切换')).toBeInTheDocument();
-    expect(screen.getByText('情绪豁免')).toBeInTheDocument();
+    expect(screen.getByText('情绪保护期')).toBeInTheDocument();
     expect(screen.getAllByText('TDEE 估算').length).toBeGreaterThan(0);
   });
 });

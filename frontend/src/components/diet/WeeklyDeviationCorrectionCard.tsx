@@ -13,7 +13,7 @@ const MEAL_LABELS: Record<string, string> = {
 };
 
 function buildSummary(preview: DietReplanPreview | null, weeklySummary: WeeklySummary | null): string {
-  if (!preview) return '正在生成未来 3-5 天的滚动重规划预览。';
+  if (!preview) return '正在生成未来 3-5 天的调整预览。';
 
   const deviation = Number(preview.before_summary?.total_deviation ?? 0);
   const affectedDays = preview.affected_days.length;
@@ -24,17 +24,17 @@ function buildSummary(preview: DietReplanPreview | null, weeklySummary: WeeklySu
   const base = typeof totalCalories === 'number' ? `本周已记录 ${totalCalories.toFixed(0)} kcal。` : '';
   const deviationText =
     deviation === 0
-      ? '当前偏差较小，以下预览以稳态优化为主。'
+      ? '当前偏差不大，下面是更省心的调整建议。'
       : deviation > 0
-        ? `本周累计超出约 ${Math.abs(deviation)} kcal，系统将把压力平滑分散到后续餐次。`
-        : `本周累计低于计划约 ${Math.abs(deviation)} kcal，系统将温和补回后续餐次。`;
+        ? `本周累计超出约 ${Math.abs(deviation)} kcal，系统会把这部分分摊到接下来几天的餐次里。`
+        : `本周累计低于计划约 ${Math.abs(deviation)} kcal，系统会温和地补回到接下来几天的餐次里。`;
   const shiftText =
     mealCount > 0
       ? `预计影响 ${affectedDays} 天、${mealCount} 餐，总调整 ${shift >= 0 ? '+' : ''}${shift} kcal。`
       : '当前没有可安全调整的未来餐次。';
   const compensationText =
     preview.compensation_summary && preview.compensation_suggestions?.length
-      ? '饮食修正空间不足，已补充轻量训练建议。'
+      ? '饮食空间不太够，已补充一条轻量活动建议。'
       : '';
 
   return `${base}${deviationText}${shiftText}${compensationText}`;
@@ -85,7 +85,7 @@ export function WeeklyDeviationCorrectionCard({
         write_conflicts: res.write_conflicts.length,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载滚动重规划失败');
+      setError(err instanceof Error ? err.message : '加载调整预览失败');
     } finally {
       setLoading(false);
     }
@@ -117,7 +117,7 @@ export function WeeklyDeviationCorrectionCard({
       await onApplied?.();
       await loadPreview();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '应用滚动重规划失败');
+      setError(err instanceof Error ? err.message : '应用调整失败');
     } finally {
       setApplying(false);
     }
@@ -131,7 +131,7 @@ export function WeeklyDeviationCorrectionCard({
         <div>
           <div className="inline-flex items-center gap-2 rounded-full border border-violet-200 bg-violet-100/70 px-3 py-1 text-xs font-medium text-violet-800 dark:border-violet-800/60 dark:bg-violet-900/30 dark:text-violet-200">
             <Sparkles className="h-3.5 w-3.5" />
-            七天滚动重规划
+            未来几天调整建议
           </div>
           <div className="mt-3 text-sm text-gray-800 dark:text-gray-200">
             {summaryText}
@@ -155,7 +155,7 @@ export function WeeklyDeviationCorrectionCard({
             className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-600 disabled:opacity-70"
           >
             {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
-            写回未来餐次
+            应用到计划
           </button>
         </div>
       </div>

@@ -725,7 +725,7 @@ class DietService:
             "active": delta_calories > 0,
             "date": target_date.isoformat(),
             "storage": "redis",
-            "reason": reason or "情绪支持临时热量豁免",
+            "reason": reason or "进入情绪保护期（当天更温和的执行策略）",
             "source": source or "emotion_subagent",
             "delta_calories": max(0, int(delta_calories or 0)),
             "effective_goal": effective_goal,
@@ -781,7 +781,7 @@ class DietService:
             "active": total_delta > 0,
             "date": target_key,
             "storage": "preference_fallback",
-            "reason": latest.get("reason") or "情绪支持临时热量豁免",
+            "reason": latest.get("reason") or "进入情绪保护期（当天更温和的执行策略）",
             "source": latest.get("source") or "emotion_subagent",
             "delta_calories": total_delta,
             "effective_goal": (
@@ -1192,7 +1192,7 @@ class DietService:
         base_payload = {
             "reason": (
                 f"本周累计约超出 {total_deviation} kcal，剩余 {len(remaining_meals)} 餐最多还能通过改餐回收 "
-                f"{remaining_capacity} kcal，单靠饮食修正空间不足。"
+                f"{remaining_capacity} kcal，单靠饮食调整空间可能不够。"
             ),
             "remaining_meal_count": len(remaining_meals),
             "remaining_correction_capacity": remaining_capacity,

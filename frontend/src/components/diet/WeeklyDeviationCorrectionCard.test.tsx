@@ -127,7 +127,7 @@ describe('WeeklyDeviationCorrectionCard', () => {
     );
 
     await screen.findByText('2026-03-19 · 晚餐 · 680 → 520 kcal');
-    await user.click(screen.getByRole('button', { name: '写回未来餐次' }));
+    await user.click(screen.getByRole('button', { name: '应用到计划' }));
 
     await waitFor(() => {
       expect(dietApi.applyReplan).toHaveBeenCalledWith('t1', previewResponse.meal_changes);

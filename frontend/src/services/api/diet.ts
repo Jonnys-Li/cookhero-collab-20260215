@@ -269,18 +269,44 @@ export async function getReplanPreview(
   weekStartDate?: string
 ): Promise<DietReplanPreview> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
-  return apiGet(`${DIET_BASE}/replan/preview${query}`, token);
+  // Prefer Render direct for newly-added endpoints because some Vercel rewrite setups
+  // may not proxy them immediately and return 404.
+  try {
+    return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Deployment skew guard: if the fallback base is stale (missing the endpoint),
+    // retry via the primary base once before surfacing the error.
+    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
+      return apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: false });
+    }
+    throw err;
+  }
 }
 
 export async function applyReplan(
   token: string,
   mealChanges: DietReplanPreview['meal_changes']
 ): Promise<DietReplanApplyResponse> {
-  return apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
-    `${DIET_BASE}/replan/apply`,
-    { meal_changes: mealChanges },
-    token
-  );
+  try {
+    return await apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
+      `${DIET_BASE}/replan/apply`,
+      { meal_changes: mealChanges },
+      token,
+      { preferFallback: true },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
+      return apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
+        `${DIET_BASE}/replan/apply`,
+        { meal_changes: mealChanges },
+        token,
+        { preferFallback: false },
+      );
+    }
+    throw err;
+  }
 }
 
 export async function getShoppingList(
@@ -288,7 +314,15 @@ export async function getShoppingList(
   weekStartDate?: string
 ): Promise<ShoppingListResponse> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
-  return apiGet(`${DIET_BASE}/shopping-list${query}`, token);
+  try {
+    return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
+      return apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: false });
+    }
+    throw err;
+  }
 }
 
 /**

@@ -93,9 +93,9 @@ function buildFallbackSuggestion(
       title: '今天先稳住节奏，不做补偿训练',
       description:
         readString(emotionExemption?.summary) ||
-        '当前处在情绪豁免或特殊支持状态，饮食与训练都优先以恢复稳定为主。',
+        '当前处在情绪保护期或特殊支持状态，饮食与训练都优先以恢复稳定为主。',
       focus: '建议 10-20 分钟轻步行、舒缓拉伸或呼吸放松，不用额外追求“把热量练回来”。',
-      sourceLabel: '基于情绪豁免状态',
+      sourceLabel: '基于情绪保护期',
       tone: 'amber',
     };
   }
@@ -178,7 +178,7 @@ export function TrainingCompensationCard({
         <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-950/30 px-4 py-3">
           <div className="inline-flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
             <Footprints className="h-3.5 w-3.5" />
-            建议动作
+            怎么做
           </div>
           <div className="mt-2 text-sm text-gray-900 dark:text-gray-100">{suggestion.focus}</div>
         </div>
@@ -186,7 +186,7 @@ export function TrainingCompensationCard({
         <div className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-950/30 px-4 py-3">
           <div className="inline-flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300">
             <HeartHandshake className="h-3.5 w-3.5" />
-            执行原则
+            小提示
           </div>
           <div className="mt-2 text-sm text-gray-900 dark:text-gray-100">
             这张卡只做轻量建议展示，不会自动改训练或饮食数据；主路径里优先帮助你理解该“稳住”还是“轻补偿”。

@@ -2269,7 +2269,7 @@ async def apply_emotion_budget_adjust(
 
     exemption_status = await emotion_exemption_service.get_status(user_id=str(user_id))
     if exemption_status.get("is_active"):
-        raise HTTPException(status_code=409, detail="当前处于情绪豁免期，已暂停预算调整")
+        raise HTTPException(status_code=409, detail="当前处于情绪保护期（今天），已暂停预算调整")
 
     existing = await _find_existing_emotion_action_result(
         payload.session_id,

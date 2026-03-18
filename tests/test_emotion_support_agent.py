@@ -574,6 +574,6 @@ def test_emotion_subagent_high_risk_activates_exemption_and_skips_budget_ui(monk
     )
 
     assert result.success is True
-    assert "高风险情绪豁免期" in captured["background"]
+    assert "高风险情绪保护期" in captured["background"]
     assert "mcp_diet_auto_adjust_get_today_budget" not in captured["tools"]
     assert [event for event in events if event.action == "ui_action"] == []

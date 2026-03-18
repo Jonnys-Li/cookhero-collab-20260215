@@ -364,8 +364,8 @@ class EmotionSupportSubagent(BaseSubagent):
 
     def _build_exemption_background_hint(self, exemption_status: dict) -> str:
         return (
-            "## 高风险情绪豁免期\n"
-            "- 当前已进入当天情绪豁免期，请暂停预算调整、热量纠偏和任何惩罚性饮食建议。\n"
+            "## 高风险情绪保护期\n"
+            "- 当前已进入当天情绪保护期，请暂停预算调整、热量纠偏和任何惩罚性饮食建议。\n"
             "- 回复目标：优先稳定情绪，只提供低刺激、可立即执行的小步行动。\n"
             "- 禁止输出“补偿”“控制”“扣减热量”等强约束措辞。\n"
             f"- 当前状态：{str(exemption_status.get('summary') or '已激活高风险保护')}。"
