@@ -2,7 +2,7 @@
  * Diet API service
  */
 
-import { apiGet, apiPost, apiDelete } from './client';
+import { apiDelete, apiGet, apiPost, apiPut } from './client';
 import { API_BASE } from '../../constants';
 import type {
   DietPlan,
@@ -332,20 +332,7 @@ export async function updatePreferences(
   token: string,
   data: UpdatePreferenceRequest
 ): Promise<{ preference: UserFoodPreference }> {
-  const response = await fetch(`${API_BASE}${DIET_BASE}/preferences`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(data),
-  });
-
-  if (!response.ok) {
-    throw new Error('Failed to update preferences');
-  }
-
-  return response.json();
+  return apiPut(`${DIET_BASE}/preferences`, data, token);
 }
 
 // ==================== Enums API ====================

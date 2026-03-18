@@ -246,6 +246,26 @@ class UpdatePreferenceRequest(BaseModel):
     protein_goal: Optional[float] = Field(None, description="每日蛋白质目标(克)")
     fat_goal: Optional[float] = Field(None, description="每日脂肪目标(克)")
     carbs_goal: Optional[float] = Field(None, description="每日碳水目标(克)")
+    age: Optional[int] = Field(None, ge=12, le=100, description="年龄")
+    biological_sex: Optional[str] = Field(
+        None, pattern="^(male|female)$", description="生理性别"
+    )
+    height_cm: Optional[float] = Field(None, ge=100, le=250, description="身高(cm)")
+    weight_kg: Optional[float] = Field(None, ge=20, le=350, description="体重(kg)")
+    activity_level: Optional[str] = Field(
+        None,
+        pattern="^(sedentary|light|moderate|active|very_active)$",
+        description="活动水平",
+    )
+    goal_intent: Optional[str] = Field(
+        None,
+        pattern="^(fat_loss|maintain|muscle_gain)$",
+        description="当前目标方向",
+    )
+    use_estimated_calorie_goal: Optional[bool] = Field(
+        False,
+        description="是否将估算出的 TDEE 建议热量写入 calorie_goal",
+    )
 
 
 class ApplyNextMealCorrectionRequest(BaseModel):
@@ -1072,6 +1092,7 @@ async def get_weekly_summary_bundle(
     return {
         "weekly_summary": weekly_summary,
         "deviation": deviation,
+        "goal_context": weekly_summary.get("goal_context") if isinstance(weekly_summary, dict) else None,
         "next_meal_correction": next_meal_correction,
         "nutrition_snapshot": build_weekly_nutrition_snapshot(
             weekly_summary=weekly_summary,
@@ -1197,7 +1218,10 @@ async def update_preferences(
     user_id = get_user_id(request)
 
     update_data = payload.model_dump(exclude_unset=True)
-    pref = await diet_service.update_user_preference(user_id, **update_data)
+    try:
+        pref = await diet_service.update_user_preference(user_id, **update_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     return {"preference": pref}
 

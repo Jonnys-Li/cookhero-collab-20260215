@@ -32,6 +32,7 @@ GOALS_META_STATS_KEY = "goals_meta"
 CALORIE_GOAL_SOURCE_KEY = "calorie_goal_source"
 CALORIE_GOAL_SEEDED_KEY = "calorie_goal_seeded"
 CALORIE_GOAL_SEEDED_AT_KEY = "calorie_goal_seeded_at"
+METABOLIC_PROFILE_STATS_KEY = "metabolic_profile"
 DEFAULT_AUTO_CALORIE_GOAL = 1800
 TODAY_BUDGET_ADJUSTMENTS_KEY = "today_budget_adjustments"
 TODAY_BUDGET_HISTORY_DAYS = 14
@@ -46,6 +47,26 @@ ROLLING_REPLAN_MIN_CALORIES = 220
 REPLAN_AUTO_NOTE_MARKER = "[auto_replan]"
 SHOPPING_SECTION_LINE_RE = re.compile(r"^(#+\s*)?(原料|食材|用料)[:：]?\s*$")
 SHOPPING_BULLET_RE = re.compile(r"^[-*+]\s+")
+METABOLIC_PROFILE_KEYS = (
+    "age",
+    "biological_sex",
+    "height_cm",
+    "weight_kg",
+    "activity_level",
+    "goal_intent",
+)
+ACTIVITY_LEVEL_FACTORS = {
+    "sedentary": 1.2,
+    "light": 1.375,
+    "moderate": 1.55,
+    "active": 1.725,
+    "very_active": 1.9,
+}
+GOAL_INTENT_ADJUSTMENTS = {
+    "fat_loss": -450,
+    "maintain": 0,
+    "muscle_gain": 250,
+}
 
 REPLAN_TEMPLATE_LIBRARY: dict[str, dict[str, list[dict[str, Any]]]] = {
     "breakfast": {
@@ -881,6 +902,36 @@ class DietService:
                     if isinstance(weekly_summary, dict)
                     else None
                 ),
+                "base_goal": (
+                    weekly_summary.get("base_goal")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "effective_goal": (
+                    weekly_summary.get("effective_goal")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "goal_source": (
+                    weekly_summary.get("goal_source")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "estimate_context": (
+                    weekly_summary.get("estimate_context")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "weekly_goal_gap": (
+                    weekly_summary.get("weekly_goal_gap")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "goal_context": (
+                    weekly_summary.get("goal_context")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
                 "total_deviation": (
                     deviation.get("total_deviation") if isinstance(deviation, dict) else None
                 ),
@@ -1042,6 +1093,7 @@ class DietService:
         lookahead_days: int = ROLLING_REPLAN_LOOKAHEAD_DAYS,
     ) -> dict:
         actual_week_start = week_start_date or get_week_start_date(date.today())
+        weekly_summary = await self.get_weekly_summary(user_id, actual_week_start)
         deviation = await self.get_deviation_analysis(user_id, actual_week_start)
         plan_meals = await self.repository.get_plan_meals_by_week(user_id, actual_week_start)
         end_date = actual_week_start + timedelta(days=6)
@@ -1156,12 +1208,39 @@ class DietService:
                 "future_meal_count": len(meal_changes),
                 "total_future_calories": before_total,
                 "total_deviation": deviation_value,
+                "weekly_goal_gap": (
+                    weekly_summary.get("weekly_goal_gap")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
             },
             "after_summary": {
                 "future_meal_count": len(meal_changes),
                 "projected_future_calories": after_total,
                 "applied_shift": after_total - before_total,
                 "remaining_unapplied_shift": remaining_shift,
+            },
+            "weekly_context": {
+                "goal_context": (
+                    weekly_summary.get("goal_context")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "estimate_context": (
+                    weekly_summary.get("estimate_context")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "goal_source": (
+                    weekly_summary.get("goal_source")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
+                "base_goal": (
+                    weekly_summary.get("base_goal")
+                    if isinstance(weekly_summary, dict)
+                    else None
+                ),
             },
             "meal_changes": meal_changes,
             "write_conflicts": write_conflicts,
@@ -1848,6 +1927,25 @@ class DietService:
         budget = await self.get_today_budget(user_id, context_date)
         summary["today_budget"] = budget
         summary["emotion_exemption"] = budget.get("emotion_exemption")
+        summary["goal_context"] = budget.get("goal_context")
+        summary["goal_source"] = budget.get("goal_source")
+        summary["base_goal"] = budget.get("base_goal")
+        summary["effective_goal"] = budget.get("effective_goal")
+        summary["estimate_context"] = budget.get("estimate_context")
+        base_goal = budget.get("base_goal")
+        if isinstance(base_goal, int):
+            weekly_goal_calories = int(base_goal) * 7
+            try:
+                total_calories = int(round(float(summary.get("total_calories") or 0)))
+            except (TypeError, ValueError):
+                total_calories = 0
+            try:
+                avg_daily_calories = float(summary.get("avg_daily_calories") or 0)
+            except (TypeError, ValueError):
+                avg_daily_calories = 0.0
+            summary["weekly_goal_calories"] = weekly_goal_calories
+            summary["weekly_goal_gap"] = total_calories - weekly_goal_calories
+            summary["avg_daily_goal_gap"] = round(avg_daily_calories - float(base_goal), 1)
         return summary
 
     async def get_deviation_analysis(
@@ -1895,6 +1993,184 @@ class DietService:
         goals_meta = stats.get(GOALS_META_STATS_KEY)
         return goals_meta if isinstance(goals_meta, dict) else {}
 
+    def _extract_metabolic_profile(self, stats: Optional[dict]) -> dict:
+        if not isinstance(stats, dict):
+            return {}
+        profile = stats.get(METABOLIC_PROFILE_STATS_KEY)
+        return profile if isinstance(profile, dict) else {}
+
+    def _normalize_metabolic_profile(self, profile: Optional[dict]) -> dict:
+        if not isinstance(profile, dict):
+            return {}
+
+        normalized: dict[str, Any] = {}
+
+        age = profile.get("age")
+        if isinstance(age, (int, float)) and 12 <= int(age) <= 100:
+            normalized["age"] = int(age)
+
+        biological_sex = str(profile.get("biological_sex") or "").strip().lower()
+        if biological_sex in {"male", "female"}:
+            normalized["biological_sex"] = biological_sex
+
+        height_cm = profile.get("height_cm")
+        if isinstance(height_cm, (int, float)) and 100 <= float(height_cm) <= 250:
+            normalized["height_cm"] = round(float(height_cm), 1)
+
+        weight_kg = profile.get("weight_kg")
+        if isinstance(weight_kg, (int, float)) and 20 <= float(weight_kg) <= 350:
+            normalized["weight_kg"] = round(float(weight_kg), 1)
+
+        activity_level = str(profile.get("activity_level") or "").strip().lower()
+        if activity_level in ACTIVITY_LEVEL_FACTORS:
+            normalized["activity_level"] = activity_level
+
+        goal_intent = str(profile.get("goal_intent") or "").strip().lower()
+        if goal_intent in GOAL_INTENT_ADJUSTMENTS:
+            normalized["goal_intent"] = goal_intent
+
+        return normalized
+
+    @staticmethod
+    def _round_calorie_value(value: float) -> int:
+        return int(round(value / 10.0) * 10)
+
+    def _build_metabolic_estimate(self, profile: Optional[dict]) -> Optional[dict]:
+        normalized = self._normalize_metabolic_profile(profile)
+        required_keys = {
+            "age",
+            "biological_sex",
+            "height_cm",
+            "weight_kg",
+            "activity_level",
+            "goal_intent",
+        }
+        if not required_keys.issubset(normalized.keys()):
+            return None
+
+        weight_kg = float(normalized["weight_kg"])
+        height_cm = float(normalized["height_cm"])
+        age = int(normalized["age"])
+        sex_bias = 5 if normalized["biological_sex"] == "male" else -161
+        bmr_raw = 10 * weight_kg + 6.25 * height_cm - 5 * age + sex_bias
+        activity_factor = ACTIVITY_LEVEL_FACTORS[normalized["activity_level"]]
+        tdee_raw = bmr_raw * activity_factor
+        goal_adjustment = GOAL_INTENT_ADJUSTMENTS[normalized["goal_intent"]]
+        recommended_goal = max(1200, self._round_calorie_value(tdee_raw + goal_adjustment))
+
+        return {
+            "formula": "mifflin_st_jeor",
+            "bmr_kcal": self._round_calorie_value(bmr_raw),
+            "tdee_kcal": self._round_calorie_value(tdee_raw),
+            "activity_factor": activity_factor,
+            "goal_adjustment_kcal": goal_adjustment,
+            "recommended_calorie_goal": recommended_goal,
+            "goal_intent": normalized["goal_intent"],
+            "is_complete": True,
+        }
+
+    def _serialize_preference(self, pref: Optional[object]) -> Optional[dict]:
+        if not pref:
+            return None
+
+        payload = pref.to_dict()
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        metabolic_profile = self._normalize_metabolic_profile(
+            self._extract_metabolic_profile(stats)
+        )
+        payload["metabolic_profile"] = metabolic_profile or None
+        payload["metabolic_estimate"] = self._build_metabolic_estimate(metabolic_profile)
+        return payload
+
+    def _extract_metabolic_estimate_from_pref(self, pref: Optional[object]) -> Optional[dict]:
+        if not pref:
+            return None
+        stats = self._normalize_stats(getattr(pref, "stats", None))
+        metabolic_profile = self._normalize_metabolic_profile(
+            self._extract_metabolic_profile(stats)
+        )
+        return self._build_metabolic_estimate(metabolic_profile)
+
+    def _build_goal_context(
+        self,
+        pref: Optional[object],
+        target_date: date,
+        *,
+        today_adjustment: int = 0,
+        base_goal_override: Optional[int] = None,
+        effective_goal_override: Optional[int] = None,
+        goal_source_override: Optional[str] = None,
+        goal_seeded_override: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        base_goal, goal_source, goal_seeded = self._resolve_base_calorie_goal(pref)
+        if isinstance(base_goal_override, int):
+            base_goal = base_goal_override
+        if goal_source_override is not None:
+            goal_source = goal_source_override
+        if goal_seeded_override is not None:
+            goal_seeded = goal_seeded_override
+
+        effective_goal = effective_goal_override
+        if effective_goal is None and isinstance(base_goal, int):
+            effective_goal = base_goal + max(0, int(today_adjustment or 0))
+
+        estimate = self._extract_metabolic_estimate_from_pref(pref)
+        estimate_context = None
+        if isinstance(estimate, dict):
+            estimate_context = {
+                "source": "metabolic_profile",
+                "formula": estimate.get("formula"),
+                "bmr_kcal": estimate.get("bmr_kcal"),
+                "tdee_kcal": estimate.get("tdee_kcal"),
+                "recommended_calorie_goal": estimate.get("recommended_calorie_goal"),
+                "goal_intent": estimate.get("goal_intent"),
+                "activity_factor": estimate.get("activity_factor"),
+                "is_complete": bool(estimate.get("is_complete")),
+            }
+
+        return {
+            "date": target_date.isoformat(),
+            "base_goal": base_goal,
+            "effective_goal": effective_goal,
+            "goal_source": goal_source,
+            "goal_seeded": goal_seeded,
+            "estimate_context": estimate_context,
+            "uses_tdee_estimate": goal_source == "tdee_estimate",
+            "fallback_used": goal_source in {"avg7d", "default1800"},
+        }
+
+    async def get_goal_context(
+        self,
+        user_id: str,
+        target_date: Optional[date] = None,
+    ) -> dict[str, Any]:
+        actual_date = target_date or date.today()
+        pref = await self.repository.get_user_preference(user_id)
+        pref, base_goal, goal_source, goal_seeded = await self._ensure_base_calorie_goal(
+            user_id=user_id,
+            pref=pref,
+            target_date=actual_date,
+        )
+        if pref or isinstance(base_goal, int):
+            return self._build_goal_context(
+                pref,
+                actual_date,
+                base_goal_override=base_goal,
+                effective_goal_override=base_goal,
+                goal_source_override=goal_source,
+                goal_seeded_override=goal_seeded,
+            )
+        return {
+            "date": actual_date.isoformat(),
+            "base_goal": DEFAULT_AUTO_CALORIE_GOAL,
+            "effective_goal": DEFAULT_AUTO_CALORIE_GOAL,
+            "goal_source": "default1800",
+            "goal_seeded": True,
+            "estimate_context": None,
+            "uses_tdee_estimate": False,
+            "fallback_used": True,
+        }
+
     def _resolve_base_calorie_goal(
         self,
         pref: Optional[object],
@@ -1908,11 +2184,16 @@ class DietService:
         goal_value = goals.get("calorie_goal")
         if isinstance(goal_value, (int, float)):
             source = str(goals_meta.get(CALORIE_GOAL_SOURCE_KEY) or "").strip()
-            if source not in {"explicit", "avg7d", "default1800"}:
+            if source not in {"explicit", "avg7d", "default1800", "tdee_estimate"}:
                 source = "explicit"
             seeded_value = goals_meta.get(CALORIE_GOAL_SEEDED_KEY)
             seeded = bool(seeded_value) if seeded_value is not None else source != "explicit"
             return int(goal_value), source, seeded
+
+        estimate = self._extract_metabolic_estimate_from_pref(pref)
+        recommended_goal = estimate.get("recommended_calorie_goal") if isinstance(estimate, dict) else None
+        if isinstance(recommended_goal, int):
+            return int(recommended_goal), "tdee_estimate", False
 
         avg_min = getattr(pref, "avg_daily_calories_min", None)
         avg_max = getattr(pref, "avg_daily_calories_max", None)
@@ -2042,6 +2323,15 @@ class DietService:
         effective_goal = (
             base_goal + today_adjustment if isinstance(base_goal, int) else None
         )
+        goal_context = self._build_goal_context(
+            pref,
+            target_date,
+            today_adjustment=today_adjustment,
+            base_goal_override=base_goal,
+            effective_goal_override=effective_goal,
+            goal_source_override=goal_source,
+            goal_seeded_override=goal_seeded,
+        )
 
         return {
             "date": target_date.isoformat(),
@@ -2052,12 +2342,14 @@ class DietService:
             "adjustment_cap": TODAY_BUDGET_DAILY_CAP,
             "goal_source": goal_source,
             "goal_seeded": goal_seeded,
+            "goal_context": goal_context,
+            "estimate_context": goal_context.get("estimate_context"),
         }
 
     async def get_user_preference(self, user_id: str) -> Optional[dict]:
         """获取用户偏好"""
         pref = await self.repository.get_user_preference(user_id)
-        return pref.to_dict() if pref else None
+        return self._serialize_preference(pref)
 
     async def get_today_budget(
         self,
@@ -2075,6 +2367,16 @@ class DietService:
 
         if not pref:
             fallback_goal = DEFAULT_AUTO_CALORIE_GOAL
+            goal_context = {
+                "date": actual_date.isoformat(),
+                "base_goal": fallback_goal,
+                "effective_goal": fallback_goal,
+                "goal_source": "default1800",
+                "goal_seeded": True,
+                "estimate_context": None,
+                "uses_tdee_estimate": False,
+                "fallback_used": True,
+            }
             snapshot = {
                 "date": actual_date.isoformat(),
                 "base_goal": fallback_goal,
@@ -2084,6 +2386,8 @@ class DietService:
                 "adjustment_cap": TODAY_BUDGET_DAILY_CAP,
                 "goal_source": "default1800",
                 "goal_seeded": True,
+                "goal_context": goal_context,
+                "estimate_context": None,
             }
             snapshot["emotion_exemption"] = await self.get_emotion_exemption_status(
                 user_id=user_id,
@@ -2185,6 +2489,10 @@ class DietService:
         else:
             update_data.pop("disliked_foods", None)
 
+        use_estimated_calorie_goal = bool(
+            update_data.pop("use_estimated_calorie_goal", False)
+        )
+
         goal_updates = {}
         for key in GOAL_KEYS:
             if key in update_data:
@@ -2192,12 +2500,35 @@ class DietService:
                 if value is not None:
                     goal_updates[key] = value
 
+        metabolic_profile_updates = {}
+        for key in METABOLIC_PROFILE_KEYS:
+            if key in update_data:
+                value = update_data.pop(key)
+                if value is not None:
+                    metabolic_profile_updates[key] = value
+
         existing_pref = await self.repository.get_user_preference(user_id)
         stats_patch = update_data.pop("stats", None)
         merged_stats = self._merge_stats(
             getattr(existing_pref, "stats", None),
             stats_patch,
         )
+        existing_metabolic_profile = self._normalize_metabolic_profile(
+            self._extract_metabolic_profile(merged_stats)
+        )
+        if metabolic_profile_updates:
+            existing_metabolic_profile.update(
+                self._normalize_metabolic_profile(metabolic_profile_updates)
+            )
+            merged_stats[METABOLIC_PROFILE_STATS_KEY] = existing_metabolic_profile
+
+        estimated_calorie_goal: Optional[int] = None
+        if use_estimated_calorie_goal:
+            estimate = self._build_metabolic_estimate(existing_metabolic_profile)
+            if not estimate:
+                raise ValueError("代谢画像未填写完整，无法根据 BMR/TDEE 自动估算热量目标")
+            estimated_calorie_goal = int(estimate["recommended_calorie_goal"])
+
         if goal_updates:
             goals = self._extract_goals(merged_stats)
             goals.update(goal_updates)
@@ -2208,11 +2539,20 @@ class DietService:
                 goals_meta[CALORIE_GOAL_SEEDED_KEY] = False
                 goals_meta[CALORIE_GOAL_SEEDED_AT_KEY] = None
                 merged_stats[GOALS_META_STATS_KEY] = goals_meta
+        if estimated_calorie_goal is not None:
+            goals = self._extract_goals(merged_stats)
+            goals["calorie_goal"] = estimated_calorie_goal
+            merged_stats[GOALS_STATS_KEY] = goals
+            goals_meta = self._extract_goals_meta(merged_stats)
+            goals_meta[CALORIE_GOAL_SOURCE_KEY] = "tdee_estimate"
+            goals_meta[CALORIE_GOAL_SEEDED_KEY] = False
+            goals_meta[CALORIE_GOAL_SEEDED_AT_KEY] = None
+            merged_stats[GOALS_META_STATS_KEY] = goals_meta
         if merged_stats:
             update_data["stats"] = merged_stats
 
         pref = await self.repository.upsert_user_preference(user_id, **update_data)
-        return pref.to_dict()
+        return self._serialize_preference(pref) or {}
 
 
 # 单例

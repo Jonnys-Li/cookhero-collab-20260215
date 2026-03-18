@@ -139,9 +139,35 @@ export interface UserFoodPreference {
   avg_daily_calories_min?: number;
   avg_daily_calories_max?: number;
   deviation_patterns?: Array<{ meal_type: string; deviation_rate?: number }>;
+  calorie_goal?: number;
+  protein_goal?: number;
+  fat_goal?: number;
+  carbs_goal?: number;
+  metabolic_profile?: MetabolicProfile | null;
+  metabolic_estimate?: MetabolicEstimate | null;
   stats?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+export interface MetabolicProfile {
+  age?: number;
+  biological_sex?: 'male' | 'female';
+  height_cm?: number;
+  weight_kg?: number;
+  activity_level?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+  goal_intent?: 'fat_loss' | 'maintain' | 'muscle_gain';
+}
+
+export interface MetabolicEstimate {
+  formula: string;
+  bmr_kcal: number;
+  tdee_kcal: number;
+  activity_factor: number;
+  goal_adjustment_kcal: number;
+  recommended_calorie_goal: number;
+  goal_intent: 'fat_loss' | 'maintain' | 'muscle_gain';
+  is_complete: boolean;
 }
 
 export interface AddMealRequest {
@@ -223,6 +249,13 @@ export interface UpdatePreferenceRequest {
   protein_goal?: number;
   fat_goal?: number;
   carbs_goal?: number;
+  age?: number;
+  biological_sex?: 'male' | 'female';
+  height_cm?: number;
+  weight_kg?: number;
+  activity_level?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+  goal_intent?: 'fat_loss' | 'maintain' | 'muscle_gain';
+  use_estimated_calorie_goal?: boolean;
 }
 
 export interface DietBudgetSnapshot {

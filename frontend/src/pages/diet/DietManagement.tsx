@@ -39,6 +39,7 @@ import {
   deleteLog,
   getWeeklySummary,
   getDietBudget,
+  getPreferences,
   getShoppingList,
 } from '../../services/api/diet';
 import { trackEvent } from '../../services/api/events';
@@ -46,6 +47,7 @@ import { WeeklyDeviationCorrectionCard } from '../../components/diet/WeeklyDevia
 import { WeeklyShareToCommunityCard } from '../../components/diet/WeeklyShareToCommunityCard';
 import { PhotoLogModal } from '../../components/diet/PhotoLogModal';
 import { ShoppingListPanel } from '../../components/diet/ShoppingListPanel';
+import { CalorieGoalSourceCard } from '../../components/diet/CalorieGoalSourceCard';
 import type {
   Dish,
   DietPlan,
@@ -56,6 +58,7 @@ import type {
   DietBudgetSnapshot,
   EmotionExemptionStatus,
   ShoppingListResponse,
+  UserFoodPreference,
 } from '../../types';
 
 // Meal type icons
@@ -1188,6 +1191,7 @@ export default function DietManagementPage() {
   const [weeklySummary, setWeeklySummary] = useState<WeeklySummary | null>(null);
   const [dailySummaries, setDailySummaries] = useState<Record<string, DailySummary>>({});
   const [budgetSnapshot, setBudgetSnapshot] = useState<DietBudgetSnapshot | null>(null);
+  const [preference, setPreference] = useState<UserFoodPreference | null>(null);
   const [shoppingList, setShoppingList] = useState<ShoppingListResponse | null>(null);
   const [budgetLoading, setBudgetLoading] = useState(false);
   const [budgetError, setBudgetError] = useState<string | null>(null);
@@ -1305,6 +1309,13 @@ export default function DietManagementPage() {
         setShoppingList(shoppingListData);
       } catch {
         setShoppingList(null);
+      }
+
+      try {
+        const preferenceData = await getPreferences(token);
+        setPreference(preferenceData.preference);
+      } catch {
+        setPreference(null);
       }
 
     } catch (err) {
@@ -1671,6 +1682,14 @@ export default function DietManagementPage() {
           isLoading={isLoading}
         />
 
+        {token && (
+          <CalorieGoalSourceCard
+            budgetSnapshot={budgetSnapshot}
+            preference={preference}
+            title="当前预算与目标来源"
+          />
+        )}
+
         {/* Deviation -> Correction (default entry) */}
         {token && !emotionExemptionActive && (
           <WeeklyDeviationCorrectionCard
@@ -1781,6 +1800,7 @@ export default function DietManagementPage() {
               const goalSourceText = (() => {
                 const source = budgetSnapshot?.goal_source;
                 if (source === 'explicit') return '用户目标';
+                if (source === 'tdee_estimate') return 'TDEE 估算';
                 if (source === 'avg7d') return '近7天均值';
                 if (source === 'default1800') return '系统默认 1800';
                 return source ? String(source) : '未标注';
@@ -1818,6 +1838,13 @@ export default function DietManagementPage() {
                           {budgetSnapshot?.goal_seeded ? '，系统兜底' : ''}）
                         </span>
                       </div>
+                      {preference?.metabolic_estimate?.is_complete ? (
+                        <div className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
+                          代谢估算参考 {preference.metabolic_estimate.recommended_calorie_goal} kcal
+                          · BMR {preference.metabolic_estimate.bmr_kcal}
+                          · TDEE {preference.metabolic_estimate.tdee_kcal}
+                        </div>
+                      ) : null}
                       <div className={`mt-2 text-xs ${remainingClass}`}>{remainingLine}</div>
                       {emotionExemptionActive && dateStr === activeDayDateStr && (
                         <div className="mt-3 rounded-xl border border-amber-200/70 bg-amber-50/80 px-3 py-2 text-xs text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200">

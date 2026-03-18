@@ -1750,6 +1750,10 @@ async def apply_smart_action(
                 profile=profile,
             )
             preview = _build_week_plan_preview(profile)
+            try:
+                goal_context = await diet_service.get_goal_context(user_id=str(user_id))
+            except Exception:
+                goal_context = None
             llm_supplement = await _try_generate_plan_llm_supplement(profile)
             used_provider = "template+llm" if llm_supplement else "template"
             preview_action = {
@@ -1764,6 +1768,7 @@ async def apply_smart_action(
                 "planned_meals": preview["planned_meals"],
                 "relax_suggestions": preview["relax_suggestions"],
                 "training_plan": preview["training_plan"],
+                "goal_context": goal_context,
                 "llm_supplement": llm_supplement,
                 "source": "planmode_pipeline",
                 "session_id": payload.session_id,
@@ -1778,6 +1783,7 @@ async def apply_smart_action(
                 "result": {
                     "profile_saved": True,
                     "preference": preference,
+                    "goal_context": goal_context,
                     "preview_action": preview_action,
                     "week_start_date": preview["week_start_date"],
                 },

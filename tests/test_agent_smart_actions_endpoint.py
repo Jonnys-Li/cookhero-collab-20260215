@@ -196,6 +196,23 @@ def test_apply_smart_action_submit_plan_profile(monkeypatch, run, build_request)
         assert profile.get("goal") == "fat_loss"
         return {"id": "pref-1"}
 
+    async def fake_goal_context(*, user_id: str, target_date=None):
+        assert user_id == "u1"
+        return {
+            "date": "2026-03-02",
+            "base_goal": 2310,
+            "effective_goal": 2310,
+            "goal_source": "tdee_estimate",
+            "goal_seeded": False,
+            "estimate_context": {
+                "source": "metabolic_profile",
+                "tdee_kcal": 2760,
+                "recommended_calorie_goal": 2310,
+            },
+            "uses_tdee_estimate": True,
+            "fallback_used": False,
+        }
+
     def fake_build_preview(profile: dict):
         assert profile.get("weekly_intensity") == "balanced"
         return {
@@ -227,6 +244,11 @@ def test_apply_smart_action_submit_plan_profile(monkeypatch, run, build_request)
         agent_endpoint,
         "_persist_planmode_profile",
         fake_persist_profile,
+    )
+    monkeypatch.setattr(
+        agent_endpoint.diet_service,
+        "get_goal_context",
+        fake_goal_context,
     )
     monkeypatch.setattr(
         agent_endpoint,
@@ -265,6 +287,8 @@ def test_apply_smart_action_submit_plan_profile(monkeypatch, run, build_request)
     assert response.applied is False
     assert response.used_provider == "template+llm"
     assert response.result["preview_action"]["action_type"] == "meal_plan_preview_card"
+    assert response.result["goal_context"]["goal_source"] == "tdee_estimate"
+    assert response.result["preview_action"]["goal_context"]["estimate_context"]["tdee_kcal"] == 2760
     assert saved_messages and saved_messages[0][1] == "assistant"
 
 
