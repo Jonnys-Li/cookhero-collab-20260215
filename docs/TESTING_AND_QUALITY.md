@@ -131,11 +131,13 @@ Notes:
 
 - If `SMOKE_USERNAME` / `SMOKE_PASSWORD` are missing, smoke now auto-registers a
   temporary user and still runs authenticated checks.
+- Production workflow now runs in strict mode (`SMOKE_STRICT=true`) on `main`.
 - Smoke includes route guards for diet weekly-replan/trend endpoints:
   `/diet/replan/preview`, `/diet/replan/apply`, `/diet/summary/weekly`,
   `/diet/analysis/three-lines`, `/diet/shopping-list`.
-- In demo mode (`SMOKE_STRICT=false`) these mismatches are warnings; in strict
-  mode they fail fast.
+- Smoke first checks `BACKEND_URL/openapi.json` and waits for required route
+  manifest readiness before running authenticated proxy checks, so we can
+  distinguish backend deploy skew from frontend proxy skew.
 
 ## Performance (k6)
 
