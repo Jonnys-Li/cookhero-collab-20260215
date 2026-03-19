@@ -30,6 +30,69 @@ import type { ImageData } from '../../types/api';
 
 const DIET_BASE = '/diet';
 
+function formatLocalDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function addDays(date: Date, days: number): Date {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function resolveWeekStartDate(weekStartDate?: string): string {
+  if (weekStartDate) return weekStartDate;
+  const today = new Date();
+  const diff = (today.getDay() + 6) % 7;
+  return formatLocalDate(addDays(today, -diff));
+}
+
+function buildEmptyReplanPreview(weekStartDate?: string): DietReplanPreview {
+  const start = resolveWeekStartDate(weekStartDate);
+  return {
+    week_start_date: start,
+    affected_days: [],
+    before_summary: {
+      fallback_mode: 'legacy_backend',
+      fallback_message: '当前线上后端还没补齐新版自动调整接口，本周先保持现有计划不变。',
+    },
+    after_summary: {
+      applied_shift: 0,
+    },
+    meal_changes: [],
+    write_conflicts: [],
+    compensation_summary: null,
+    compensation_suggestions: [],
+  };
+}
+
+function buildEmptyShoppingList(weekStartDate?: string): ShoppingListResponse {
+  const start = resolveWeekStartDate(weekStartDate);
+  return {
+    week_start_date: start,
+    week_end_date: formatLocalDate(addDays(new Date(`${start}T00:00:00`), 6)),
+    aggregation_basis: 'legacy_backend_unavailable',
+    item_count: 0,
+    items: [],
+    matched_items: [],
+    unmatched_dishes: [],
+    grouped_ingredients: [],
+  };
+}
+
+function isMissingEndpointError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return (
+    message.includes('404') ||
+    normalized.includes('not found') ||
+    message.includes('接口不存在')
+  );
+}
+
 // ==================== Plan APIs ====================
 
 /**
@@ -274,11 +337,17 @@ export async function getReplanPreview(
   try {
     return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     // Deployment skew guard: if the fallback base is stale (missing the endpoint),
     // retry via the primary base once before surfacing the error.
-    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
-      return apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: false });
+    if (isMissingEndpointError(err)) {
+      try {
+        return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: false });
+      } catch (retryErr) {
+        if (isMissingEndpointError(retryErr)) {
+          return buildEmptyReplanPreview(weekStartDate);
+        }
+        throw retryErr;
+      }
     }
     throw err;
   }
@@ -296,14 +365,20 @@ export async function applyReplan(
       { preferFallback: true },
     );
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
-      return apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
-        `${DIET_BASE}/replan/apply`,
-        { meal_changes: mealChanges },
-        token,
-        { preferFallback: false },
-      );
+    if (isMissingEndpointError(err)) {
+      try {
+        return await apiPost<DietReplanApplyResponse, { meal_changes: DietReplanPreview['meal_changes'] }>(
+          `${DIET_BASE}/replan/apply`,
+          { meal_changes: mealChanges },
+          token,
+          { preferFallback: false },
+        );
+      } catch (retryErr) {
+        if (isMissingEndpointError(retryErr)) {
+          throw new Error('当前线上版本还没开放自动改后面几天计划的功能，先按现有计划执行就好。');
+        }
+        throw retryErr;
+      }
     }
     throw err;
   }
@@ -317,9 +392,15 @@ export async function getShoppingList(
   try {
     return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes('404') || msg.toLowerCase().includes('not found') || msg.includes('接口不存在')) {
-      return apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: false });
+    if (isMissingEndpointError(err)) {
+      try {
+        return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: false });
+      } catch (retryErr) {
+        if (isMissingEndpointError(retryErr)) {
+          return buildEmptyShoppingList(weekStartDate);
+        }
+        throw retryErr;
+      }
     }
     throw err;
   }

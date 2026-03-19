@@ -139,4 +139,37 @@ describe('WeeklyDeviationCorrectionCard', () => {
     });
     expect(screen.getByText('当前没有可安全调整的未来餐次。')).toBeInTheDocument();
   });
+
+  it('shows compatibility copy when backend has not deployed the new endpoint yet', async () => {
+    vi.mocked(dietApi.getReplanPreview).mockResolvedValue({
+      week_start_date: '2026-03-16',
+      affected_days: [],
+      before_summary: {
+        fallback_mode: 'legacy_backend',
+        fallback_message: '当前线上后端还没补齐新版自动调整接口，本周先保持现有计划不变。',
+      },
+      after_summary: {
+        applied_shift: 0,
+      },
+      meal_changes: [],
+      write_conflicts: [],
+      compensation_suggestions: [],
+    });
+
+    render(
+      <WeeklyDeviationCorrectionCard
+        token="t1"
+        weekStartDate="2026-03-16"
+        weeklySummary={weeklySummary}
+        planMeals={[]}
+      />
+    );
+
+    expect(
+      await screen.findByText('当前线上后端还没补齐新版自动调整接口，本周先保持现有计划不变。')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('当前线上版本先按现有计划执行，等后端补齐后这里会恢复自动调整。')
+    ).toBeInTheDocument();
+  });
 });

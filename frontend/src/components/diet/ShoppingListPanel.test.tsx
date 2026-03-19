@@ -48,4 +48,25 @@ describe('ShoppingListPanel', () => {
       screen.getByText('本周还没有可汇总的计划菜品。先把餐次排进去，这里会自动生成采购清单。')
     ).toBeInTheDocument();
   });
+
+  it('shows compatibility fallback copy when backend route is not online yet', () => {
+    render(
+      <ShoppingListPanel
+        shoppingList={{
+          week_start_date: '2026-03-16',
+          week_end_date: '2026-03-22',
+          aggregation_basis: 'legacy_backend_unavailable',
+          item_count: 0,
+          items: [],
+          matched_items: [],
+          unmatched_dishes: [],
+          grouped_ingredients: [],
+        }}
+      />
+    );
+
+    expect(
+      screen.getByText('采购清单功能正在补齐线上接口，这周先照着现有餐次准备食材。')
+    ).toBeInTheDocument();
+  });
 });

@@ -12,6 +12,7 @@ export function ShoppingListPanel({
   const checkedSet = useMemo(() => new Set(checkedKeys), [checkedKeys]);
   const groupedIngredients = shoppingList?.grouped_ingredients || [];
   const unmatchedDishes = shoppingList?.unmatched_dishes || [];
+  const usingCompatibilityFallback = shoppingList?.aggregation_basis === 'legacy_backend_unavailable';
 
   const toggleItem = (key: string) => {
     setCheckedKeys((prev) =>
@@ -44,7 +45,9 @@ export function ShoppingListPanel({
 
       {groupedIngredients.length === 0 ? (
         <div className="mt-4 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/30 px-4 py-6 text-sm text-gray-500 dark:text-gray-400">
-          本周还没有可汇总的计划菜品。先把餐次排进去，这里会自动生成采购清单。
+          {usingCompatibilityFallback
+            ? '采购清单功能正在补齐线上接口，这周先照着现有餐次准备食材。'
+            : '本周还没有可汇总的计划菜品。先把餐次排进去，这里会自动生成采购清单。'}
         </div>
       ) : (
         <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">

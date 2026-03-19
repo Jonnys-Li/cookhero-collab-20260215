@@ -15,6 +15,12 @@ const MEAL_LABELS: Record<string, string> = {
 function buildSummary(preview: DietReplanPreview | null, weeklySummary: WeeklySummary | null): string {
   if (!preview) return '正在生成未来 3-5 天的调整预览。';
 
+  const fallbackMode = preview.before_summary?.fallback_mode;
+  const fallbackMessage = preview.before_summary?.fallback_message;
+  if (fallbackMode === 'legacy_backend' && typeof fallbackMessage === 'string' && fallbackMessage.trim()) {
+    return fallbackMessage;
+  }
+
   const deviation = Number(preview.before_summary?.total_deviation ?? 0);
   const affectedDays = preview.affected_days.length;
   const mealCount = preview.meal_changes.length;
@@ -193,7 +199,9 @@ export function WeeklyDeviationCorrectionCard({
                 ))
               ) : (
                 <div className="text-[12px] text-gray-500 dark:text-gray-400">
-                  当前没有可安全调整的未来餐次。
+                  {preview?.before_summary?.fallback_mode === 'legacy_backend'
+                    ? '当前线上版本先按现有计划执行，等后端补齐后这里会恢复自动调整。'
+                    : '当前没有可安全调整的未来餐次。'}
                 </div>
               )}
             </div>
