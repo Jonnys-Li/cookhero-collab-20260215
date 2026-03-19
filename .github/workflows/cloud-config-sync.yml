@@ -28,6 +28,7 @@ jobs:
           MCP_DIET_SERVICE_KEY: ${{ secrets.MCP_DIET_SERVICE_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           RENDER_SERVICE_NAME: ${{ secrets.RENDER_SERVICE_NAME }}
+          PROD_BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
         run: |
           if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "should_sync=false" >> "$GITHUB_OUTPUT"
@@ -39,8 +40,8 @@ jobs:
           missing=()
           [[ -z "${RENDER_API_KEY}" ]] && missing+=("RENDER_API_KEY")
           [[ -z "${MCP_DIET_SERVICE_KEY}" ]] && missing+=("MCP_DIET_SERVICE_KEY")
-          if [[ -z "${RENDER_SERVICE_ID}" && -z "${RENDER_SERVICE_NAME}" ]]; then
-            missing+=("RENDER_SERVICE_ID|RENDER_SERVICE_NAME")
+          if [[ -z "${RENDER_SERVICE_ID}" && -z "${RENDER_SERVICE_NAME}" && -z "${PROD_BACKEND_URL}" ]]; then
+            missing+=("RENDER_SERVICE_ID|RENDER_SERVICE_NAME|PROD_BACKEND_URL")
           fi
 
           if (( ${#missing[@]} > 0 )); then
@@ -57,7 +58,7 @@ jobs:
 
   sync-render-mcp-key:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: [plan]
     if: ${{ needs.plan.outputs.should_sync == 'true' }}
     steps:
@@ -71,9 +72,10 @@ jobs:
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
-          RENDER_SERVICE_NAME: ${{ secrets.RENDER_SERVICE_NAME }}
+          RENDER_SERVICE_NAME: ${{ secrets.RENDER_SERVICE_NAME || 'cookhero-backend' }}
           MCP_DIET_SERVICE_KEY: ${{ secrets.MCP_DIET_SERVICE_KEY }}
           BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
+          VERIFY_OPENAPI_PATHS: /api/v1/diet/replan/preview|/api/v1/diet/replan/apply|/api/v1/diet/summary/weekly|/api/v1/diet/analysis/three-lines|/api/v1/diet/shopping-list|/api/v1/diet/budget
         run: ./scripts/sync-render-env.sh --trigger-deploy --wait-seconds 720 --poll-interval-seconds 10
 
   skipped-cloud-sync:
@@ -91,7 +93,7 @@ jobs:
           if [[ "${{ needs.plan.outputs.skip_reason }}" == "missing_secrets" ]]; then
             echo "::warning::Cloud config sync skipped because required secrets are missing."
             echo "::warning::Missing: ${{ needs.plan.outputs.missing }}"
-            echo "::warning::Required: RENDER_API_KEY, MCP_DIET_SERVICE_KEY, and one of RENDER_SERVICE_ID or RENDER_SERVICE_NAME."
+            echo "::warning::Required: RENDER_API_KEY, MCP_DIET_SERVICE_KEY, and one of RENDER_SERVICE_ID / RENDER_SERVICE_NAME / PROD_BACKEND_URL."
             exit 0
           fi
 
