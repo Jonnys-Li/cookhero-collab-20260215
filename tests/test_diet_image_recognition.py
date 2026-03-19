@@ -35,11 +35,23 @@ def test_recognize_image_success(monkeypatch, run):
                     "protein": 24.0,
                     "fat": 18.0,
                     "carbs": 10.0,
+                    "confidence_score": 0.48,
+                    "candidates": [
+                        {"food_name": "红烧排骨", "confidence_score": 0.22}
+                    ],
+                    "low_confidence_candidates": [
+                        {"name": "红烧排骨", "confidence_score": 0.22}
+                    ],
                 },
                 {"name": "白米饭", "calories": 230},
             ],
             "message": "识别完成",
             "source": "ai_image",
+            "confidence": 0.48,
+            "needs_confirmation": True,
+            "candidates": [
+                {"food_name": "红烧排骨", "confidence_score": 0.22}
+            ],
         }
 
     monkeypatch.setattr(diet_api.diet_service, "recognize_meal_from_images", fake_recognize)
@@ -55,7 +67,13 @@ def test_recognize_image_success(monkeypatch, run):
     assert len(response.dishes) == 2
     assert response.dishes[0].name == "红烧牛肉"
     assert response.dishes[0].calories == 320
+    assert response.dishes[0].confidence_score == 0.48
+    assert response.dishes[0].candidates[0].name == "红烧排骨"
+    assert response.dishes[0].low_confidence_candidates[0].food_name == "红烧排骨"
     assert response.dishes[1].name == "白米饭"
+    assert response.confidence == 0.48
+    assert response.needs_confirmation is True
+    assert response.candidates[0].name == "红烧排骨"
 
 
 def test_recognize_image_returns_empty_dishes(monkeypatch, run):

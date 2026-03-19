@@ -231,6 +231,9 @@ export type ParseDietLogResponse = {
   items: ParsedDietItem[];
   meal_type?: string;
   used_vision?: boolean;
+  confidence?: number | null;
+  needs_confirmation?: boolean;
+  candidates?: ParsedDietItem['candidates'];
 };
 
 /**

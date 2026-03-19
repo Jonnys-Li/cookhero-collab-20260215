@@ -12,6 +12,9 @@ export interface Dish {
   protein?: number;
   fat?: number;
   carbs?: number;
+  confidence_score?: number;
+  candidates?: ParsedDietCandidate[];
+  low_confidence_candidates?: ParsedDietCandidate[];
   nutrition_source?: string;
   nutrition_confidence?: number;
 }

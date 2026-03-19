@@ -32,9 +32,23 @@ def test_parse_diet_logs_happy_path(monkeypatch, run, build_request):
                     "protein": 25.0,
                     "fat": 18.0,
                     "carbs": 85.0,
+                    "candidates": [
+                        {
+                            "food_name": "炸酱面",
+                            "confidence_score": 0.31,
+                        }
+                    ],
                 }
             ],
             "used_vision": False,
+            "confidence": 0.52,
+            "needs_confirmation": True,
+            "candidates": [
+                {
+                    "food_name": "牛杂面",
+                    "confidence_score": 0.22,
+                }
+            ],
         }
 
     monkeypatch.setattr(diet_service, "_parse_diet_input_with_ai", _fake_parse)
@@ -53,4 +67,10 @@ def test_parse_diet_logs_happy_path(monkeypatch, run, build_request):
     assert len(resp.items) == 1
     assert resp.items[0].food_name == "牛肉面"
     assert resp.items[0].source == "ai_text"
-
+    assert resp.items[0].candidates[0].name == "炸酱面"
+    assert resp.items[0].candidates[0].food_name == "炸酱面"
+    assert resp.items[0].low_confidence_candidates[0].name == "炸酱面"
+    assert resp.confidence == 0.52
+    assert resp.needs_confirmation is True
+    assert resp.candidates[0].name == "牛杂面"
+    assert resp.candidates[0].food_name == "牛杂面"

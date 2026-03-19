@@ -14,7 +14,7 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.diet.service import diet_service
 from app.diet.database.models import MealType, DayOfWeek, DataSource
@@ -43,6 +43,27 @@ class DishSchema(BaseModel):
     low_confidence_candidates: List["LowConfidenceCandidateSchema"] = Field(
         default_factory=list,
         description="低置信候选，用于前端二次确认",
+    )
+
+
+class RecognizedDishSchema(BaseModel):
+    """Schema for recognized dishes returned by image parsing."""
+
+    name: str = Field(..., description="菜品名称")
+    weight_g: Optional[float] = Field(None, description="重量(克)")
+    unit: Optional[str] = Field(None, description="单位（份/个/碗等）")
+    calories: Optional[int] = Field(None, description="卡路里")
+    protein: Optional[float] = Field(None, description="蛋白质(克)")
+    fat: Optional[float] = Field(None, description="脂肪(克)")
+    carbs: Optional[float] = Field(None, description="碳水化合物(克)")
+    confidence_score: Optional[float] = Field(None, description="识别置信度")
+    candidates: List["LowConfidenceCandidateSchema"] = Field(
+        default_factory=list,
+        description="低置信候选，用于前端二次确认",
+    )
+    low_confidence_candidates: List["LowConfidenceCandidateSchema"] = Field(
+        default_factory=list,
+        description="兼容旧字段：低置信候选，用于前端二次确认",
     )
 
 
@@ -155,13 +176,14 @@ class ParsedDietItemSchema(BaseModel):
     carbs: Optional[float] = None
     confidence_score: Optional[float] = None
     source: Optional[str] = None
+    candidates: List["LowConfidenceCandidateSchema"] = Field(default_factory=list)
     low_confidence_candidates: List["LowConfidenceCandidateSchema"] = Field(
         default_factory=list
     )
 
 
 class LowConfidenceCandidateSchema(BaseModel):
-    name: str
+    name: Optional[str] = None
     food_name: Optional[str] = None
     weight_g: Optional[float] = None
     unit: Optional[str] = None
@@ -171,6 +193,31 @@ class LowConfidenceCandidateSchema(BaseModel):
     carbs: Optional[float] = None
     source: Optional[str] = None
     confidence_score: Optional[float] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_name_fields(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                raise ValueError("候选名称不能为空")
+            return {"name": text, "food_name": text}
+
+        if not isinstance(value, dict):
+            raise ValueError("候选必须为对象或字符串")
+
+        normalized = dict(value)
+        candidate_name = str(
+            normalized.get("name")
+            or normalized.get("food_name")
+            or normalized.get("dish_name")
+            or ""
+        ).strip()
+        if not candidate_name:
+            raise ValueError("候选名称不能为空")
+        normalized["name"] = candidate_name
+        normalized["food_name"] = candidate_name
+        return normalized
 
 
 class ParseDietInputResponse(BaseModel):
@@ -197,7 +244,7 @@ class RecognizeMealFromImageRequest(BaseModel):
 class RecognizeMealFromImageResponse(BaseModel):
     """Response for meal recognition without side effects."""
 
-    dishes: List[DishSchema] = Field(default_factory=list)
+    dishes: List[RecognizedDishSchema] = Field(default_factory=list)
     message: str
     source: str = DataSource.AI_IMAGE.value
     confidence: Optional[float] = None
@@ -439,6 +486,19 @@ def get_user_id(request: Request) -> str:
     if not user_id:
         raise HTTPException(status_code=401, detail="需要登录")
     return str(user_id)
+
+
+def _candidate_schemas(raw_candidates: Any) -> List[LowConfidenceCandidateSchema]:
+    if not isinstance(raw_candidates, list):
+        return []
+
+    schemas: List[LowConfidenceCandidateSchema] = []
+    for candidate in raw_candidates:
+        try:
+            schemas.append(LowConfidenceCandidateSchema.model_validate(candidate))
+        except Exception:
+            continue
+    return schemas
 
 
 def _infer_default_next_meal(target_date: date) -> tuple[date, str]:
@@ -772,6 +832,9 @@ async def parse_diet_log_input(
         food_name = str(raw.get("food_name") or "").strip()
         if not food_name:
             continue
+        candidate_schemas = _candidate_schemas(
+            raw.get("candidates") or raw.get("low_confidence_candidates")
+        )
         out_items.append(
             ParsedDietItemSchema(
                 food_name=food_name,
@@ -783,11 +846,8 @@ async def parse_diet_log_input(
                 carbs=raw.get("carbs"),
                 confidence_score=raw.get("confidence_score"),
                 source=str(raw.get("source") or source),
-                low_confidence_candidates=[
-                    LowConfidenceCandidateSchema(**candidate)
-                    for candidate in (raw.get("low_confidence_candidates") or [])
-                    if isinstance(candidate, dict) and candidate.get("name")
-                ],
+                candidates=candidate_schemas,
+                low_confidence_candidates=candidate_schemas,
             )
         )
 
@@ -803,11 +863,7 @@ async def parse_diet_log_input(
         message=message,
         confidence=parsed.get("confidence") if isinstance(parsed, dict) else None,
         needs_confirmation=bool(parsed.get("needs_confirmation")) if isinstance(parsed, dict) else False,
-        candidates=[
-            LowConfidenceCandidateSchema(**candidate)
-            for candidate in response_candidates
-            if isinstance(candidate, dict) and candidate.get("name")
-        ],
+        candidates=_candidate_schemas(response_candidates),
     )
 
 

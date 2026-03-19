@@ -2019,6 +2019,11 @@ class DietService:
             "items": self._normalize_parsed_items(items),
             "used_vision": bool(parsed.get("used_vision")),
             "message": parsed.get("message"),
+            "confidence": parsed.get("confidence"),
+            "needs_confirmation": bool(parsed.get("needs_confirmation")),
+            "candidates": self._normalize_low_confidence_candidates(
+                parsed.get("candidates")
+            ),
         }
 
     async def parse_diet_input_without_side_effects(
