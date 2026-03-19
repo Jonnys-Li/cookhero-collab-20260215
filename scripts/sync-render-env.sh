@@ -100,6 +100,15 @@ service_branch_from_json() {
   '
 }
 
+service_owner_id_from_json() {
+  echo "$1" | jq -r '
+    .ownerId //
+    .owner.id //
+    .serviceDetails.ownerId //
+    empty
+  '
+}
+
 render_request() {
   local method="$1"
   local url="$2"
@@ -347,6 +356,7 @@ wait_for_render_deploy() {
         ;;
       failed|build_failed|update_failed|errored|error|canceled|cancelled)
         log_error "Deploy ${RENDER_DEPLOY_ID} failed. status=${status} commit=${commit_id:-unknown}"
+        dump_recent_build_logs
         echo "${RENDER_RESPONSE_BODY}" >&2
         exit 1
         ;;
@@ -356,6 +366,50 @@ wait_for_render_deploy() {
         ;;
     esac
   done
+}
+
+dump_recent_build_logs() {
+  local owner_id
+  local start_time
+  local end_time
+  local tmp_body
+  local status_code
+
+  owner_id="$(service_owner_id_from_json "${RENDER_SERVICE_DETAILS}")"
+  if [[ -z "${owner_id}" ]]; then
+    log_error "Cannot fetch Render build logs because ownerId is missing from service details."
+    return 0
+  fi
+
+  start_time="$(date -u -d '30 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')"
+  end_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  tmp_body="$(mktemp)"
+
+  status_code="$(
+    curl -sS -G \
+      -o "${tmp_body}" \
+      -w "%{http_code}" \
+      "${RENDER_API_BASE}/logs" \
+      -H "Authorization: Bearer ${RENDER_API_KEY}" \
+      --data-urlencode "ownerId=${owner_id}" \
+      --data-urlencode "resource=${RENDER_SERVICE_ID}" \
+      --data-urlencode "type=build" \
+      --data-urlencode "startTime=${start_time}" \
+      --data-urlencode "endTime=${end_time}" \
+      --data-urlencode "direction=backward" \
+      --data-urlencode "limit=100" || true
+  )"
+
+  if [[ "${status_code}" != "200" ]]; then
+    log_error "Render build log query failed, status=${status_code}"
+    cat "${tmp_body}" >&2 || true
+    rm -f "${tmp_body}"
+    return 0
+  fi
+
+  log_info "Recent Render build logs:"
+  jq -r '.logs[]? | "[\(.timestamp)] \(.message)"' "${tmp_body}" || true
+  rm -f "${tmp_body}"
 }
 
 openapi_missing_paths() {
