@@ -356,6 +356,7 @@ wait_for_render_deploy() {
         ;;
       failed|build_failed|update_failed|errored|error|canceled|cancelled)
         log_error "Deploy ${RENDER_DEPLOY_ID} failed. status=${status} commit=${commit_id:-unknown}"
+        dump_recent_service_events
         dump_recent_build_logs
         echo "${RENDER_RESPONSE_BODY}" >&2
         exit 1
@@ -366,6 +367,39 @@ wait_for_render_deploy() {
         ;;
     esac
   done
+}
+
+dump_recent_service_events() {
+  local tmp_body
+  local status_code
+  local start_time
+  local end_time
+
+  start_time="$(date -u -d '30 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')"
+  end_time="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+  tmp_body="$(mktemp)"
+
+  status_code="$(
+    curl -sS -G \
+      -o "${tmp_body}" \
+      -w "%{http_code}" \
+      "${RENDER_API_BASE}/services/${RENDER_SERVICE_ID}/events" \
+      -H "Authorization: Bearer ${RENDER_API_KEY}" \
+      --data-urlencode "startTime=${start_time}" \
+      --data-urlencode "endTime=${end_time}" \
+      --data-urlencode "limit=20" || true
+  )"
+
+  if [[ "${status_code}" != "200" ]]; then
+    log_error "Render service event query failed, status=${status_code}"
+    cat "${tmp_body}" >&2 || true
+    rm -f "${tmp_body}"
+    return 0
+  fi
+
+  log_info "Recent Render service events:"
+  jq -c '.[]?.event | {timestamp, type, details}' "${tmp_body}" || true
+  rm -f "${tmp_body}"
 }
 
 dump_recent_build_logs() {
