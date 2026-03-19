@@ -332,16 +332,16 @@ export async function getReplanPreview(
   weekStartDate?: string
 ): Promise<DietReplanPreview> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
-  // Prefer Render direct for newly-added endpoints because some Vercel rewrite setups
-  // may not proxy them immediately and return 404.
+  // Prefer the primary base first because production currently shims these routes
+  // on the frontend while Render may still lag behind the latest backend version.
   try {
-    return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: true });
+    return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: false });
   } catch (err) {
-    // Deployment skew guard: if the fallback base is stale (missing the endpoint),
-    // retry via the primary base once before surfacing the error.
+    // Deployment skew guard: if the primary base does not expose the shim/route,
+    // retry via the fallback base once before surfacing the error.
     if (isMissingEndpointError(err)) {
       try {
-        return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: false });
+        return await apiGet(`${DIET_BASE}/replan/preview${query}`, token, { preferFallback: true });
       } catch (retryErr) {
         if (isMissingEndpointError(retryErr)) {
           return buildEmptyReplanPreview(weekStartDate);
@@ -362,7 +362,7 @@ export async function applyReplan(
       `${DIET_BASE}/replan/apply`,
       { meal_changes: mealChanges },
       token,
-      { preferFallback: true },
+      { preferFallback: false },
     );
   } catch (err) {
     if (isMissingEndpointError(err)) {
@@ -371,7 +371,7 @@ export async function applyReplan(
           `${DIET_BASE}/replan/apply`,
           { meal_changes: mealChanges },
           token,
-          { preferFallback: false },
+          { preferFallback: true },
         );
       } catch (retryErr) {
         if (isMissingEndpointError(retryErr)) {
@@ -390,11 +390,11 @@ export async function getShoppingList(
 ): Promise<ShoppingListResponse> {
   const query = weekStartDate ? `?week_start_date=${weekStartDate}` : '';
   try {
-    return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: true });
+    return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: false });
   } catch (err) {
     if (isMissingEndpointError(err)) {
       try {
-        return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: false });
+        return await apiGet(`${DIET_BASE}/shopping-list${query}`, token, { preferFallback: true });
       } catch (retryErr) {
         if (isMissingEndpointError(retryErr)) {
           return buildEmptyShoppingList(weekStartDate);

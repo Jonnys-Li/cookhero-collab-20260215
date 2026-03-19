@@ -256,6 +256,29 @@ export async function parseErrorResponse(response: Response): Promise<string> {
   }
 }
 
+async function parseSuccessResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204 || response.status === 205) {
+    return undefined as T;
+  }
+
+  const contentLength = response.headers.get('content-length');
+  if (contentLength === '0') {
+    return undefined as T;
+  }
+
+  const text = await response.text();
+  if (!text.trim()) {
+    return undefined as T;
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('json')) {
+    return JSON.parse(text) as T;
+  }
+
+  return text as T;
+}
+
 /**
  * Convert error messages to user-friendly format
  */
@@ -288,7 +311,7 @@ export async function apiGet<T>(
     throw new Error(msg || `HTTP error! status: ${response.status}`);
   }
 
-  return response.json();
+  return parseSuccessResponse<T>(response);
 }
 
 /**
@@ -315,7 +338,7 @@ export async function apiPost<T, D = unknown>(
     throw new Error(msg || `HTTP error! status: ${response.status}`);
   }
 
-  return response.json();
+  return parseSuccessResponse<T>(response);
 }
 
 /**
@@ -342,7 +365,7 @@ export async function apiPut<T, D = unknown>(
     throw new Error(msg || `HTTP error! status: ${response.status}`);
   }
 
-  return response.json();
+  return parseSuccessResponse<T>(response);
 }
 
 /**
@@ -362,5 +385,5 @@ export async function apiDelete<T>(endpoint: string, token?: string): Promise<T>
     throw new Error(msg || `HTTP error! status: ${response.status}`);
   }
 
-  return response.json();
+  return parseSuccessResponse<T>(response);
 }

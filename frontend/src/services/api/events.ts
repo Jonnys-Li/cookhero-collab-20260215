@@ -26,7 +26,7 @@ export async function trackEvent(
   if (!token) return;
 
   try {
-    await apiPost<Record<string, unknown>, ProductEventPayload>(
+    await apiPost<void, ProductEventPayload>(
       EVENTS_ENDPOINT,
       { event_name: eventName, props },
       token,
