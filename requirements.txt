@@ -21,7 +21,7 @@ langchain-milvus>=0.2.1
 # LangChain 生态系统 - 让 pip 自动解决依赖
 langchain>=0.3.0
 langchain-community
-langchain-openai==0.3.35
+langchain-openai==1.1.11
 langchain-text-splitters
 
 # 嵌入模型
