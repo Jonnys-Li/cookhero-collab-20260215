@@ -1,6 +1,30 @@
 {
   "routes": [
     {
+      "src": "/api/v1/diet/replan/preview",
+      "dest": "/api/v1/diet/replan/preview"
+    },
+    {
+      "src": "/api/v1/diet/replan/apply",
+      "dest": "/api/v1/diet/replan/apply"
+    },
+    {
+      "src": "/api/v1/diet/summary/weekly",
+      "dest": "/api/v1/diet/summary/weekly"
+    },
+    {
+      "src": "/api/v1/diet/analysis/three-lines",
+      "dest": "/api/v1/diet/analysis/three-lines"
+    },
+    {
+      "src": "/api/v1/diet/shopping-list",
+      "dest": "/api/v1/diet/shopping-list"
+    },
+    {
+      "src": "/api/v1/events",
+      "dest": "/api/v1/events"
+    },
+    {
       "src": "/api/v1/(.*)",
       "dest": "https://cookhero-collab-20260215.onrender.com/api/v1/$1"
     },
